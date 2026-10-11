@@ -159,48 +159,89 @@ export function pulseOnChange(node: HTMLElement, value: unknown) {
 type SidebarParams = {
   focusMode: boolean;
   isResizing: boolean;
+  disabled?: boolean;
 };
 
 export function workspaceSidebarMotion(node: HTMLElement, params: SidebarParams) {
-  let previousFocusMode = params.focusMode;
-  let initialized = false;
+  let currentParams = params;
+  let reducedMotion = false;
   let tween: gsap.core.Tween | null = null;
+  const media = gsap.matchMedia();
 
-  function sync(nextParams: SidebarParams) {
-    const rail = node.querySelector<HTMLElement>('.rail');
-    if (!rail) return;
+  function finish() {
+    delete node.dataset.sidebarAnimating;
+  }
 
-    const hidden = nextParams.focusMode;
-    const reduced = prefersReducedMotion() || nextParams.isResizing;
-    const target = { autoAlpha: hidden ? 0 : 1, x: hidden ? -12 : 0 };
+  function sync(nextParams: SidebarParams, immediate = false) {
+    const visibilityChanged = currentParams.focusMode !== nextParams.focusMode;
+    const disabledChanged = currentParams.disabled !== nextParams.disabled;
+    currentParams = nextParams;
+    node.toggleAttribute('data-sidebar-motion', !nextParams.disabled);
+    if (!tween) return;
 
-    tween?.kill();
-    if (!initialized || reduced) {
-      gsap.set(rail, target);
-      initialized = true;
-      previousFocusMode = nextParams.focusMode;
+    const targetProgress = nextParams.focusMode ? 0 : 1;
+    if (
+      immediate ||
+      reducedMotion ||
+      nextParams.isResizing ||
+      nextParams.disabled ||
+      disabledChanged
+    ) {
+      tween.pause().progress(targetProgress);
+      finish();
       return;
     }
 
-    if (previousFocusMode !== nextParams.focusMode) {
-      tween = gsap.to(rail, {
-        ...target,
-        duration: motionDuration('panel'),
-        ease,
-        overwrite: true,
-      });
-      previousFocusMode = nextParams.focusMode;
+    if (!visibilityChanged) return;
+    if (tween.progress() === targetProgress) {
+      tween.pause();
+      finish();
+      return;
     }
+
+    node.dataset.sidebarAnimating = '';
+    tween.timeScale(nextParams.focusMode ? 1.15 : 1);
+    if (nextParams.focusMode) tween.reverse();
+    else tween.play();
   }
 
-  sync(params);
+  media.add(
+    {
+      motion: '(prefers-reduced-motion: no-preference)',
+      reduced: reducedMotionQuery,
+    },
+    (context) => {
+      reducedMotion = Boolean(context.conditions?.reduced);
+      // 同一进度驱动占位宽度和整块侧栏平移，反复切换时直接从当前位置反向播放。
+      tween = gsap.fromTo(
+        node,
+        { '--sidebar-reveal': 0 },
+        {
+          '--sidebar-reveal': 1,
+          duration: 0.28,
+          ease: 'power2.inOut',
+          paused: true,
+          onComplete: finish,
+          onReverseComplete: finish,
+        },
+      );
+      sync(currentParams, true);
+      return () => {
+        tween = null;
+        finish();
+      };
+    },
+    node,
+  );
 
   return {
     update(nextParams: SidebarParams) {
       sync(nextParams);
     },
     destroy() {
-      tween?.kill();
+      media.revert();
+      delete node.dataset.sidebarMotion;
+      finish();
     },
   };
 }

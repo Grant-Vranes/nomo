@@ -398,11 +398,12 @@
 
   <main
     class="workspace"
-    style="--sidebar-width: {sidebarWidth}px"
-    use:workspaceSidebarMotion={{ focusMode, isResizing }}
+    style:--sidebar-width={`${sidebarWidth}px`}
+    use:workspaceSidebarMotion={{ focusMode, isResizing, disabled: markdownMiniActive }}
   >
     <ExplorerSidebar
       {interfaceLocale}
+      hidden={focusMode || markdownMiniActive}
       {currentFolderPath}
       {rootFolderExpanded}
       {folderTree}

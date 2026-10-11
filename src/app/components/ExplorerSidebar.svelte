@@ -122,6 +122,7 @@
   import { t } from '../i18n';
 
   export let interfaceLocale: string;
+  export let hidden = false;
   export let currentFolderPath: string;
   export let rootFolderExpanded: boolean;
   export let folderTree: FileTreeNode[];
@@ -925,7 +926,13 @@
 </script>
 
 {#key interfaceLocale}
-<aside class="rail" aria-label={t.explorer()} data-interface-locale={interfaceLocale}>
+<aside
+  class="rail"
+  aria-label={t.explorer()}
+  aria-hidden={hidden}
+  inert={hidden}
+  data-interface-locale={interfaceLocale}
+>
   {#if speedSearchDraft || speedSearchComposing}
     <div
       class="explorer-speed-search-hint"

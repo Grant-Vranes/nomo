@@ -25,12 +25,6 @@
   min-height: 0;
   min-width: 0;
   background: var(--md-editor-rail);
-  transition: grid-template-columns 220ms cubic-bezier(0.2, 0, 0, 1);
-  will-change: grid-template-columns;
-}
-
-.app-layout.resizing .workspace {
-  transition: none;
 }
 
 .file-input {
@@ -50,7 +44,6 @@
   min-height: 0;
   border-right: 0;
   background: var(--md-editor-rail);
-  will-change: transform, opacity;
 }
 
 .sidebar-resizer {
@@ -105,6 +98,24 @@
 
 .app-layout.focus-mode .rail {
   pointer-events: none;
+}
+
+/* GSAP 共用一个进度；侧栏保持实际宽度，避免收起时文件名和操作按钮被挤压。 */
+.app-layout .workspace[data-sidebar-motion] {
+  grid-template-columns:
+    minmax(0, calc(var(--md-editor-effective-sidebar-width) * var(--sidebar-reveal, 1)))
+    minmax(0, 1fr);
+}
+
+.workspace[data-sidebar-motion] > .rail {
+  width: var(--md-editor-effective-sidebar-width);
+  transform: translateX(
+    calc(var(--md-editor-effective-sidebar-width) * (var(--sidebar-reveal, 1) - 1))
+  );
+}
+
+.workspace[data-sidebar-animating] > .rail {
+  will-change: transform;
 }
 
 .action-btn:focus-visible,
