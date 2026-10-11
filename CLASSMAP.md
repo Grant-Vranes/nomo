@@ -28,7 +28,7 @@
 | 工作区与选中标签联合轮廓 | `src/app/components/WorkspaceSurface.svelte` | `src/app/components/AppShell.svelte`, `src/app/components/DocumentTabs.svelte`, `src/app/actions/motion.ts`, `src/app/styles/app-chrome.css` | 修改连续外轮廓、主题描边、柔和投影或活动标签几何同步 |
 | Markdown 工具栏显示与响应式布局 | `src/app/components/EditorToolbar.svelte` | `src/app/components/AppShell.svelte`, `src/app/actions/motion.ts`, `src/app/styles/app-chrome.css`, `src/app/styles/app-responsive.css`, `src/app/services/settings.ts` | 修改工具栏收展、窄宽度隐藏优先级或内容宽度控件 |
 | 窗口状态持久化 | `src-tauri/src/window/state.rs` | `src-tauri/src/lib.rs`, `src-tauri/src/models.rs` | 窗口位置/尺寸/最大化状态恢复逻辑变更 |
-| Markdown 文档小窗 | `src/app/App.svelte` | `src/app/components/AppShell.svelte`, `src/app/components/AppTitleBar.svelte`, `src/app/components/MarkdownMiniLargePreview.svelte`, `src/app/services/desktopWindow.ts`, `src-tauri/src/window/state.rs` | 修改小窗进入/返回、置顶、只读降级、快捷键或窗口几何恢复 |
+| Markdown 文档小窗 | `src/app/App.svelte` | `src/app/components/AppShell.svelte`, `src/app/components/AppTitleBar.svelte`, `src/app/components/MarkdownMiniLargePreview.svelte`, `src/app/styles/markdown-mini.css`, `src/app/services/desktopWindow.ts`, `src-tauri/src/window/state.rs` | 修改小窗进入/返回、置顶、只读降级、快捷键、工作区布局优先级或窗口几何恢复 |
 | 全局滚动条显隐 | `src/app/services/scrollbarVisibility.ts` | `src/main.ts`, `src/app/styles/global.css`, `src/app/styles/app-layout.css`, `src/app/styles/editor-segmented.css` | 修改滚动时显示、边缘触发、延时隐藏或局部滚动容器覆盖 |
 | 外部打开路由 | `src-tauri/src/window/external_open.rs` | `src-tauri/src/lib.rs` | 单实例/启动参数/macOS open 事件 |
 | 跨窗口打开目标去重 | `src-tauri/src/window/open_targets.rs` | `src/app/services/openTargetRouting.ts`, `src/app/App.svelte`, `src/app/services/desktopWindow.ts`, `src-tauri/src/window/external_open.rs` | 修改文件/文件夹打开优先级、空窗口复用、窗口聚焦或目标预留 |

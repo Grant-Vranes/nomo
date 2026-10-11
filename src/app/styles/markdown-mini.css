@@ -47,7 +47,8 @@
   padding-left: 72px !important;
 }
 
-.markdown-mini-mode .workspace {
+/* 小窗单列布局优先于资源管理器隐藏时的零宽侧栏布局。 */
+.app-layout.markdown-mini-mode .workspace {
   grid-template-columns: minmax(0, 1fr);
   transition: none;
 }
