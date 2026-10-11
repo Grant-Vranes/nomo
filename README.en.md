@@ -82,6 +82,8 @@ The Windows NSIS installer and macOS app declare support for opening `.md`, `.ma
 
 ### Navigation and Writing Assistance
 
+- **Quick Insert**: In semantic editing, type `/` at the start of a line or after a space. Use ↑↓ to select headings, lists, tables, code blocks, quotes, callouts, images, links, formulas, diagrams, comments, or horizontal rules; ←→ changes the style and Enter inserts. Diagrams offer seven templates, and comments support inline and block styles. Images and links replace the trigger after confirmation; cancelling preserves the text. Each category occupies one row in a scrollable menu, with no text search. Continuing to type or pressing Esc closes the menu and preserves the text. Enable, disable, or change the trigger under Preferences → Editor → Quick Insert.
+
 - **Find and replace in the current document**: Markdown, TXT, and JSON share a consistent panel with forward / backward search, whole-word and case-sensitive matching, wrapping, replace-one, replace-all, and result counts.
 - **Outline reordering**: Fold headings individually, expand all, or collapse to the configured level. Drag a heading with its descendants before, inside, or after another section; levels adjust automatically and the move remains undoable.
 - **Link navigation**: In semantic mode, <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + click navigates document anchors, opens local Markdown / TXT / JSON files, hands supported PDF, Office, CSV, and image attachments to the operating system, or opens external `http`, `https`, and `mailto` links.

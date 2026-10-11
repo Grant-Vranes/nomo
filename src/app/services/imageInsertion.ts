@@ -1,4 +1,4 @@
-import type { EditorCore, EditorMode } from '../../lib/editor-core';
+import type { EditorCore, EditorMode, EditorSelectionSnapshot } from '../../lib/editor-core';
 import { getImageLoader } from '../../lib/editor-core/renderers';
 import type { ImageContext } from '../../lib/services/render';
 import { Transaction } from '@codemirror/state';
@@ -24,11 +24,16 @@ interface ImageInsertionOptions {
   syncSourceTextareaHeight(): void;
 }
 
+interface ImageInsertionTarget {
+  selection: EditorSelectionSnapshot;
+  contentRevision: number;
+}
+
 export function createImageInsertionHandlers(options: ImageInsertionOptions) {
   const pendingInsertions = new Set<Promise<void>>();
 
-  function insertImageFiles(files: File[]): Promise<void> {
-    const insertion = performImageInsertion(files);
+  function insertImageFiles(files: File[], target?: ImageInsertionTarget): Promise<void> {
+    const insertion = performImageInsertion(files, target);
     pendingInsertions.add(insertion);
     void insertion.then(
       () => pendingInsertions.delete(insertion),
@@ -73,7 +78,7 @@ export function createImageInsertionHandlers(options: ImageInsertionOptions) {
     void insertImageFiles(files);
   }
 
-  async function performImageInsertion(files: File[]) {
+  async function performImageInsertion(files: File[], target?: ImageInsertionTarget) {
     const timer = createPerfTimer('ImageInsertion', '插入图片');
     const editor = options.getEditor();
     const documentOpen = () => options.isDocumentOpen?.() !== false && options.getEditor() === editor;
@@ -82,7 +87,21 @@ export function createImageInsertionHandlers(options: ImageInsertionOptions) {
       timer.end({ cancelled: true, reason: 'source-document-closed' });
       return true;
     };
-    if (cancelIfClosed()) return;
+    const cancelIfTargetChanged = () => {
+      if (!target) return false;
+      const snapshot = editor.getSnapshot();
+      if (
+        options.getMode() === 'semantic' &&
+        editor.canExecute({ type: 'insertImage', src: '' }) &&
+        (snapshot.contentRevision ?? snapshot.version) === target.contentRevision
+      )
+        return false;
+      options.setStatusMessage(t.quickInsertSelectionChanged());
+      timer.end({ cancelled: true, reason: 'insertion-target-changed' });
+      return true;
+    };
+
+    if (cancelIfClosed() || cancelIfTargetChanged()) return;
     logInfo('ImageInsertion', '开始插入图片', { count: files.length });
     const loader = getImageLoader();
     if (!loader) {
@@ -131,6 +150,9 @@ export function createImageInsertionHandlers(options: ImageInsertionOptions) {
 
     if (cancelIfClosed()) return;
     if (imported.length > 0) {
+      // 文件选择和资源导入期间光标可能移动，只在来源正文未变化时替换触发符号。
+      if (cancelIfTargetChanged()) return;
+      if (target) editor.restoreSelectionSnapshot(target.selection);
       if (options.getMode() === 'source') {
         insertSourceMarkdown(imported, editor);
       } else {

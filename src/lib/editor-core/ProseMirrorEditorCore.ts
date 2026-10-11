@@ -16,6 +16,8 @@ import {
 } from 'prosemirror-commands';
 import { history, redo, undo } from 'prosemirror-history';
 import { inputRules } from 'prosemirror-inputrules';
+import { dismissQuickInsert, quickInsertPlugin } from './plugins/quickInsert';
+import { DEFAULT_QUICK_INSERT_TRIGGER, isQuickInsertTrigger } from './quickInsert';
 import { keymap } from 'prosemirror-keymap';
 import { EditorState, Selection, NodeSelection, TextSelection, type Transaction } from 'prosemirror-state';
 import { Slice, Fragment, DOMSerializer, type Node as ProseMirrorNode, type ResolvedPos } from 'prosemirror-model';
@@ -198,6 +200,10 @@ export class ProseMirrorEditorCore implements EditorCore {
       readonly: options.readonly ?? false,
       mode: options.mode ?? 'semantic',
       copyMarkdownSyntaxEnabled: options.copyMarkdownSyntaxEnabled ?? true,
+      quickInsertEnabled: options.quickInsertEnabled ?? true,
+      quickInsertTrigger: isQuickInsertTrigger(options.quickInsertTrigger)
+        ? options.quickInsertTrigger
+        : DEFAULT_QUICK_INSERT_TRIGGER,
     };
 
     if (this.target) {
@@ -699,6 +705,7 @@ export class ProseMirrorEditorCore implements EditorCore {
       markdown: this.markdown,
       version: this.version,
       selection: selection ? { anchor: selection.anchor, head: selection.head } : undefined,
+      contentRevision: this.contentRevision,
       meta: {
         mode: this.runtime.mode,
         inlineSource: true,
@@ -1243,6 +1250,7 @@ export class ProseMirrorEditorCore implements EditorCore {
 
   updateOptions(options: Partial<EditorRuntimeOptions>): void {
     this.assertActive();
+    if (this.view) dismissQuickInsert(this.view);
     if (options.mode && options.mode !== this.runtime.mode) {
       if (this.view) commitActiveEdit(this.view, true);
       this.commitPendingEdits();
@@ -1309,6 +1317,11 @@ export class ProseMirrorEditorCore implements EditorCore {
       selection: appended ? TextSelection.create(doc, doc.content.size - 1) : undefined,
       plugins: [
         windowsImePunctuationFallbackPlugin(),
+        quickInsertPlugin(() => ({
+          enabled: this.isEditable() && (this.runtime.quickInsertEnabled ?? true),
+          trigger: this.runtime.quickInsertTrigger ?? DEFAULT_QUICK_INSERT_TRIGGER,
+          onChoose: this.options.onQuickInsertPicker,
+        })),
         blockAlignmentPlugin(),
         inputRules({
           rules: createMarkdownInputRules(),

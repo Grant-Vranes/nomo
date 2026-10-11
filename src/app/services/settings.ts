@@ -5,6 +5,7 @@ import {
   type SettingRecord,
 } from '../../lib/desktop/tauriStorage';
 import type { DiagramType } from '../../lib/editor-core/diagramTemplates';
+import { DEFAULT_QUICK_INSERT_TRIGGER, isQuickInsertTrigger } from '../../lib/editor-core/quickInsert';
 import { setTypographyOptions } from '../../lib/typography/options';
 import {
   beginTypographyInteraction,
@@ -111,6 +112,8 @@ export interface AppPreferences {
   codeBlockIndent: CodeBlockIndentPreference;
   inlineCodeRenderingEnabled: boolean;
   copyMarkdownSyntaxEnabled: boolean;
+  quickInsertEnabled: boolean;
+  quickInsertTrigger: string;
   markdownLintEnabled: boolean;
   markdownLintRuleSet: MarkdownLintRuleSet;
   renderMode: RenderModePreference;
@@ -193,6 +196,8 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   codeBlockIndent: 'spaces-2',
   inlineCodeRenderingEnabled: true,
   copyMarkdownSyntaxEnabled: true,
+  quickInsertEnabled: true,
+  quickInsertTrigger: DEFAULT_QUICK_INSERT_TRIGGER,
   markdownLintEnabled: false,
   markdownLintRuleSet: 'relaxed',
   renderMode: 'hardware',
@@ -312,6 +317,8 @@ export async function loadAppPreferences(
     codeBlockIndent: parseSetting<unknown>(settings, 'codeBlockIndent'),
     inlineCodeRenderingEnabled: parseSetting<unknown>(settings, 'inlineCodeRenderingEnabled'),
     copyMarkdownSyntaxEnabled: parseSetting<unknown>(settings, 'copyMarkdownSyntaxEnabled'),
+    quickInsertEnabled: parseSetting<unknown>(settings, 'quickInsertEnabled'),
+    quickInsertTrigger: parseSetting<unknown>(settings, 'quickInsertTrigger'),
     markdownLintEnabled: parseSetting<unknown>(settings, 'markdownLintEnabled'),
     markdownLintRuleSet: parseSetting<unknown>(settings, 'markdownLintRuleSet'),
     renderMode: parseSetting<unknown>(settings, 'renderMode'),
@@ -493,6 +500,13 @@ export function normalizeAppPreferences(
       typeof value.copyMarkdownSyntaxEnabled === 'boolean'
         ? value.copyMarkdownSyntaxEnabled
         : DEFAULT_APP_PREFERENCES.copyMarkdownSyntaxEnabled,
+    quickInsertEnabled:
+      typeof value.quickInsertEnabled === 'boolean'
+        ? value.quickInsertEnabled
+        : DEFAULT_APP_PREFERENCES.quickInsertEnabled,
+    quickInsertTrigger: isQuickInsertTrigger(value.quickInsertTrigger)
+      ? value.quickInsertTrigger
+      : DEFAULT_APP_PREFERENCES.quickInsertTrigger,
     markdownLintEnabled:
       typeof value.markdownLintEnabled === 'boolean'
         ? value.markdownLintEnabled
@@ -653,6 +667,8 @@ function toPersistedPreferenceEntries(
     codeBlockIndent: preferences.codeBlockIndent,
     inlineCodeRenderingEnabled: preferences.inlineCodeRenderingEnabled,
     copyMarkdownSyntaxEnabled: preferences.copyMarkdownSyntaxEnabled,
+    quickInsertEnabled: preferences.quickInsertEnabled,
+    quickInsertTrigger: preferences.quickInsertTrigger,
     markdownLintEnabled: preferences.markdownLintEnabled,
     markdownLintRuleSet: preferences.markdownLintRuleSet,
     renderMode: preferences.renderMode,

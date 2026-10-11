@@ -40,6 +40,7 @@
     type InlinePendingMarks,
     type EditorMode,
     type EditorPasteMode,
+    type EditorQuickInsertPickerEvent,
     type EditorSearchMatch,
     type EditorSelectionSnapshotEvent,
     type EditorThemeOptions,
@@ -384,6 +385,8 @@
   let codeBlockIndent: CodeBlockIndentPreference = DEFAULT_APP_PREFERENCES.codeBlockIndent;
   let inlineCodeRenderingEnabled = DEFAULT_APP_PREFERENCES.inlineCodeRenderingEnabled;
   let copyMarkdownSyntaxEnabled = DEFAULT_APP_PREFERENCES.copyMarkdownSyntaxEnabled;
+  let quickInsertEnabled = DEFAULT_APP_PREFERENCES.quickInsertEnabled;
+  let quickInsertTrigger = DEFAULT_APP_PREFERENCES.quickInsertTrigger;
   let shortcutPreferences: ShortcutPreferences = { ...DEFAULT_APP_PREFERENCES.shortcutPreferences };
   let imageSettings: ImageHandlingSettings = { ...DEFAULT_IMAGE_HANDLING_SETTINGS };
   let openDefaultBehavior: OpenDefaultBehavior = DEFAULT_APP_PREFERENCES.openDefaultBehavior;
@@ -417,6 +420,7 @@
   let expandedFolders = new Set<string>();
   let tablePickerOpen = false;
   let linkPickerOpen = false;
+  let quickInsertLinkTarget: QuickInsertPickerTarget | null = null;
   let linkText = '';
   let linkHref = '';
   let linkError = '';
@@ -2931,7 +2935,7 @@
 
   function closeToolbarTransientPanels() {
     tablePickerOpen = false;
-    linkPickerOpen = false;
+    closeLinkPicker();
   }
 
   function toggleFocusMode() {
@@ -3089,7 +3093,7 @@
   function openApplicationContextMenu(request: ContextMenuRequest) {
     activeMenu = null;
     tablePickerOpen = false;
-    linkPickerOpen = false;
+    closeLinkPicker();
     contextMenuX = request.x;
     contextMenuY = request.y;
     contextMenuItems = request.items;
@@ -3469,17 +3473,50 @@
     });
   }
 
-  function chooseImageForContextMenu() {
+  type QuickInsertPickerTarget = EditorQuickInsertPickerEvent & {
+    tabId: string;
+    editor: EditorCore;
+    contentRevision: number;
+  };
+
+  function openQuickInsertPicker(tabId: string, event: EditorQuickInsertPickerEvent): boolean {
+    const runtime = documentRuntimes.get(tabId);
+    if (!runtime || runtime.disposed || runtime.mode === 'source' || workspaceInteractionDisabled)
+      return false;
+    focusComparisonDocument(tabId);
+    if (activeTabId !== tabId || editor !== runtime.editor || readonlyDocumentMode) return false;
+    const snapshot = runtime.editor.getSnapshot();
+    const target: QuickInsertPickerTarget = {
+      ...event,
+      tabId,
+      editor: runtime.editor,
+      contentRevision: snapshot.contentRevision ?? snapshot.version,
+    };
+    if (event.kind === 'image') return chooseImageForContextMenu(target);
+    openLinkPicker();
+    if (!linkPickerOpen) return false;
+    quickInsertLinkTarget = target;
+    linkText = '';
+    linkHref = '';
+    linkCanRemove = false;
+    linkDraftTitle = null;
+    return true;
+  }
+
+  function chooseImageForContextMenu(target?: QuickInsertPickerTarget): boolean {
     const runtime = documentRuntimes.get(activeTabId);
+    if (!runtime || runtime.disposed) return false;
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
     input.multiple = true;
     input.addEventListener('change', () => {
       const files = Array.from(input.files ?? []);
-      if (files.length && runtime && !runtime.disposed && documentRuntimes.get(runtime.tabId) === runtime) void runtime.images.insertImageFiles(files);
+      if (files.length && !runtime.disposed && documentRuntimes.get(runtime.tabId) === runtime)
+        void runtime.images.insertImageFiles(files, target);
     });
     input.click();
+    return true;
   }
 
   function trackEditorOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -3560,9 +3597,12 @@
     mode: getCoreModeForView(mode),
     inlineCodeRenderingEnabled,
     copyMarkdownSyntaxEnabled,
+    quickInsertEnabled,
+    quickInsertTrigger,
     theme: initialResolvedTheme.editorTheme,
     onSelectionSnapshotChange: handleSemanticSelectionChange,
     onLinkShortcut: () => openLinkPicker(),
+    onQuickInsertPicker: (event) => openQuickInsertPicker(activeTabId, event),
     onOpenLink: (href) => openLinkFromEditor(href),
     getImageContext: () => getImageContext(),
     onImagesDeleted: (event) => handleDeletedImageResources(event),
@@ -3605,8 +3645,10 @@
     const core = createEditorCore({
       markdown: tab.markdown, mode: getCoreModeForView(initialMode),
       inlineCodeRenderingEnabled, copyMarkdownSyntaxEnabled, theme: currentEditorTheme,
+      quickInsertEnabled, quickInsertTrigger,
       onSelectionSnapshotChange: (event) => { if (activeTabId === tab.id) handleSemanticSelectionChange(event); },
       onLinkShortcut: () => { void switchTab(tab.id).then(openLinkPicker); },
+      onQuickInsertPicker: (event) => openQuickInsertPicker(tab.id, event),
       onOpenLink: (href) => openLinkFromEditor(href, tab.id),
       getImageContext: () => getImageContext(tab.id),
       onImagesDeleted: (event) => handleDeletedImageResources(event, tab.id),
@@ -4190,7 +4232,7 @@
     if (!hasOpenDocument()) return;
     searchPanelOpen = true;
     searchReplaceVisible = replaceVisible;
-    linkPickerOpen = false;
+    closeLinkPicker();
     tablePickerOpen = false;
     refreshSearchMatches({ preserveActive: true, selectActive: false });
   }
@@ -6116,6 +6158,8 @@
     codeBlockIndent = preferences.codeBlockIndent;
     inlineCodeRenderingEnabled = preferences.inlineCodeRenderingEnabled;
     copyMarkdownSyntaxEnabled = preferences.copyMarkdownSyntaxEnabled;
+    quickInsertEnabled = preferences.quickInsertEnabled;
+    quickInsertTrigger = preferences.quickInsertTrigger;
     shortcutPreferences = preferences.shortcutPreferences;
     developerMode = preferences.developerMode;
     softwareUpdateAutoCheckEnabled = preferences.softwareUpdateAutoCheckEnabled;
@@ -6151,9 +6195,9 @@
       if (runtime.disposed || !isMarkdownTab(tab)) continue;
       const owner = findWorkspaceItemForTab(workspaceItems, tab.id);
       runtime.mode = owner?.kind === 'comparison' ? owner.mode : tab.largeDocumentMode ? 'source' : options.applyEditorMode ? preferredEditorMode : runtime.mode;
-      runtime.editor.updateOptions({ inlineCodeRenderingEnabled, copyMarkdownSyntaxEnabled, mode: getCoreModeForView(runtime.mode), readonly: tab.readonlyDocumentMode });
+      runtime.editor.updateOptions({ inlineCodeRenderingEnabled, copyMarkdownSyntaxEnabled, quickInsertEnabled, quickInsertTrigger, mode: getCoreModeForView(runtime.mode), readonly: tab.readonlyDocumentMode });
     }
-    editor.updateOptions({ inlineCodeRenderingEnabled, copyMarkdownSyntaxEnabled });
+    editor.updateOptions({ inlineCodeRenderingEnabled, copyMarkdownSyntaxEnabled, quickInsertEnabled, quickInsertTrigger });
     applyOutlineDefaultExpansion();
 
     const activeDocument = tabs.find((tab) => tab.id === activeTabId);
@@ -6808,6 +6852,7 @@
       return;
     }
 
+    quickInsertLinkTarget = null;
     const activeLink = editor.getActiveLink();
     linkText = activeLink?.text ?? '';
     linkHref = activeLink?.href ?? '';
@@ -6932,6 +6977,7 @@
 
   function closeLinkPicker() {
     linkPickerOpen = false;
+    quickInsertLinkTarget = null;
     linkText = '';
     linkError = '';
     linkCanRemove = false;
@@ -6952,13 +6998,40 @@
       return;
     }
 
+    const target = quickInsertLinkTarget;
+    if (target) {
+      const runtime = documentRuntimes.get(target.tabId);
+      if (
+        !runtime ||
+        runtime.disposed ||
+        runtime.editor !== target.editor ||
+        editor !== target.editor ||
+        activeTabId !== target.tabId ||
+        getActiveEditorMode() !== 'semantic' ||
+        readonlyDocumentMode
+      ) {
+        linkError = t.quickInsertUnavailable();
+        return;
+      }
+      const snapshot = target.editor.getSnapshot();
+      if ((snapshot.contentRevision ?? snapshot.version) !== target.contentRevision) {
+        linkError = t.quickInsertSelectionChanged();
+        return;
+      }
+      target.editor.restoreSelectionSnapshot(target.selection);
+    }
     const applied = editor.execute({
       type: 'insertLink',
       href: linkHref,
       title: linkDraftTitle ?? undefined,
-      text: linkText,
+      text: target ? linkText.trim() || linkHref.trim() : linkText,
     });
     if (!applied) {
+      if (target)
+        target.editor.restoreSelectionSnapshot({
+          anchor: target.selection.head,
+          head: target.selection.head,
+        });
       linkError = t.linkHrefInvalid();
       return;
     }

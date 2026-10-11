@@ -3,6 +3,7 @@
 @import './editor-document.css';
 @import '../../lib/services/mermaidDiagramView.css';
 @import './editor-table-controls.css';
+@import './editor-quick-insert.css';
 @import './editor-source.css';
 @import './editor-toc.css';
 @import './editor-outline.css';

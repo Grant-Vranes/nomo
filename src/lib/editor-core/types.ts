@@ -21,6 +21,8 @@ export interface EditorRuntimeOptions {
   mode: EditorMode;
   inlineCodeRenderingEnabled?: boolean;
   copyMarkdownSyntaxEnabled: boolean;
+  quickInsertEnabled?: boolean;
+  quickInsertTrigger?: string;
 }
 
 export interface SetMarkdownOptions {
@@ -40,6 +42,11 @@ export interface SetMarkdownOptions {
 export interface EditorSelectionSnapshot {
   anchor: number;
   head: number;
+}
+
+export interface EditorQuickInsertPickerEvent {
+  kind: 'image' | 'link';
+  selection: EditorSelectionSnapshot;
 }
 
 export interface EditorLinkSnapshot {
@@ -79,6 +86,8 @@ export interface EditorSearchMatch {
 export interface EditorSnapshot {
   markdown: string;
   version: number;
+  /** 仅正文变化时递增，用于校验异步操作持有的选区。 */
+  contentRevision?: number;
   selection?: EditorSelectionSnapshot;
   meta?: Record<string, unknown>;
 }
@@ -206,12 +215,16 @@ export interface EditorCoreOptions {
   mode?: EditorMode;
   inlineCodeRenderingEnabled?: boolean;
   copyMarkdownSyntaxEnabled?: boolean;
+  quickInsertEnabled?: boolean;
+  quickInsertTrigger?: string;
   theme?: EditorThemeOptions;
   onChange?: (event: EditorChangeEvent) => void;
   onSelectionChange?: (event: EditorSelectionEvent) => void;
   onSelectionSnapshotChange?: (event: EditorSelectionSnapshotEvent) => void;
   onError?: (error: EditorError) => void;
   onLinkShortcut?: () => void;
+  /** 确认选择后才替换事件中的触发符号选区；返回是否打开了选择窗口。 */
+  onQuickInsertPicker?: (event: EditorQuickInsertPickerEvent) => boolean;
   onOpenLink?: (href: string) => void;
   getImageContext?: () => ImageContext;
   onImagesDeleted?: (event: EditorImageDeletionEvent) => void;

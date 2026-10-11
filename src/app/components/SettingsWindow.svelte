@@ -14,6 +14,7 @@
   import { onMount } from 'svelte';
   import { typographyRange } from '../actions/typographyRange';
   import { DIAGRAM_TEMPLATES } from '../../lib/editor-core/diagramTemplates';
+  import { isQuickInsertTrigger } from '../../lib/editor-core/quickInsert';
   import { isTauriRuntime, openExternalLink } from '../../lib/desktop/tauriStorage';
   import {
     type DownloadedSoftwareUpdate,
@@ -139,6 +140,7 @@
   );
   $: categoryTitles = createCategoryTitles(interfaceLocale);
   let loaded = false;
+  let quickInsertTriggerInvalid = false;
   let statusMessage = '';
   let statusTimer: number | null = null;
   let autoSaveTimer: number | null = null;
@@ -1037,6 +1039,12 @@
     updateDraft({ [key]: (event.currentTarget as HTMLInputElement).value });
   }
 
+  function updateQuickInsertTrigger(event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    quickInsertTriggerInvalid = !isQuickInsertTrigger(value);
+    if (!quickInsertTriggerInvalid) updateDraft({ quickInsertTrigger: value });
+  }
+
   function updateImageStringSetting(
     key: keyof AppPreferences['imageHandlingSettings'],
     event: Event,
@@ -1870,6 +1878,48 @@
                 />
                 <span class="toggle-switch" aria-hidden="true"></span>
               </label>
+
+              <h2>{t.quickInsert()}</h2>
+              <label class="toggle-row" for="quickInsertEnabled">
+                <span>
+                  <span class="toggle-title">{t.quickInsertEnabled()}</span>
+                  <span class="toggle-desc">{t.quickInsertDescription()}</span>
+                </span>
+                <input
+                  id="quickInsertEnabled"
+                  type="checkbox"
+                  checked={draftSettings.quickInsertEnabled}
+                  on:change={(event) => toggleSetting('quickInsertEnabled', event)}
+                />
+                <span class="toggle-switch" aria-hidden="true"></span>
+              </label>
+              <div class="setting-row" class:setting-disabled={!draftSettings.quickInsertEnabled}>
+                <div>
+                  <label for="quickInsertTrigger" class="setting-label"
+                    >{t.quickInsertTrigger()}</label
+                  >
+                  <p id="quickInsertTriggerHint">{t.quickInsertTriggerDescription()}</p>
+                  {#if quickInsertTriggerInvalid}
+                    <p id="quickInsertTriggerError" class="quick-insert-error" role="alert">
+                      {t.quickInsertTriggerInvalid()}
+                    </p>
+                  {/if}
+                </div>
+                <input
+                  id="quickInsertTrigger"
+                  class="text-input compact quick-insert-trigger"
+                  type="text"
+                  value={draftSettings.quickInsertTrigger}
+                  disabled={!draftSettings.quickInsertEnabled}
+                  aria-invalid={quickInsertTriggerInvalid}
+                  aria-describedby={quickInsertTriggerInvalid
+                    ? 'quickInsertTriggerHint quickInsertTriggerError'
+                    : 'quickInsertTriggerHint'}
+                  autocomplete="off"
+                  spellcheck={false}
+                  on:input={updateQuickInsertTrigger}
+                />
+              </div>
 
               <h2 class="settings-heading-with-badge">
                 <span>{t.markdownLint()}</span>
@@ -3247,6 +3297,21 @@
   .text-input.compact {
     max-width: 180px;
     justify-self: end;
+  }
+
+  .text-input.quick-insert-trigger {
+    max-width: 64px;
+    font-family: var(--md-editor-font-mono);
+    text-align: center;
+  }
+
+  .text-input.quick-insert-trigger:focus {
+    border-color: var(--md-editor-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-editor-accent) 15%, transparent);
+  }
+
+  .setting-row .quick-insert-error {
+    color: var(--md-editor-danger, #d14343);
   }
 
   .action-button {

@@ -25,6 +25,7 @@ export type {
   EditorPasteInput,
   EditorPasteMode,
   EditorPasteResult,
+  EditorQuickInsertPickerEvent,
   EditorRuntimeOptions,
   EditorSearchMatch,
   EditorSearchOptions,

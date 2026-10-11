@@ -1,6 +1,6 @@
 import { lift, setBlockType, splitBlockAs, wrapIn } from 'prosemirror-commands';
 import { appendClearInlineSourceStyles, toggleInlineSourceFormat } from './inlineSourceCommands';
-import { redo, undo } from 'prosemirror-history';
+import { closeHistory, redo, undo } from 'prosemirror-history';
 import { liftListItem, wrapInList } from 'prosemirror-schema-list';
 import {
   Fragment,
@@ -26,6 +26,7 @@ import { MermaidBlockNodeView } from './nodeViews/MermaidBlockNodeView';
 import { MathBlockNodeView } from './nodeViews/MathBlockNodeView';
 import { createLinkAttrs } from './link';
 import { t } from '../../app/i18n';
+import type { QuickInsertEditorCommand } from './quickInsert';
 
 /**
  * 在当前块的下方插入一个新的空段落，并将光标移入。
@@ -716,6 +717,162 @@ function createMappedSelection(tr: Transaction, from: number, to: number): Selec
 
 function clampDocPosition(position: number, doc: PmNode): number {
   return Math.max(0, Math.min(position, doc.content.size));
+}
+
+/** 删除触发符号和插入内容共用一个事务；类别选择始终插入或转换，不执行取消样式。 */
+export function insertQuickInsertContent(
+  view: EditorView,
+  from: number,
+  to: number,
+  command: QuickInsertEditorCommand,
+): boolean {
+  const { state, dispatch } = view;
+  const tr = state.tr.delete(from, to);
+  tr.setSelection(TextSelection.create(tr.doc, from));
+  const prepared = state.apply(tr);
+  const { $from } = prepared.selection;
+
+  switch (command.type) {
+    case 'setHeading':
+      if (
+        $from.parent.type !== schema.nodes.heading ||
+        $from.parent.attrs.level !== command.level
+      ) {
+        if (
+          !appendCommandSteps(
+            state,
+            tr,
+            setBlockType(schema.nodes.heading, { level: command.level }),
+          )
+        )
+          return false;
+      }
+      break;
+    case 'toggleBulletList':
+    case 'toggleOrderedList':
+    case 'toggleTaskList': {
+      const listType =
+        command.type === 'toggleOrderedList' ? schema.nodes.ordered_list : schema.nodes.bullet_list;
+      const currentList = findParentList($from);
+      const item = findListItem($from);
+      const taskMarker = /^\[[ x]\]\s?/.exec(item?.itemNode.firstChild?.textContent ?? '');
+      const taskRange =
+        item && taskMarker
+          ? { from: item.itemPos + 2, to: item.itemPos + 2 + taskMarker[0].length }
+          : null;
+      if (currentList) {
+        if (currentList.listType !== listType) {
+          tr.setNodeMarkup(currentList.listPos, listType, getListAttrsForType(listType));
+        }
+        if (taskRange && command.type !== 'toggleTaskList') tr.delete(taskRange.from, taskRange.to);
+      } else {
+        if (
+          $from.parent.type !== schema.nodes.paragraph &&
+          !appendCommandSteps(state, tr, setBlockType(schema.nodes.paragraph))
+        )
+          return false;
+        if (!appendCommandSteps(state, tr, wrapInList(listType, getListAttrsForType(listType))))
+          return false;
+      }
+      if (command.type === 'toggleTaskList' && !taskRange) {
+        const item = findListItem(tr.selection.$from);
+        if (!item) return false;
+        tr.insertText('[ ] ', item.itemPos + 2);
+      }
+      break;
+    }
+    case 'toggleBlockquote':
+    case 'insertCallout': {
+      const type =
+        command.type === 'insertCallout' ? schema.nodes.callout : schema.nodes.blockquote;
+      const attrs =
+        command.type === 'insertCallout' ? { type: command.calloutType ?? 'note' } : undefined;
+      let ancestorDepth = 0;
+      for (let depth = $from.depth - 1; depth > 0; depth -= 1) {
+        if ($from.node(depth).type === type) {
+          ancestorDepth = depth;
+          break;
+        }
+      }
+      if (ancestorDepth) {
+        if (attrs) tr.setNodeMarkup($from.before(ancestorDepth), type, attrs);
+      } else if (!appendCommandSteps(state, tr, wrapIn(type, attrs))) return false;
+      break;
+    }
+    case 'insertCommentInline': {
+      const node = schema.nodes.comment_inline.create({ content: command.content ?? '' });
+      tr.replaceSelectionWith(node, false);
+      tr.setSelection(NodeSelection.create(tr.doc, from));
+      break;
+    }
+    case 'insertTable':
+    case 'insertCodeBlock':
+    case 'insertHorizontalRule':
+    case 'insertMathBlock':
+    case 'insertDiagramBlock':
+    case 'insertCommentBlock': {
+      let node: PmNode;
+      switch (command.type) {
+        case 'insertTable':
+          node = createTableNode(command.rows ?? 2, command.columns ?? 3);
+          break;
+        case 'insertCodeBlock':
+          node = schema.nodes.code_block.create({ params: command.language ?? '' });
+          break;
+        case 'insertMathBlock':
+          node = schema.nodes.math_block.create({ tex: command.tex ?? '' });
+          break;
+        case 'insertDiagramBlock':
+          node = schema.nodes.mermaid_block.create({
+            code: getDiagramTemplate(command.diagramType).code,
+          });
+          break;
+        case 'insertCommentBlock':
+          node = schema.nodes.comment_block.create({ content: command.content ?? '' });
+          break;
+        case 'insertHorizontalRule':
+          node = schema.nodes.horizontal_rule.create();
+          break;
+      }
+      const parentDepth = $from.depth - 1;
+      const index = $from.index(parentDepth);
+      if (
+        $from.parent.content.size === 0 &&
+        $from.node(parentDepth).canReplaceWith(index, index + 1, node.type)
+      ) {
+        tr.replaceWith($from.before(), $from.after(), node);
+      } else {
+        tr.replaceSelectionWith(node);
+      }
+      let insertedPos = -1;
+      tr.doc.descendants((candidate, pos) => {
+        if (candidate === node) insertedPos = pos;
+        return insertedPos < 0;
+      });
+      if (insertedPos < 0) return false;
+      if (command.type === 'insertTable') setSelectionInFirstTableCell(tr, insertedPos);
+      else if (
+        command.type === 'insertCodeBlock' ||
+        command.type === 'insertMathBlock' ||
+        command.type === 'insertCommentBlock'
+      )
+        tr.setSelection(NodeSelection.create(tr.doc, insertedPos));
+      else if (command.type === 'insertDiagramBlock')
+        setSelectionAfterMermaidBlock(tr, insertedPos, node);
+      else {
+        const afterPos = insertedPos + node.nodeSize;
+        if (tr.doc.nodeAt(afterPos)?.type !== schema.nodes.paragraph)
+          tr.insert(afterPos, schema.nodes.paragraph.create());
+        tr.setSelection(TextSelection.create(tr.doc, afterPos + 1));
+      }
+    }
+  }
+  if (command.type === 'insertCommentInline') CommentInlineNodeView.requestInstantEdit(view);
+  else if (command.type === 'insertCommentBlock') CommentBlockNodeView.requestInstantEdit(view);
+  dispatch(closeHistory(tr).scrollIntoView());
+  if (command.type === 'insertMathBlock')
+    MathBlockNodeView.scheduleEnterEditAt(view, tr.selection.from, 'start');
+  return true;
 }
 
 export function executeEditorCommand(

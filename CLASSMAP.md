@@ -92,6 +92,7 @@
 | 尾部段落补全 | `src/lib/editor-core/plugins/trailingParagraph.ts` | — | 非段落块插入后自动追加空段落 |
 | 正文目录事务同步 | `src/lib/editor-core/plugins/tocSync.ts` | `src/lib/toc/tocService.ts` | 标题变化后的 TOC 派生更新与撤销历史保持 |
 | 编辑器上下文菜单插件 | `src/lib/editor-core/plugins/contextMenu.ts` | `src/app/App.svelte`, `src/app/components/ContextMenu.svelte` | 语义编辑区目标命中、选区定位与右键菜单事件分发 |
+| 快捷插入菜单 | `src/lib/editor-core/plugins/quickInsert.ts` | `src/lib/editor-core/quickInsert.ts`, `editorCommands.ts`, `src/app/styles/editor-quick-insert.css` | 行首/空格后触发、类别/样式键盘导航、浮层定位与生命周期，无搜索 |
 | 行内代码语法高亮装饰 | `src/lib/editor-core/plugins/codeHighlightDecorationPlugin.ts` | `InlineSourceCodec.ts`, `plugins/inlineCodeSelectionBridge.ts` | 派生代码范围的 token 着色与选区背景 |
 | 旧语义块间距装饰（兼容） | `src/lib/editor-core/plugins/blockAlignment.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts` | 维护不入文档、不入 history 的旧 spacer 接口，双栏不再启用 |
 
@@ -366,6 +367,7 @@
 - 工作区恢复后发起一次启动更新检查，并按目标窗口协调通知卡片与安装确认
 - 协调当前文档在同一窗口内进入/返回 Markdown 小窗，并复用原编辑器、撤销栈和自动保存状态
 - 统一持有全应用上下文菜单状态，并为各 UI 区域提供单一打开入口、剪贴板和路径定位动作
+- 快捷插入的图片/链接选择窗口与来源文档、选区及内容修订校验
 
 **Does not own:**
 - 不拥有具体 UI 子组件渲染逻辑（委派给 AppShell.svelte）
@@ -1060,6 +1062,7 @@
 - 设置归一化、加载、保存和外观模型一次性迁移
 - 无效主题、文档样式与旧字段映射的持久化修复
 - 工具栏显示偏好与可自定义快捷键的默认值和持久化
+- 快捷插入开关和单个触发符号的默认值、校验、加载与持久化
 - 统一打开行为偏好的新键持久化，以及旧 `folderOpenDefaultBehavior` 的读取兼容
 
 **Does not own：**
@@ -1068,7 +1071,7 @@
 
 **Called by:** `src/app/App.svelte`, `src/app/components/SettingsWindow.svelte`, `src/app/services/editorSettingsController.ts`
 
-**Depends on:** `src/app/services/themeRegistry.ts`, `src/lib/desktop/tauriStorage.ts`
+**Depends on:** `src/app/services/themeRegistry.ts`, `src/lib/desktop/tauriStorage.ts`, `src/lib/editor-core/quickInsert.ts`
 
 **Change this when：**
 - 添加新的设置项
@@ -1481,6 +1484,47 @@
 
 ---
 
+### `src/lib/editor-core/quickInsert.ts`
+
+**Kind:** module
+
+**Owns：**
+- 快捷插入类别、默认样式及对应命令，无搜索索引
+- 图片/链接选择动作、LaTeX 公式块、图表模板和行内/块注释类别
+- 默认触发符号与单个标点/符号校验
+
+**Called by:** `plugins/quickInsert.ts`, `src/app/services/settings.ts`, `src/app/components/SettingsWindow.svelte`
+
+**Depends on:** `types.ts`, `diagramTemplates.ts`, `src/app/i18n.ts`
+
+**Change this when：** 调整快捷插入类别、样式、默认符号或符号校验。
+
+**Confidence:** high
+
+---
+
+### `src/lib/editor-core/plugins/quickInsert.ts`
+
+**Kind:** plugin
+
+**Owns：**
+- 语义编辑的输入触发、菜单会话及类别/样式键盘导航
+- 菜单 DOM、光标附近定位、界面语言更新及挂起/销毁清理
+- 提交输入法字符后的触发及行内代码范围排除
+- 滚动列表中保持键盘选中行可见，向应用层传递图片/链接插入选区
+
+**Does not own：** 内容插入/块转换事务在 `editorCommands.ts`，图片/链接选择窗口、偏好保存和设置 UI 在应用层。
+
+**Called by:** `ProseMirrorEditorCore.ts`
+
+**Depends on:** `quickInsert.ts`, `editorCommands.ts`, `InlineSourceCodec.ts`, `plugins/inlineSourceEditing.ts`, `src/app/i18n.ts`, `src/app/styles/editor-quick-insert.css`
+
+**Change this when：** 调整触发边界、菜单交互、浮层定位或生命周期。
+
+**Confidence:** high
+
+---
+
 ### `src/lib/editor-core/editorCommands.ts`
 
 **Kind:** service
@@ -1489,6 +1533,7 @@
 - 编辑器命令实现：标题、粗体、斜体、链接、列表、引用、代码块、表格、公式、图表、TOC 等
 - 将应用层 `EditorCommand` 转换为 ProseMirror transaction
 - 以单个事务移动章节顶层节点切片并调整后代标题层级
+- 快捷插入以单个事务删除触发符号并插入或转换内容，复用表格生成、图表模板、列表/引用包装规则和公式/注释编辑入口
 
 **Does not own：**
 - 不拥有表格命令细节（在 tableCommands.ts 中）
@@ -2484,6 +2529,7 @@
 - 图片策略判断（本地复制 vs 图床上传）
 - 源码模式 Markdown 图片语法插入
 - 图片属性文本生成（width/align）
+- 快捷插入图片的异步选区恢复；正文修订或编辑模式改变时取消替换
 
 **Does not own:**
 - 不拥有图片文件过滤（在 imageMarkdown.ts 中）
@@ -2962,6 +3008,7 @@
 **Owns:**
 - 编辑器核心类型定义：`EditorMode`、`EditorCommand`（union type）、`SetMarkdownOptions`、`EditorSelectionSnapshot`、`EditorLinkSnapshot`、`InlinePendingMarks` 等
 - `EditorThemeOptions`、`EditorRuntimeOptions`
+- 快捷插入选择窗口事件与快照内容修订号，用于确认异步插入仍对应原文档选区
 
 **Does not own:**
 - 不拥有具体命令实现（在 editorCommands.ts 中）
