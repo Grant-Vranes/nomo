@@ -86,18 +86,19 @@ function tryMatchDisplayMath(
     }
   }
 
-  // 多行 $$ 形式：第一行是 $$，往下找闭合 $$
-  if (firstText !== '$$') return null;
+  // 多段公式允许首尾内容与 $$ 同行，收集时只去掉分隔符。
+  if (!firstText.startsWith('$$')) return null;
 
-  const texLines: string[] = [];
+  const texLines: string[] = [first.node.textContent.trimStart().slice(2)];
   let foundClose = false;
   let closeIndex = startIndex + 1;
 
   for (let index = startIndex + 1; index < blocks.length; index++) {
     const block = blocks[index];
     if (block.node.type.name !== 'paragraph') break;
-    const text = block.node.textContent.trim();
-    if (text === '$$') {
+    const text = block.node.textContent.trimEnd();
+    if (text.endsWith('$$')) {
+      texLines.push(text.slice(0, -2));
       foundClose = true;
       closeIndex = index;
       break;

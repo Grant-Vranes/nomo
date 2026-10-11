@@ -347,15 +347,15 @@ export function createMarkdownTokenizer(options: { inlineSource?: boolean; liter
       }
     }
 
-    // 多行 $$ 形式：从 startLine+1 向下扫描闭合 $$ 行
-    const texLines: string[] = [];
+    // 多行公式允许首尾内容与 $$ 同行，收集时只去掉分隔符。
+    const texLines: string[] = [state.src.slice(startPos + 2, state.eMarks[startLine])];
     let foundClose = false;
     let nextLine = startLine + 1;
 
     for (let i = startLine + 1; i < endLine; i++) {
-      const lineStart = state.bMarks[i] + state.tShift[i];
-      const line = state.src.slice(lineStart, state.eMarks[i]).trim();
-      if (line === '$$') {
+      const line = state.src.slice(state.bMarks[i], state.eMarks[i]).trimEnd();
+      if (line.endsWith('$$')) {
+        texLines.push(line.slice(0, -2));
         foundClose = true;
         nextLine = i + 1;
         break;

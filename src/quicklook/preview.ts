@@ -463,12 +463,12 @@ function parseMathDisplay(
     return true;
   }
 
-  const texLines: string[] = [];
+  const texLines: string[] = [state.src.slice(startPos + 2, state.eMarks[startLine])];
   let closeLine = -1;
   for (let line = startLine + 1; line < endLine; line++) {
-    const lineStart = state.bMarks[line] + state.tShift[line];
-    const text = state.src.slice(lineStart, state.eMarks[line]).trim();
-    if (text === '$$') {
+    const text = state.src.slice(state.bMarks[line], state.eMarks[line]).trimEnd();
+    if (text.endsWith('$$')) {
+      texLines.push(text.slice(0, -2));
       closeLine = line;
       break;
     }
