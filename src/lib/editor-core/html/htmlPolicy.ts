@@ -7,7 +7,13 @@ export const EDITABLE_BLOCK_TAGS: ReadonlySet<string> = new Set(['section', 'div
 export const EDITABLE_INLINE_TAGS: ReadonlySet<string> = new Set([
   'span',
   'strong',
+  'b',
   'em',
+  'i',
+  'br',
+  'img',
+  'mark',
+  'sup',
   'a',
   'code',
   's',
@@ -50,4 +56,5 @@ export const INLINE_TAG_TO_MARK: Record<string, string> = {
   del: 'strikethrough',
   strike: 'strikethrough',
   u: 'underline',
+  mark: 'highlight',
 };

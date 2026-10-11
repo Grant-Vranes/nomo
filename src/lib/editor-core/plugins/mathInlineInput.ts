@@ -1,4 +1,4 @@
-import type { Node as ProseMirrorNode } from 'prosemirror-model';
+import type { Mark, Node as ProseMirrorNode } from 'prosemirror-model';
 import { Plugin } from 'prosemirror-state';
 import { schema } from '../schema';
 import { MathInlineNodeView } from '../nodeViews/MathInlineNodeView';
@@ -10,6 +10,7 @@ interface InlineMathMatch {
   from: number;
   to: number;
   tex: string;
+  marks?: readonly Mark[];
   isNew?: boolean; // 标记是否是新创建的行公式
 }
 
@@ -30,7 +31,11 @@ export function mathInlineInputPlugin(getView?: () => EditorView | null): Plugin
       let newMatchPos: number | null = null;
 
       for (const match of matches.reverse()) {
-        tr.replaceWith(match.from, match.to, schema.nodes.math_inline.create({ tex: match.tex }));
+        tr.replaceWith(
+          match.from,
+          match.to,
+          schema.nodes.math_inline.create({ tex: match.tex }, null, match.marks),
+        );
         if (match.isNew) {
           newMatchPos = match.from;
         }
@@ -71,7 +76,10 @@ function findInlineMathTextMatches(doc: ProseMirrorNode): InlineMathMatch[] {
 
     for (const match of scanTextForInlineMath(node.text, pos)) {
       if (codeRanges.some((range) => match.from < range.to && match.to > range.from)) continue;
-      matches.push(match);
+      matches.push({
+        ...match,
+        marks: node.marks.filter((mark) => mark.type !== schema.marks.inline_source),
+      });
     }
     return true;
   });
@@ -100,7 +108,7 @@ function scanTextForInlineMath(text: string, absoluteTextPos: number): InlineMat
       matches.push({
         from: absoluteTextPos + start,
         to: absoluteTextPos + end + 1,
-        tex: tex.trim().replace(/\\\$/g, '$'),
+        tex: tex.trim(),
         isNew: true, // 标记为新创建的行公式
       });
     }

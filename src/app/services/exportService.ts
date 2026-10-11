@@ -254,7 +254,6 @@ export function cleanEditorArtifacts(htmlFragment: string): string {
 
   // 移除 ProseMirror 选区高亮、挂件、光标等编辑器痕迹。
   const selectorsToRemove = [
-    '.ProseMirror-selectednode',
     '.ProseMirror-widget',
     '.ProseMirror-cursor',
     '.image-node-fullscreen-button',
@@ -262,6 +261,9 @@ export function cleanEditorArtifacts(htmlFragment: string): string {
     '.image-fullscreen-overlay',
     '.image-node-placeholder',
     '.code-copy-button',
+    '.code-expand-button',
+    '.code-card .lang-selector',
+    '.toc-delete',
     '.code-edit-area',
     '.inline-comment-editor',
     '.inline-comment-edit-hint',
@@ -269,7 +271,7 @@ export function cleanEditorArtifacts(htmlFragment: string): string {
     '.table-resize-handle',
     '.mermaid-block-fullscreen-button',
     '.callout-type-picker',
-    '[contenteditable="false"]:not(.image-node):not(.mermaid-block):not(.table-widget):not(.horizontal-rule-node):not(.math-inline):not(.math-block):not(.footnote-ref)',
+    '[contenteditable="false"]:not(.image-node):not(.mermaid-block):not(.table-widget):not(.horizontal-rule-node):not(.math-inline):not(.math-block):not(.footnote-ref):not(.code-card):not(.toc-block)',
   ];
 
   for (const selector of selectorsToRemove) {
@@ -277,16 +279,20 @@ export function cleanEditorArtifacts(htmlFragment: string): string {
     elements.forEach((el) => el.remove());
   }
 
-  // 移除所有 style 属性中可能包含光标/选区的痕迹。
+  // 选区高亮是正文节点上的 class，只移除编辑器类名，保留节点和正文样式。
   root.querySelectorAll('[class*="ProseMirror"]').forEach((el) => {
-    const classes = Array.from(el.classList).filter(
-      (cls) =>
-        !cls.startsWith('ProseMirror') &&
-        cls !== 'code-card' &&
-        cls !== 'callout-card' &&
-        cls !== 'table-scroll',
-    );
+    const classes = Array.from(el.classList).filter((cls) => !cls.startsWith('ProseMirror'));
     el.className = classes.join(' ');
+  });
+
+  // 代码正文来自展示层；导出时去掉编辑态隐藏和行号滚动偏移，完整显示所有代码行。
+  root.querySelectorAll<HTMLElement>('.code-card').forEach((node) => {
+    node.classList.remove('is-editing', 'is-expanded');
+    node.querySelector<HTMLElement>('.code-content')?.style.removeProperty('display');
+    node.querySelector<HTMLElement>('.line-numbers-wrapper')?.style.removeProperty('transform');
+    const languageLabel = node.querySelector<HTMLElement>('header > span');
+    languageLabel?.style.removeProperty('cursor');
+    languageLabel?.removeAttribute('title');
   });
 
   // 图片节点只保留 img 本身，同时将对齐样式从 wrapper 迁移到 img。

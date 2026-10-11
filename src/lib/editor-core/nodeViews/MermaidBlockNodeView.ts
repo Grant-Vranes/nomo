@@ -35,6 +35,9 @@ export class MermaidBlockNodeView {
   private view: EditorView;
   private getPos: () => number;
   private renderId = 0;
+  private renderedCode: string | null = null;
+  private pendingRender: Promise<void> | null = null;
+  private cancelPendingRender: (() => void) | null = null;
   private previewRenderId = 0;
   private previewDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private editing = false;
@@ -54,7 +57,6 @@ export class MermaidBlockNodeView {
   private themeObserver: IntersectionObserver | null = null;
   private themeVisible = true;
   private themeDirty = false;
-  private themeRender: Promise<void> | null = null;
 
   constructor(node: ProseMirrorNode, view: EditorView, getPos: () => number) {
     this.node = node;
@@ -82,7 +84,11 @@ export class MermaidBlockNodeView {
     }
 
     this.dom.addEventListener('click', (event) => {
-      if (this.editing || (event.target as Element).closest?.('.mermaid-view-toolbar')) return;
+      if (
+        !this.view.editable ||
+        this.editing ||
+        (event.target as Element).closest?.('.mermaid-view-toolbar')
+      ) return;
       const target = event.target as Element;
       if (target.closest?.('.mermaid-managed-viewport') && !target.closest?.('svg')) return;
       event.preventDefault();
@@ -109,37 +115,70 @@ export class MermaidBlockNodeView {
       // 立即作废旧请求，即便节点在屏幕外也不能让旧异步结果覆盖新主题。
       instance.renderId += 1;
       instance.previewRenderId += 1;
+      instance.renderedCode = null;
       instance.themeDirty = true;
       if (instance.themeVisible) void instance.applyPendingTheme();
     }
   }
 
-  /** 导出读取 DOM 前补齐当前编辑器的屏幕外图表，避免导出混合主题。 */
+  /** 导出读取 DOM 前等待最新源码与主题渲染，包括当前编辑器的屏幕外图表。 */
   static async flushThemeUpdates(root: HTMLElement): Promise<void> {
     await Promise.all(
       [...MermaidBlockNodeView.instances]
         .filter((instance) => root.contains(instance.dom))
-        .map((instance) => instance.applyPendingTheme()),
+        .map((instance) => instance.flushPendingRender()),
     );
+  }
+
+  private async flushPendingRender(): Promise<void> {
+    while (!this.destroyed) {
+      if (this.editing && this.previewDebounceTimer !== null) {
+        this.clearPreviewDebounce();
+        void this.updatePreview();
+      }
+      const render = this.applyPendingTheme();
+      if (!render) return;
+      await render;
+    }
   }
 
   /** 只读取最新主题；连续切换时屏幕外节点不积累中间主题的渲染任务。 */
   private applyPendingTheme(): Promise<void> | null {
-    if (!this.themeDirty) return this.themeRender;
+    if (this.destroyed) return null;
+    if (!this.themeDirty) return this.pendingRender;
     this.themeDirty = false;
-    const render = (this.editing ? this.updatePreview() : this.renderMermaid()).finally(() => {
-      if (this.themeRender === render) this.themeRender = null;
+    return this.editing ? this.updatePreview() : this.renderMermaid();
+  }
+
+  private clearPendingRender(): void {
+    const cancel = this.cancelPendingRender;
+    this.pendingRender = null;
+    this.cancelPendingRender = null;
+    cancel?.();
+  }
+
+  /** 旧请求失效时解除等待；底层渲染结果仍由 renderId 检查，不能覆盖新内容。 */
+  private trackPendingRender(render: Promise<void>): Promise<void> {
+    this.clearPendingRender();
+    const cancelled = new Promise<void>((resolve) => {
+      this.cancelPendingRender = resolve;
     });
-    this.themeRender = render;
-    return render;
+    const pending = Promise.race([render, cancelled]).finally(() => {
+      if (this.pendingRender === pending) {
+        this.pendingRender = null;
+        this.cancelPendingRender = null;
+      }
+    });
+    this.pendingRender = pending;
+    return pending;
   }
 
   static enterEditAt(view: EditorView, pos: number, caret: 'start' | 'end' = 'start'): boolean {
+    if (!view.editable || view.isDestroyed) return false;
     for (const instance of MermaidBlockNodeView.instances) {
       if (instance.view !== view) continue;
       if (instance.getPos() === pos) {
-        instance.enterEdit(caret);
-        return true;
+        return instance.enterEdit(caret);
       }
     }
     return false;
@@ -150,6 +189,7 @@ export class MermaidBlockNodeView {
     pos: number,
     caret: 'start' | 'end' = 'start',
   ): boolean {
+    if (!view.editable || view.isDestroyed) return false;
     let closestInstance: MermaidBlockNodeView | null = null;
     let closestDistance = Number.POSITIVE_INFINITY;
 
@@ -163,17 +203,31 @@ export class MermaidBlockNodeView {
     }
 
     if (!closestInstance || closestDistance > 4) return false;
-    closestInstance.enterEdit(caret);
-    return true;
+    return closestInstance.enterEdit(caret);
   }
 
   update(node: ProseMirrorNode): boolean {
     if (node.type !== this.node.type) return false;
     const codeChanged = node.attrs.code !== this.node.attrs.code;
     this.node = node;
-    // 焦点和选区事务不应重建查看器，否则全屏打开后会立即被销毁。
-    if (!this.editing && codeChanged) {
-      this.renderMermaid();
+    if (this.editing && !this.view.editable) {
+      this.cleanupEdit();
+      void this.renderMermaid();
+    } else if (codeChanged) {
+      this.dom.setAttribute('data-code', node.attrs.code as string);
+      if (this.editing && this.textarea) {
+        // 自身提交先结束编辑再 dispatch；仍处于编辑态的变化来自撤销或外部更新。
+        const { selectionStart, selectionEnd, selectionDirection } = this.textarea;
+        this.originalCode = node.attrs.code as string;
+        this.textarea.value = this.originalCode;
+        this.textarea.setSelectionRange(selectionStart, selectionEnd, selectionDirection);
+        this.autoResizeTextarea();
+        this.clearPreviewDebounce();
+        void this.updatePreview();
+      } else {
+        // 焦点和选区事务不应重建查看器，否则全屏打开后会立即被销毁。
+        void this.renderMermaid();
+      }
     }
     return true;
   }
@@ -216,48 +270,55 @@ export class MermaidBlockNodeView {
     MermaidBlockNodeView.instances.delete(this);
   }
 
-  private async renderMermaid(): Promise<void> {
-    if (this.destroyed) return;
+  private renderMermaid(): Promise<void> {
+    if (this.destroyed || this.editing) return Promise.resolve();
+    this.clearPendingRender();
     const id = ++this.renderId;
     const code = this.node.attrs.code as string;
     this.dom.setAttribute('data-code', code);
 
-    if (this.editing) return;
-
     if (!code.trim()) {
       this.renderEmptyDiagram();
-      return;
+      this.renderedCode = code;
+      return Promise.resolve();
     }
 
     const renderer = getDiagramRenderer();
     if (!renderer) {
       this.disposeFullscreen();
       this.dom.textContent = `\`\`\`mermaid\n${code}\n\`\`\``;
-      return;
+      this.renderedCode = code;
+      return Promise.resolve();
     }
 
-    try {
-      const result = await renderer.renderMermaid(code, { theme: this.getTheme() });
-      if (this.editing || id !== this.renderId) return;
-      if (result.error) {
-        this.renderError(result.error, code);
-      } else {
-        this.renderDisplayDiagram(normalizeMermaidSvgSize(result.svg));
+    return this.trackPendingRender((async () => {
+      try {
+        const result = await renderer.renderMermaid(code, { theme: this.getTheme() });
+        if (this.destroyed || this.view.isDestroyed || this.editing || id !== this.renderId) return;
+        if (result.error) {
+          this.renderError(result.error, code);
+        } else {
+          this.renderDisplayDiagram(normalizeMermaidSvgSize(result.svg));
+        }
+        this.renderedCode = code;
+      } catch (error) {
+        if (this.destroyed || this.view.isDestroyed || this.editing || id !== this.renderId) return;
+        this.renderError(error instanceof Error ? error.message : t.mermaidRenderFailed(), code);
+        this.renderedCode = code;
       }
-    } catch (error) {
-      if (this.editing || id !== this.renderId) return;
-      this.renderError(error instanceof Error ? error.message : t.mermaidRenderFailed(), code);
-    }
+    })());
   }
 
-  private enterEdit(caret: 'start' | 'end' = 'start'): void {
-    if (this.editing || this.destroyed || this.view.isDestroyed) return;
+  private enterEdit(caret: 'start' | 'end' = 'start'): boolean {
+    if (!this.view.editable || this.editing || this.destroyed || this.view.isDestroyed) return false;
     registerActiveEdit(this.view, this.activeEditExitFn);
     this.editing = true;
     this.renderId += 1;
     this.previewRenderId += 1;
+    this.clearPendingRender();
     this.disposeFullscreen();
     this.originalCode = this.node.attrs.code as string;
+    const snapshotCurrent = this.renderedCode === this.originalCode;
     this.previewSnapshotEl = this.takeRenderedPreviewSnapshot('mermaid-block-preview-snapshot');
     this.dom.classList.add('is-editing');
     this.dom.classList.remove('ProseMirror-selectednode');
@@ -281,6 +342,8 @@ export class MermaidBlockNodeView {
       if (this.previewEl.querySelector('svg')) this.bindPreviewViewport();
     }
 
+    if (!this.previewSnapshotEl || !snapshotCurrent) void this.updatePreview();
+
     this.textarea.addEventListener('input', () => {
       this.autoResizeTextarea();
       this.schedulePreviewUpdate();
@@ -294,15 +357,24 @@ export class MermaidBlockNodeView {
     });
 
     requestAnimationFrame(() => {
-      if (!this.textarea) return;
+      if (!this.textarea || !this.editing || this.destroyed || !this.view.editable) return;
       this.textarea.focus({ preventScroll: true });
       const pos = caret === 'end' ? this.textarea.value.length : 0;
       this.textarea.setSelectionRange(pos, pos);
     });
+    return true;
   }
 
   private exitEdit(save: boolean, selection: 'before' | 'after' | 'preserve' = 'preserve'): void {
     if (!this.editing) return;
+    if (this.destroyed || this.view.isDestroyed) {
+      this.cleanupEdit();
+      return;
+    }
+    if (!this.view.editable) {
+      save = false;
+      selection = 'preserve';
+    }
 
     const newCode = save && this.textarea ? this.textarea.value : this.originalCode;
     const oldCode = this.node.attrs.code as string;
@@ -312,7 +384,7 @@ export class MermaidBlockNodeView {
 
     let tr = this.view.state.tr;
     if (save && newCode !== oldCode) {
-      tr = tr.setNodeMarkup(pos, null, { code: newCode });
+      tr = tr.setNodeMarkup(pos, null, { ...this.node.attrs, code: newCode });
     }
 
     if (selection === 'before') {
@@ -325,6 +397,7 @@ export class MermaidBlockNodeView {
     if (tr.docChanged || selection !== 'preserve') {
       this.view.dispatch(tr);
     }
+    if (!tr.docChanged) void this.renderMermaid();
     if (selection === 'before' || selection === 'after') {
       this.view.focus();
     }
@@ -336,12 +409,14 @@ export class MermaidBlockNodeView {
     this.editing = false;
     this.clearPreviewDebounce();
     this.previewRenderId += 1;
+    this.clearPendingRender();
+    this.renderedCode = null;
     this.dom.classList.remove('is-editing');
+    this.editSurfaceEl?.remove();
     this.textarea = null;
     this.previewEl = null;
     this.previewSnapshotEl = null;
     this.editSurfaceEl = null;
-    void this.renderMermaid();
   }
 
   private takeRenderedPreviewSnapshot(className: string): HTMLElement | null {
@@ -376,7 +451,12 @@ export class MermaidBlockNodeView {
   }
 
   private handleKeyDown(event: KeyboardEvent): void {
-    if (!this.textarea) return;
+    if (!this.textarea || this.destroyed || this.view.isDestroyed) return;
+    if (!this.view.editable) {
+      event.preventDefault();
+      this.exitEdit(false);
+      return;
+    }
 
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && event.shiftKey) {
       event.preventDefault();
@@ -432,39 +512,50 @@ export class MermaidBlockNodeView {
     this.textarea.rows = Math.max(4, this.textarea.value.split('\n').length);
   }
 
-  private async updatePreview(): Promise<void> {
-    if (!this.previewEl || !this.textarea) return;
+  private updatePreview(): Promise<void> {
+    if (
+      this.destroyed || this.view.isDestroyed || !this.editing || !this.previewEl || !this.textarea
+    ) return Promise.resolve();
+    this.clearPendingRender();
     const id = ++this.previewRenderId;
     const code = this.textarea.value;
     const renderer = getDiagramRenderer();
     if (!code.trim()) {
       this.setPreviewContent('', { error: false, renderId: id });
-      return;
+      return Promise.resolve();
     }
     if (!renderer) {
       this.setPreviewContent('(diagram renderer unavailable)', { error: true, renderId: id });
-      return;
+      return Promise.resolve();
     }
 
-    try {
-      const result = await renderer.renderMermaid(code, { theme: this.getTheme() });
-      if (!this.editing || !this.previewEl || id !== this.previewRenderId) return;
-      if (result.error) {
-        this.setPreviewContent(result.error, { error: true, renderId: id });
-      } else {
-        this.setPreviewContent(normalizeMermaidSvgSize(result.svg), {
-          error: false,
-          html: true,
+    return this.trackPendingRender((async () => {
+      try {
+        const result = await renderer.renderMermaid(code, { theme: this.getTheme() });
+        if (
+          this.destroyed || this.view.isDestroyed || !this.editing ||
+          !this.previewEl || id !== this.previewRenderId
+        ) return;
+        if (result.error) {
+          this.setPreviewContent(result.error, { error: true, renderId: id });
+        } else {
+          this.setPreviewContent(normalizeMermaidSvgSize(result.svg), {
+            error: false,
+            html: true,
+            renderId: id,
+          });
+        }
+      } catch (error) {
+        if (
+          this.destroyed || this.view.isDestroyed || !this.editing ||
+          !this.previewEl || id !== this.previewRenderId
+        ) return;
+        this.setPreviewContent(error instanceof Error ? error.message : t.mermaidRenderFailed(), {
+          error: true,
           renderId: id,
         });
       }
-    } catch (error) {
-      if (!this.editing || !this.previewEl || id !== this.previewRenderId) return;
-      this.setPreviewContent(error instanceof Error ? error.message : t.mermaidRenderFailed(), {
-        error: true,
-        renderId: id,
-      });
-    }
+    })());
   }
 
   private schedulePreviewUpdate(): void {
@@ -487,7 +578,7 @@ export class MermaidBlockNodeView {
     content: string,
     options: { error: boolean; html?: boolean; renderId: number },
   ): void {
-    if (!this.previewEl || options.renderId !== this.previewRenderId) return;
+    if (this.destroyed || !this.editing || !this.previewEl || options.renderId !== this.previewRenderId) return;
 
     this.disposeViewport();
     this.previewEl.classList.toggle('is-error', options.error);

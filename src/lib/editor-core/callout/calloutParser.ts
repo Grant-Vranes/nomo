@@ -46,33 +46,29 @@ export function transformCalloutTokens(tokens: Token[]): void {
       continue;
     }
 
-    // 在 blockquote_open 和 blockquote_close 之间查找第一个段落
-    // blockquote 内部结构：paragraph_open, inline, paragraph_close, ...
-    const innerTokens = tokens.slice(openIdx + 1, closeIdx);
-    const paraOpenIdx = innerTokens.findIndex((t) => t.type === 'paragraph_open');
-
-    if (paraOpenIdx === -1) {
-      i = closeIdx + 1;
-      continue;
-    }
-
-    // 段落的 inline token 紧跟在 paragraph_open 之后
-    const inlineTok = innerTokens[paraOpenIdx + 1];
-    if (!inlineTok || inlineTok.type !== 'inline') {
-      i = closeIdx + 1;
+    // 标记只能位于当前引用的首个直接段落，列表、后段和嵌套引用不能提升外层。
+    const paraOpenIdx = openIdx + 1;
+    const paraOpenTok = tokens[paraOpenIdx];
+    const inlineTok = tokens[paraOpenIdx + 1];
+    if (
+      paraOpenTok?.type !== 'paragraph_open' ||
+      paraOpenTok.level !== tok.level + 1 ||
+      inlineTok?.type !== 'inline'
+    ) {
+      i++;
       continue;
     }
 
     // 检查 inline 内容是否以 [!TYPE] 开头
     const match = inlineTok.content.match(CALLOUT_MARKER_RE);
     if (!match) {
-      i = closeIdx + 1;
+      i++;
       continue;
     }
 
     const calloutType = match[1].toLowerCase() as CalloutType;
     if (!VALID_TYPES.has(calloutType)) {
-      i = closeIdx + 1;
+      i++;
       continue;
     }
 
@@ -100,7 +96,7 @@ export function transformCalloutTokens(tokens: Token[]): void {
 
     // 如果剥离后 inline 内容为空，且是唯一段落，则移除整个段落 token 组
     if (inlineTok.content.trim() === '' && inlineTok.children?.length === 0) {
-      const removeStart = openIdx + 1 + paraOpenIdx;
+      const removeStart = paraOpenIdx;
       tokens.splice(removeStart, 3); // 移除 paragraph_open, inline, paragraph_close
 
       // 如果移除后 callout 内部为空，插入一个空段落
@@ -117,8 +113,8 @@ export function transformCalloutTokens(tokens: Token[]): void {
       }
     }
 
-    // 从 closeTok 之后继续扫描
-    i = tokens.indexOf(closeTok) + 1;
+    // 内层引用按自己的首段独立识别，不能借其标记改写外层。
+    i = openIdx + 1;
   }
 }
 

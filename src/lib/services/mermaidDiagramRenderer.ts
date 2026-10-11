@@ -10,10 +10,10 @@ let renderSequence = 0;
 export function createMermaidDiagramRenderer(): DiagramRenderer {
   return {
     async renderMermaid(code, options) {
+      renderSequence += 1;
+      const id = `nomo-${hashText(code)}-${renderSequence}`;
       try {
         const mermaid = await loadMermaid(options.theme);
-        renderSequence += 1;
-        const id = `nomo-${hashText(code)}-${renderSequence}`;
         const result = await mermaid.render(id, code);
         return { svg: result.svg };
       } catch (error) {
@@ -21,6 +21,12 @@ export function createMermaidDiagramRenderer(): DiagramRenderer {
           svg: '',
           error: error instanceof Error ? error.message : 'Mermaid 渲染失败',
         };
+      } finally {
+        // Mermaid 失败路径会留下请求专属的临时容器；精确清理，不影响其他图表。
+        if (typeof document !== 'undefined') {
+          document.getElementById(`d${id}`)?.remove();
+          document.getElementById(`i${id}`)?.remove();
+        }
       }
     },
   };

@@ -42,7 +42,7 @@ export function extractFrontMatterBlock(markdown: string): FrontMatterBlock | nu
     lineEnding,
     start: 0,
     end,
-    body: markdown.slice(end).replace(/^\s+/, ''),
+    body: removeLeadingBlankLines(markdown.slice(end)),
     fields: parseFrontMatterFields(content),
   };
 }
@@ -81,14 +81,14 @@ export function ensureFrontMatter(markdown: string, date?: string): string {
     return template;
   }
 
-  return `${template}\n${markdown.replace(/^\s+/, '')}`;
+  return `${template}\n${removeLeadingBlankLines(markdown)}`;
 }
 
 export function replaceFrontMatterContent(markdown: string, content: string): string {
   const normalizedContent = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\s+$/, '');
   const current = extractFrontMatterBlock(markdown);
   const lineEnding = current?.lineEnding ?? '\n';
-  const body = current ? markdown.slice(current.end).replace(/^\s+/, '') : markdown.replace(/^\s+/, '');
+  const body = current?.body ?? removeLeadingBlankLines(markdown);
   const lines = ['---', ...normalizedContent.split('\n'), '---', ''];
   const block = lines.join(lineEnding);
 
@@ -105,7 +105,12 @@ export function removeFrontMatter(markdown: string): string {
     return markdown;
   }
 
-  return markdown.slice(current.end).replace(/^\s+/, '');
+  return current.body;
+}
+
+function removeLeadingBlankLines(markdown: string): string {
+  // 首个正文行的空格或 Tab 可能表示缩进代码，只移除完整的分隔空行。
+  return markdown.replace(/^(?:[ \t]*(?:\r?\n|$))+/, '');
 }
 
 function parseFrontMatterFields(content: string): FrontMatterFields {

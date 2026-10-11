@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import Token from 'markdown-it/lib/token.mjs';
+import { unescapeAll } from 'markdown-it/lib/common/utils.mjs';
 import { normalizeLinkHref } from './link';
 import { transformCalloutTokens } from './callout/calloutParser';
 
@@ -27,7 +28,25 @@ export function escapeHtmlAttr(s: string): string {
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/\r/g, '&#13;')
+    .replace(/\n/g, '&#10;');
+}
+
+/** 完整消费每个属性及其引号值，保留顺序供调用方选择重复属性语义。 */
+export function parseHtmlAttributes(tagContent: string): Array<[string, string]> {
+  const attrs: Array<[string, string]> = [];
+  const tag = /^<\/?[a-zA-Z][\w:-]*/.exec(tagContent);
+  const attrRegex = /\s*([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+)))?/y;
+  attrRegex.lastIndex = tag?.[0].length ?? 0;
+  let match: RegExpExecArray | null;
+  while ((match = attrRegex.exec(tagContent)) !== null) {
+    const value = match[2] ?? match[3] ?? match[4];
+    if (value === undefined) continue;
+    // HTML 属性不使用 Markdown 反斜杠转义，只解码一次字符实体。
+    attrs.push([match[1].toLowerCase(), unescapeAll(value.replace(/\\/g, '\\\\'))]);
+  }
+  return attrs;
 }
 
 /** 从 <img ...> 标签内容中提取 src / alt / title / width */
@@ -43,12 +62,7 @@ export function parseHtmlImgAttrs(tagContent: string): {
     title: string | null;
     width: string | null;
   } = { src: null, alt: null, title: null, width: null };
-  // 匹配 key="value" | key='value' | key=value（value 不含空白和 >）
-  const attrRegex = /([a-zA-Z][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
-  let match: RegExpExecArray | null;
-  while ((match = attrRegex.exec(tagContent)) !== null) {
-    const name = match[1].toLowerCase();
-    const value = match[2] ?? match[3] ?? match[4];
+  for (const [name, value] of parseHtmlAttributes(tagContent)) {
     if (name === 'src') result.src = value;
     else if (name === 'alt') result.alt = value;
     else if (name === 'title') result.title = value;
@@ -176,7 +190,8 @@ export function createMarkdownTokenizer(options: { inlineSource?: boolean; liter
       token.markup = '[^]';
       token.meta = { id };
     }
-    state.pos = end + 1;
+    // 静默扫描只推进左括号，让链接标签按文本括号平衡，避免被当成嵌套链接。
+    state.pos = silent ? pos + 1 : end + 1;
     return true;
   });
 
@@ -206,18 +221,15 @@ export function createMarkdownTokenizer(options: { inlineSource?: boolean; liter
     }
     if (end >= src.length || end === pos + 1) return false;
 
-    const tex = src
-      .slice(pos + 1, end)
-      .trim()
-      .replace(/\\\$/g, '$');
+    const tex = src.slice(pos + 1, end).trim();
     if (!tex.trim()) return false;
 
     if (!silent) {
       const token = state.push('math_inline', '', 0);
       token.content = tex;
       token.markup = '$';
-      state.pos = end + 1;
     }
+    state.pos = end + 1;
     return true;
   });
 
@@ -311,6 +323,7 @@ export function createMarkdownTokenizer(options: { inlineSource?: boolean; liter
     const imgAttrs = parseHtmlImgAttrs(tagContent);
     if (!imgAttrs.src) return false;
 
+    state.pos = end + 1;
     if (silent) return true;
 
     const token = state.push('image', 'img', 0);
@@ -326,6 +339,7 @@ export function createMarkdownTokenizer(options: { inlineSource?: boolean; liter
 
   // 注册 markdown-it block rule 识别 $$...$$ 跨行公式
   markdownIt.block.ruler.after('fence', 'math_display', (state, startLine, endLine, silent) => {
+    if (state.sCount[startLine] - state.blkIndent >= 4) return false;
     const startPos = state.bMarks[startLine] + state.tShift[startLine];
     const lineText = state.src.slice(startPos, state.eMarks[startLine]).trim();
 
@@ -353,14 +367,18 @@ export function createMarkdownTokenizer(options: { inlineSource?: boolean; liter
     let nextLine = startLine + 1;
 
     for (let i = startLine + 1; i < endLine; i++) {
-      const line = state.src.slice(state.bMarks[i], state.eMarks[i]).trimEnd();
+      const linePos = state.bMarks[i] + state.tShift[i];
+      // 非空行退出当前列表或引用容器后，不能在相邻项中继续寻找闭合符。
+      if (linePos < state.eMarks[i] && state.sCount[i] < state.blkIndent) break;
+      const contentLine = state.getLines(i, i + 1, state.blkIndent, false);
+      const line = contentLine.trimEnd();
       if (line.endsWith('$$')) {
         texLines.push(line.slice(0, -2));
         foundClose = true;
         nextLine = i + 1;
         break;
       }
-      texLines.push(state.src.slice(state.bMarks[i], state.eMarks[i]));
+      texLines.push(contentLine);
     }
 
     if (!foundClose) return false;
@@ -375,6 +393,25 @@ export function createMarkdownTokenizer(options: { inlineSource?: boolean; liter
     state.line = nextLine;
     return true;
   });
+
+  const tokenizeBlocks = markdownIt.block.tokenize.bind(markdownIt.block);
+  markdownIt.block.tokenize = (state, startLine, endLine) => {
+    const firstTokenIndex = state.tokens.length;
+    tokenizeBlocks(state, startLine, endLine);
+    for (let index = firstTokenIndex; index < state.tokens.length; index++) {
+      const token = state.tokens[index];
+      if (!isTocStartToken(token) || typeof token.meta?.tocContainerContent === 'string') continue;
+      const endIndex = findTocEndTokenIndex(state.tokens, index + 1);
+      const start = token.map?.[0];
+      const end = state.tokens[endIndex]?.map?.[0];
+      if (start == null || end == null) continue;
+      // 此时引用逐行前缀、列表缩进仍在 StateBlock 中生效；避免从 marker 空格反推容器。
+      token.meta = {
+        ...token.meta,
+        tocContainerContent: state.getLines(start + 1, end, state.blkIndent, false),
+      };
+    }
+  };
 
   const parseMarkdownTokens = markdownIt.parse.bind(markdownIt);
   markdownIt.parse = (src, env) => {
@@ -568,10 +605,11 @@ function collapseTocTokens(tokens: Token[], markdown: string): Token[] {
     const startLine = token.map?.[0] ?? 0;
     const endLine = tokens[endIndex].map?.[0] ?? startLine;
     const tocToken = new Token('toc_block', '', 0);
-    tocToken.content = lines
-      .slice(startLine + 1, endLine)
-      .join('\n')
-      .trim();
+    tocToken.level = token.level;
+    // 容器前缀由 block 解析阶段移除，序列化时再逐行添加。
+    const containerContent =
+      token.meta?.tocContainerContent ?? lines.slice(startLine + 1, endLine).join('\n');
+    tocToken.content = containerContent.replace(/^(?:[ \t]*\r?\n)+|(?:\r?\n[ \t]*)+$/g, '');
     tocToken.map = [startLine, tokens[endIndex].map?.[1] ?? endLine + 1];
     result.push(tocToken);
     index = endIndex;
@@ -581,11 +619,11 @@ function collapseTocTokens(tokens: Token[], markdown: string): Token[] {
 }
 
 function isTocStartToken(token: Token): boolean {
-  return token.type === 'html_block' && /^<!--\s*toc\s*-->\s*$/i.test(token.content.trim());
+  return token.type === 'html_block' && /^<!--[^\S\r\n]*toc[^\S\r\n]*-->\s*$/i.test(token.content.trim());
 }
 
 function isTocEndToken(token: Token): boolean {
-  return token.type === 'html_block' && /^<!--\s*\/toc\s*-->\s*$/i.test(token.content.trim());
+  return token.type === 'html_block' && /^<!--[^\S\r\n]*\/toc[^\S\r\n]*-->\s*$/i.test(token.content.trim());
 }
 
 function findTocEndTokenIndex(tokens: Token[], from: number): number {

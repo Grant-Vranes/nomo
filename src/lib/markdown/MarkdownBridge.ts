@@ -13,11 +13,11 @@ export interface MarkdownBridge {
 export function createMarkdownBridge(): MarkdownBridge {
   return {
     parse(markdown) {
-      const frontMatter = extractFrontMatter(markdown);
+      const frontMatter = extractFrontMatterBlock(markdown);
 
       return {
-        markdown: frontMatter ? markdown.slice(frontMatter.length).trimStart() : markdown,
-        frontMatter,
+        markdown: frontMatter?.body ?? markdown,
+        frontMatter: frontMatter?.raw,
       };
     },
     serialize(document) {
@@ -28,8 +28,4 @@ export function createMarkdownBridge(): MarkdownBridge {
       return `${document.frontMatter}${document.markdown}`;
     },
   };
-}
-
-function extractFrontMatter(markdown: string): string | undefined {
-  return extractFrontMatterBlock(markdown)?.raw;
 }

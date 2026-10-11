@@ -20,6 +20,8 @@ export function serializeCallout(state: MarkdownSerializerState, node: ProseMirr
   state.wrapBlock('> ', null, node, () => {
     // 第一行输出 [!TYPE] 标记
     state.write(`[!${calloutType}]\n`);
+    // 首块是分割线时隔开标记行，避免 --- 将 [!TYPE] 解析成 Setext 标题。
+    if (node.firstChild?.type.name === 'horizontal_rule') state.write('\n');
     // 渲染子内容（会被 wrapBlock 自动加 `> ` 前缀）
     state.renderContent(node);
   });

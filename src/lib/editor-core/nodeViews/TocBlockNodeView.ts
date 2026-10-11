@@ -2,8 +2,7 @@ import { TextSelection } from 'prosemirror-state';
 import type { Node as ProseMirrorNode } from 'prosemirror-model';
 import type { EditorView } from 'prosemirror-view';
 import { onInterfaceLocaleChanged, t } from '../../../app/i18n';
-import { slugifyHeading } from '../../toc/tocService';
-import { normalizeHeadingTitle } from '../../outline/outlineService';
+import { createHeadingIdAllocator, extractDocumentTocItems, normalizeHeadingTitle } from '../../toc/tocService';
 
 interface TocRow {
   title: string;
@@ -124,6 +123,7 @@ export class TocBlockNodeView {
   }
 
   private deleteBlock(): void {
+    if (!this.view.editable) return;
     const pos = this.getPos();
     const tr = this.view.state.tr.delete(pos, pos + this.node.nodeSize);
     this.view.dispatch(tr.scrollIntoView());
@@ -131,33 +131,20 @@ export class TocBlockNodeView {
   }
 
   private scrollToHeading(headingId: string): void {
-    let foundPos: number | null = null;
-    const usedIds = new Map<string, number>();
-    this.view.state.doc.descendants((node, pos) => {
-      if (node.type.name !== 'heading') {
-        return true;
-      }
-      const title = normalizeHeadingTitle(node.textContent);
-      const baseId = slugifyHeading(title) || `heading-${pos}`;
-      const seen = usedIds.get(baseId) ?? 0;
-      usedIds.set(baseId, seen + 1);
-      const currentId = seen === 0 ? baseId : `${baseId}-${seen + 1}`;
-      if (currentId === headingId) {
-        foundPos = pos;
-        return false;
-      }
-      return true;
-    });
+    const headings = extractDocumentTocItems(this.view.state.doc);
+    const heading = headings.find((item) => item.id === headingId);
+    if (!heading) return;
 
-    if (foundPos === null) {
-      return;
-    }
-
-    const targetNode = this.view.state.doc.nodeAt(foundPos);
-    const selectionPos = targetNode ? foundPos + 1 + targetNode.content.size : foundPos;
+    const targetNode = this.view.state.doc.nodeAt(heading.pos);
+    if (!targetNode) return;
+    const selectionPos = heading.pos + 1 + targetNode.content.size;
     const selection = TextSelection.near(this.view.state.doc.resolve(selectionPos));
     this.view.dispatch(this.view.state.tr.setSelection(selection));
-    smoothScrollToSemanticHeading(this.view.dom, headingId);
+    const targetDom = this.view.nodeDOM?.(heading.pos);
+    const target = targetDom instanceof HTMLElement
+      ? targetDom
+      : findSemanticHeadingById(this.view.dom, headingId);
+    smoothScrollToSemanticHeading(this.view.dom, target);
     this.view.focus();
   }
 }
@@ -167,7 +154,7 @@ function parseTocRows(content: string): TocRow[] {
   return content
     .split(/\r?\n/)
     .map((line) => {
-      const match = /^(\s*)-\s+\[(.+?)\]\(#(.+?)\)\s*$/.exec(line);
+      const match = /^(\s*)-\s+\[(.*?)\]\(#(.+?)\)\s*$/.exec(line);
       if (!match) {
         return null;
       }
@@ -191,9 +178,8 @@ function safeDecodeURIComponent(value: string): string {
   }
 }
 
-function smoothScrollToSemanticHeading(editorDom: HTMLElement, headingId: string): void {
+function smoothScrollToSemanticHeading(editorDom: HTMLElement, target: HTMLElement | null): void {
   const scrollContainer = editorDom.closest<HTMLElement>('.semantic-pane');
-  const target = findSemanticHeadingById(editorDom, headingId);
   if (!scrollContainer || !target) {
     return;
   }
@@ -211,21 +197,13 @@ function smoothScrollToSemanticHeading(editorDom: HTMLElement, headingId: string
 }
 
 function findSemanticHeadingById(editorDom: HTMLElement, headingId: string): HTMLElement | null {
-  const usedIds = new Map<string, number>();
-  const headings = Array.from(
-    editorDom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'),
-  );
-
-  for (const heading of headings) {
-    const title = normalizeHeadingTitle(heading.textContent ?? '');
-    const baseId = slugifyHeading(title) || `heading-${headings.indexOf(heading) + 1}`;
-    const seen = usedIds.get(baseId) ?? 0;
-    usedIds.set(baseId, seen + 1);
-    const currentId = seen === 0 ? baseId : `${baseId}-${seen + 1}`;
-    if (currentId === headingId) {
-      return heading;
-    }
+  const allocateId = createHeadingIdAllocator();
+  const headings = Array.from(editorDom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))
+    .filter((element) => !element.closest('.html-card'));
+  for (let index = 0; index < headings.length; index++) {
+    const heading = headings[index];
+    const fallbackId = allocateId(normalizeHeadingTitle(heading.textContent ?? ''), index + 1);
+    if ((heading.id || fallbackId) === headingId) return heading;
   }
-
   return null;
 }

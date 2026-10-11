@@ -25,7 +25,11 @@ export class CommentInlineNodeView {
   private destroyed = false;
   private suppressNextSelectAutoEdit = false;
   private originalContent = '';
-  private input: HTMLInputElement | null = null;
+  private input: HTMLTextAreaElement | null = null;
+  private composing = false;
+  private compositionEndTimer: number | null = null;
+  private compositionWaiters = new Set<() => void>();
+  private deferredExit: { save: boolean; cursorSide: 'before' | 'after' | 'preserve' } | null = null;
   private activeEditExitFn: (() => void) | null = null;
   private unsubscribeLocale: () => void = () => undefined;
 
@@ -54,7 +58,7 @@ export class CommentInlineNodeView {
       this.enterEdit();
     });
     this.dom.addEventListener('keydown', (event) => {
-      if (this.editing) return;
+      if (this.editing || event.defaultPrevented || event.target !== this.dom) return;
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
         this.enterEdit();
@@ -90,7 +94,12 @@ export class CommentInlineNodeView {
 
   update(node: ProseMirrorNode): boolean {
     if (node.type !== this.node.type) return false;
+    const contentChanged = node.attrs.content !== this.node.attrs.content;
     this.node = node;
+    if (this.editing && contentChanged) {
+      // 外部更新和撤销已改变文档，丢弃旧缓冲，避免随后失焦覆盖新内容。
+      this.cleanupEdit();
+    }
     this.syncAccessibleLabels();
     if (!this.editing) this.renderDisplay();
     return true;
@@ -138,18 +147,24 @@ export class CommentInlineNodeView {
   }
 
   private enterEdit(): void {
-    if (this.editing || this.destroyed || this.view.isDestroyed) return;
+    if (this.editing || this.destroyed || this.view.isDestroyed || !this.view.editable) return;
 
     this.editing = true;
     this.activeEditExitFn = () => this.exitEdit(true, 'preserve');
-    registerActiveEdit(this.view, this.activeEditExitFn);
+    registerActiveEdit(this.view, this.activeEditExitFn, undefined, {
+      isComposing: () => this.composing,
+      waitForCompositionEnd: () => this.waitForCompositionEnd(),
+    });
 
     this.originalContent = this.getContent();
     this.dom.classList.add('is-editing');
     this.dom.classList.remove('ProseMirror-selectednode');
 
-    this.input = document.createElement('input');
-    this.input.type = 'text';
+    this.input = document.createElement('textarea');
+    this.input.rows = 1;
+    this.input.wrap = 'off';
+    this.input.style.resize = 'none';
+    this.input.style.overflow = 'hidden';
     this.input.className = 'comment-inline-input';
     this.input.value = this.originalContent;
     this.input.setAttribute('aria-label', t.editInlineComment());
@@ -159,11 +174,31 @@ export class CommentInlineNodeView {
     this.dom.appendChild(this.input);
 
     this.input.addEventListener('input', () => this.updateInputWidth());
+    this.input.addEventListener('compositionstart', (event) => {
+      if (event.currentTarget !== this.input || !this.editing) return;
+      if (this.compositionEndTimer !== null) window.clearTimeout(this.compositionEndTimer);
+      this.compositionEndTimer = null;
+      this.composing = true;
+    });
+    this.input.addEventListener('compositionend', (event) => {
+      if (event.currentTarget !== this.input || !this.editing) return;
+      // compositionend 后的最终 input 事件先落地，再退出或释放保存等待。
+      this.compositionEndTimer = window.setTimeout(() => {
+        this.compositionEndTimer = null;
+        const deferredExit = this.deferredExit;
+        this.deferredExit = null;
+        this.finishComposition();
+        if (deferredExit) this.exitEdit(deferredExit.save, deferredExit.cursorSide);
+      }, 0);
+    });
     this.input.addEventListener('keydown', (event) => this.handleKeyDown(event));
-    this.input.addEventListener('blur', () => this.exitEdit(true));
+    this.input.addEventListener('blur', (event) => {
+      if (event.currentTarget === this.input) this.exitEdit(true);
+    });
 
+    const input = this.input;
     requestAnimationFrame(() => {
-      if (!this.input) return;
+      if (this.input !== input || !this.editing || !this.view.editable) return;
       this.input.focus({ preventScroll: true });
       const cursorSide = CommentInlineNodeView.keyboardEntries.get(this.view) ?? CommentInlineNodeView.nextKeyboardCursorSide;
       CommentInlineNodeView.keyboardEntries.delete(this.view);
@@ -175,6 +210,17 @@ export class CommentInlineNodeView {
 
   private exitEdit(save: boolean, cursorSide: 'before' | 'after' | 'preserve' = 'after'): void {
     if (!this.editing) return;
+    if (this.destroyed || this.view.isDestroyed || !this.view.editable) {
+      this.cleanupEdit();
+      return;
+    }
+    if (this.composing) {
+      this.deferredExit = {
+        save,
+        cursorSide: this.deferredExit?.cursorSide === 'preserve' ? 'preserve' : cursorSide,
+      };
+      return;
+    }
 
     const nextContent =
       save && this.input ? sanitizeCommentContent(this.input.value) : this.originalContent;
@@ -197,8 +243,23 @@ export class CommentInlineNodeView {
     if (cursorSide !== 'preserve') this.view.focus();
   }
 
+  private waitForCompositionEnd(): Promise<void> {
+    if (!this.composing) return Promise.resolve();
+    return new Promise((resolve) => this.compositionWaiters.add(resolve));
+  }
+
+  private finishComposition(): void {
+    this.composing = false;
+    for (const resolve of this.compositionWaiters) resolve();
+    this.compositionWaiters.clear();
+  }
+
   private cleanupEdit(): void {
     this.editing = false;
+    this.deferredExit = null;
+    if (this.compositionEndTimer !== null) window.clearTimeout(this.compositionEndTimer);
+    this.compositionEndTimer = null;
+    this.finishComposition();
     if (this.activeEditExitFn) {
       unregisterActiveEdit(this.view, this.activeEditExitFn);
       this.activeEditExitFn = null;
@@ -209,16 +270,22 @@ export class CommentInlineNodeView {
   }
 
   private handleKeyDown(event: KeyboardEvent): void {
-    if (!this.input) return;
+    if (!this.input || event.currentTarget !== this.input) return;
+    if (this.composing || event.isComposing || event.keyCode === 229) {
+      event.stopPropagation();
+      return;
+    }
 
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
+      event.stopPropagation();
       this.exitEdit(true);
       return;
     }
 
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       this.exitEdit(false);
       return;
     }
@@ -229,6 +296,7 @@ export class CommentInlineNodeView {
       this.input.selectionEnd === 0
     ) {
       event.preventDefault();
+      event.stopPropagation();
       this.exitEdit(true, 'before');
       return;
     }
@@ -239,6 +307,7 @@ export class CommentInlineNodeView {
       this.input.selectionEnd === this.input.value.length
     ) {
       event.preventDefault();
+      event.stopPropagation();
       this.exitEdit(true, 'after');
     }
   }
@@ -254,6 +323,11 @@ export class CommentInlineNodeView {
       ),
     );
     this.input.style.width = `${nextWidth}px`;
+    const computed = window.getComputedStyle(this.input);
+    const lineHeight = Number.parseFloat(computed.lineHeight) ||
+      (Number.parseFloat(computed.fontSize) || 16) * 1.2;
+    this.input.style.height = 'auto';
+    this.input.style.height = `${Math.max(this.input.scrollHeight, this.input.value.split('\n').length * lineHeight)}px`;
   }
 
   private getContent(): string {
@@ -284,7 +358,7 @@ function createCommentPreviewText(content: string): string {
   return `${preview}${chars.length > COMMENT_INLINE_PREVIEW_LENGTH ? '…' : ''}`;
 }
 
-function measureInputContentWidth(input: HTMLInputElement): number {
+function measureInputContentWidth(input: HTMLTextAreaElement): number {
   const computed = window.getComputedStyle(input);
   const measure = document.createElement('span');
   measure.className = 'comment-inline-measure';

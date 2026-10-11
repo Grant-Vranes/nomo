@@ -20,10 +20,10 @@ import { dismissQuickInsert, quickInsertPlugin } from './plugins/quickInsert';
 import { DEFAULT_QUICK_INSERT_TRIGGER, isQuickInsertTrigger } from './quickInsert';
 import { keymap } from 'prosemirror-keymap';
 import { EditorState, Selection, NodeSelection, TextSelection, type Transaction } from 'prosemirror-state';
-import { Slice, Fragment, DOMSerializer, type Node as ProseMirrorNode, type ResolvedPos } from 'prosemirror-model';
+import { Slice, Fragment, DOMSerializer, DOMParser, type Node as ProseMirrorNode, type ResolvedPos } from 'prosemirror-model';
 import { EditorView } from 'prosemirror-view';
 import { liftListItem, sinkListItem, splitListItem, wrapInList } from 'prosemirror-schema-list';
-import { goToNextCell, tableEditing } from 'prosemirror-tables';
+import { goToNextCell, tableEditing, handlePaste as handleTablePaste, isInTable, TableMap } from 'prosemirror-tables';
 import { CodeBlockNodeView } from './nodeViews/CodeBlockNodeView';
 import { CommentBlockNodeView } from './nodeViews/CommentBlockNodeView';
 import { CommentInlineNodeView } from './nodeViews/CommentInlineNodeView';
@@ -37,7 +37,12 @@ import { MermaidBlockNodeView } from './nodeViews/MermaidBlockNodeView';
 import { CalloutNodeView } from './nodeViews/CalloutNodeView';
 import { HorizontalRuleNodeView } from './nodeViews/HorizontalRuleNodeView';
 import { TocBlockNodeView } from './nodeViews/TocBlockNodeView';
-import { commitActiveEdit } from './nodeViews/activeEditRegistry';
+import {
+  awaitActiveEditCompositionEnd,
+  cancelActiveEdit,
+  commitActiveEdit,
+  isActiveEditComposing,
+} from './nodeViews/activeEditRegistry';
 import {
   executeEditorCommand,
   insertSoftLineBreak,
@@ -61,10 +66,11 @@ import {
   isInlineSourceComposing,
   getEmptyInlineTemplateFormats,
 } from './plugins/inlineSourceEditing';
-import { toggleInlineSourceFormat, getActiveInlineSourceFormats } from './inlineSourceCommands';
+import { toggleInlineSourceFormat, getActiveInlineSourceFormats, replaceInlineSourceCodeText } from './inlineSourceCommands';
 import {
   materializeInlineSource,
   materializeInlineSourceWithMapping,
+  readTaskListMarker,
   projectInlineSource,
   projectInlineSourceWithMapping,
 } from './InlineSourceCodec';
@@ -91,6 +97,9 @@ import {
   type SemanticBlockAlignmentGap,
 } from './plugins/blockAlignment';
 import {
+  collectMarkdownImageSrcs,
+  normalizeImageSrc,
+  tryParseMarkdown,
   createMarkdownInputRules,
   getMarkdownBlockLineMap,
   parseMarkdown,
@@ -174,6 +183,10 @@ export class ProseMirrorEditorCore implements EditorCore {
   private destroyed = false;
   private plainTextPasteRequested = false;
   private plainTextPasteResetTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly htmlPasteContexts = new WeakMap<
+    ClipboardEvent,
+    { text: string; result?: EditorPasteResult }
+  >();
   private runtime: EditorRuntimeOptions;
   private listeners = new Set<EditorListener>();
   private blockAlignmentGaps = new Map<string, number>();
@@ -223,19 +236,39 @@ export class ProseMirrorEditorCore implements EditorCore {
       editable: () => this.isEditable(),
       clipboardTextSerializer: (slice) => this.serializeClipboardText(slice),
       clipboardTextParser: (text, $context) => createPlainTextSlice(text, $context),
-      transformPasted: (slice) => this.transformInlineSourceSlice(slice, materializeInlineSource),
+      transformPasted: (slice, view) => this.transformInlineSourceSlice(
+        slice,
+        view.state.selection.$from.parent.type === schema.nodes.html_block &&
+          view.state.selection.$from.sameParent(view.state.selection.$to)
+          ? projectInlineSource
+          : materializeInlineSource,
+      ),
       transformCopied: (slice, view) => {
         if (!(view.state.selection instanceof TextSelection)) {
           return this.transformInlineSourceSlice(slice, projectInlineSource);
         }
         const projected = projectInlineSourceWithMapping(view.state.doc);
-        return projected.doc.slice(
-          projected.mapPosition(view.state.selection.from, 1),
-          projected.mapPosition(view.state.selection.to, -1),
-          true,
-        );
+        const from = projected.mapPosition(view.state.selection.from, 1);
+        const to = projected.mapPosition(view.state.selection.to, -1);
+        const copied = projected.doc.slice(from, to, true);
+        const $from = projected.doc.resolve(from);
+        // 只修正复制片段左边界被裁剪的列表；原文和完整包含的嵌套列表保持原始序号。
+        const adjustListStart = (content: Fragment, depth: number): Fragment => {
+          const first = content.firstChild;
+          if (!first || depth > $from.depth) return content;
+          let adjusted = first.copy(adjustListStart(first.content, depth + 1));
+          if (first.type === schema.nodes.ordered_list && $from.index(depth) > 0) {
+            adjusted = first.type.create(
+              { ...first.attrs, order: Number(first.attrs.order ?? 1) + $from.index(depth) },
+              adjusted.content,
+              first.marks,
+            );
+          }
+          return content.replaceChild(0, adjusted);
+        };
+        return new Slice(adjustListStart(copied.content, 1), copied.openStart, copied.openEnd);
       },
-      handlePaste: (_view, event) => this.handleNativePaste(event),
+      handlePaste: (_view, event, slice) => this.handleNativePaste(event, slice),
       handleDOMEvents: {
         keydown: (_view, event) => {
           if (
@@ -286,9 +319,9 @@ export class ProseMirrorEditorCore implements EditorCore {
 
   commitPendingEdits(): void {
     this.assertActive();
-    if (this.view) {
+    if (this.view && !isActiveEditComposing(this.view)) {
       commitActiveEdit(this.view);
-      clearEmptyInlineTemplates(this.view);
+      if (this.isEditable()) clearEmptyInlineTemplates(this.view);
     }
     this.flushPendingMarkdownSync();
   }
@@ -310,17 +343,21 @@ export class ProseMirrorEditorCore implements EditorCore {
 
   awaitCompositionEnd(): Promise<void> {
     const view = this.view;
-    if (!view || !isInlineSourceComposing(view)) return Promise.resolve();
-    return new Promise((resolve) => {
-      const finish = () => {
-        view.dom.removeEventListener('compositionend', onEnd);
-        this.compositionWaiters.delete(finish);
-        resolve();
-      };
-      const onEnd = () => window.setTimeout(finish, 0);
-      this.compositionWaiters.add(finish);
-      view.dom.addEventListener('compositionend', onEnd, { once: true });
-    });
+    if (!view || this.runtime.readonly) return Promise.resolve();
+    const nodeComposition = awaitActiveEditCompositionEnd(view);
+    const documentComposition = !isInlineSourceComposing(view)
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          const finish = () => {
+            view.dom.removeEventListener('compositionend', onEnd);
+            this.compositionWaiters.delete(finish);
+            resolve();
+          };
+          const onEnd = () => window.setTimeout(finish, 0);
+          this.compositionWaiters.add(finish);
+          view.dom.addEventListener('compositionend', onEnd, { once: true });
+        });
+    return Promise.all([documentComposition, nodeComposition]).then(() => undefined);
   }
 
   unmount(): void {
@@ -419,8 +456,11 @@ export class ProseMirrorEditorCore implements EditorCore {
     });
     for (const name of renderedTypes) {
       const fallback = nodes[name];
-      nodes[name] = (node) =>
-        (snapshots.get(node)?.cloneNode(true) as HTMLElement | undefined) ?? fallback(node);
+      nodes[name] = (node) => {
+        const snapshot = snapshots.get(node);
+        if (name === 'image' && snapshot) return ImageNodeView.getExportSnapshot(snapshot) ?? fallback(node);
+        return (snapshot?.cloneNode(true) as HTMLElement | undefined) ?? fallback(node);
+      };
     }
     for (const name of ['math_inline', 'math_block']) {
       nodes[name] = (node) => {
@@ -655,9 +695,6 @@ export class ProseMirrorEditorCore implements EditorCore {
     this.flushPendingMarkdownSync();
     const previousMarkdown = this.markdown;
     const delaySemanticSync = options?.sourceInput === true;
-    const previousDoc = delaySemanticSync
-      ? null
-      : (this.view?.state.doc ?? this.parseSemanticDocument(this.markdown).doc);
     this.markdown = updateTocBlocks(markdown);
     this.contentRevision += 1;
     this.syncSnapshot = null;
@@ -680,7 +717,7 @@ export class ProseMirrorEditorCore implements EditorCore {
     if (delaySemanticSync) {
       this.semanticViewDirty = true;
       this.suspendedState = null;
-      if (shouldReportImageDeletion(options)) {
+      if (this.options.onImagesDeleted && shouldReportImageDeletion(options)) {
         this.notifyDeletedImageSrcs(
           findFullyRemovedMarkdownImageSrcs(previousMarkdown, this.markdown),
         );
@@ -690,9 +727,10 @@ export class ProseMirrorEditorCore implements EditorCore {
     }
 
     this.replaceViewState(this.markdown);
-    if (previousDoc && shouldReportImageDeletion(options)) {
-      const nextDoc = this.view?.state.doc ?? this.parseSemanticDocument(this.markdown).doc;
-      this.notifyDeletedImages(previousDoc, nextDoc);
+    if (this.options.onImagesDeleted && shouldReportImageDeletion(options)) {
+      this.notifyDeletedImageSrcs(
+        findFullyRemovedMarkdownImageSrcs(previousMarkdown, this.markdown),
+      );
     }
     this.emit(options?.reason ?? 'programmatic-update');
   }
@@ -870,8 +908,19 @@ export class ProseMirrorEditorCore implements EditorCore {
     }
 
     const text = input.text ?? '';
+    if (text && replaceInlineSourceCodeText(this.view.state, text)) {
+      return this.insertPlainClipboardText(text);
+    }
     if (options.mode === 'plain') {
       return text ? this.insertPlainClipboardText(text) : { status: 'rejected', reason: 'no-text' };
+    }
+
+    if (input.html && isInTable(this.view.state)) {
+      const template = document.createElement('template');
+      template.innerHTML = input.html;
+      const parser = this.view.someProp('clipboardParser') ?? this.view.someProp('domParser') ?? DOMParser.fromSchema(schema);
+      const slice = parser.parseSlice(template.content, { preserveWhitespace: true, context: this.view.state.selection.$from });
+      if (this.isTableClipboardSlice(slice)) return this.insertHtmlClipboard(input.html, text);
     }
 
     const classification = text ? classifyClipboardMarkdown(text) : null;
@@ -890,30 +939,91 @@ export class ProseMirrorEditorCore implements EditorCore {
       return this.insertPlainClipboardText(text);
     }
 
-    if (input.html) {
-      const event =
-        typeof ClipboardEvent === 'undefined'
-          ? (new Event('paste') as ClipboardEvent)
-          : new ClipboardEvent('paste');
-      return this.view.pasteHTML(input.html, event)
-        ? { status: 'inserted', format: 'html' }
-        : { status: 'rejected', reason: 'no-text' };
-    }
+    if (input.html) return this.insertHtmlClipboard(input.html, text);
 
     return text ? this.insertPlainClipboardText(text) : { status: 'rejected', reason: 'no-text' };
   }
 
-  private handleNativePaste(event: ClipboardEvent): boolean {
-    const clipboard = event.clipboardData;
-    if (!clipboard) return false;
+  private insertHtmlClipboard(html: string, text: string): EditorPasteResult {
+    const event = typeof ClipboardEvent === 'undefined' ? new Event('paste') as ClipboardEvent : new ClipboardEvent('paste');
+    const context: { text: string; result?: EditorPasteResult } = { text };
+    this.htmlPasteContexts.set(event, context);
+    const inserted = this.view!.pasteHTML(html, event);
+    this.htmlPasteContexts.delete(event);
+    return context.result ?? (inserted ? { status: 'inserted', format: 'html' } : { status: 'rejected', reason: 'no-text' });
+  }
 
-    const plain = this.consumePlainTextPasteRequest();
-    if (!plain && clipboard.files.length > 0) {
+  /** 只允许 schema 合法的 table/row/cell 片段进入网格路径；其它块仍受 B057 guard 约束。 */
+  private isTableClipboardSlice(slice: Slice): boolean {
+    let content = slice.content;
+    const table = content.childCount === 1 && content.firstChild?.type === schema.nodes.table ? content.firstChild : null;
+    if (table) content = table.content;
+    if (!content.childCount) return false;
+    const rows = content.firstChild!.type === schema.nodes.table_row;
+    try {
+      for (let index = 0; index < content.childCount; index += 1) {
+        const node = content.child(index);
+        if (rows ? node.type !== schema.nodes.table_row : node.type !== schema.nodes.table_cell && node.type !== schema.nodes.table_header) return false;
+        node.check();
+        const cells = rows ? node.content : Fragment.from(node);
+        for (let column = 0; column < cells.childCount; column += 1) {
+          const cell = cells.child(column);
+          if (!Number.isSafeInteger(cell.attrs.colspan) || cell.attrs.colspan < 1 ||
+              !Number.isSafeInteger(cell.attrs.rowspan) || cell.attrs.rowspan < 1) return false;
+        }
+      }
+      return !table || !TableMap.get(table).problems;
+    } catch {
+      return false;
+    }
+  }
+
+  private handleNativePaste(event: ClipboardEvent, slice: Slice): boolean {
+    if (!this.view || !this.isEditable()) {
+      const context = this.htmlPasteContexts.get(event);
+      if (context) context.result = { status: 'rejected', reason: 'readonly' };
+      event.preventDefault();
+      return true;
+    }
+    const clipboard = event.clipboardData;
+    const plain = clipboard ? this.consumePlainTextPasteRequest() : false;
+    if (!plain && clipboard && clipboard.files.length > 0) {
       return false;
     }
 
-    const text = clipboard.getData('text/plain');
-    const html = clipboard.getData('text/html');
+    const text = clipboard?.getData('text/plain') ?? '';
+    const html = clipboard?.getData('text/html') ?? '';
+    const codeText = text || this.htmlPasteContexts.get(event)?.text ||
+      serializeClipboardText(this.transformInlineSourceSlice(slice, projectInlineSource));
+    if (codeText && replaceInlineSourceCodeText(this.view.state, codeText)) {
+      const result = this.insertPlainClipboardText(codeText);
+      const context = this.htmlPasteContexts.get(event);
+      if (context) context.result = result;
+      event.preventDefault();
+      return true;
+    }
+    if (!plain && isInTable(this.view.state) && this.isTableClipboardSlice(slice) &&
+        handleTablePaste(this.view, event, slice)) {
+      const context = this.htmlPasteContexts.get(event);
+      if (context) context.result = { status: 'inserted', format: 'html' };
+      event.preventDefault();
+      return true;
+    }
+    if (!plain && !this.canInsertClipboardContent(slice.content)) {
+      const context = this.htmlPasteContexts.get(event);
+      const fallbackText = text || context?.text || serializeClipboardText(slice);
+      const result: EditorPasteResult = !this.isEditable()
+        ? { status: 'rejected', reason: 'readonly' }
+        : fallbackText
+          ? this.insertPlainClipboardText(fallbackText)
+          : { status: 'rejected', reason: 'no-text' };
+      if (context) context.result = result;
+      // 空 HR 没有可回退文字，必须吞掉粘贴事件但保留原选区内容。
+      event.preventDefault();
+      return true;
+    }
+    if (!clipboard) return false;
+
     if (!plain) {
       if (!text || classifyClipboardMarkdown(text).kind === 'plain') {
         return false;
@@ -928,9 +1038,8 @@ export class ProseMirrorEditorCore implements EditorCore {
   private insertPlainClipboardText(text: string): EditorPasteResult {
     if (!this.view) return { status: 'rejected', reason: 'readonly' };
     const { state } = this.view;
-    const slice = createPlainTextSlice(text, state.selection.$from);
-    const transaction = state.tr
-      .replaceSelection(slice)
+    const codeTransaction = replaceInlineSourceCodeText(state, text);
+    const transaction = (codeTransaction ?? state.tr.replaceSelection(createPlainTextSlice(text, state.selection.$from)))
       .setMeta(plainTextPasteMeta, true)
       .scrollIntoView();
     this.view.dispatch(transaction);
@@ -940,11 +1049,15 @@ export class ProseMirrorEditorCore implements EditorCore {
   private insertMarkdownClipboard(classification: ClipboardMarkdownClassification): boolean {
     if (!this.view || classification.kind !== 'markdown') return false;
     const { state } = this.view;
-    if (!this.canInsertMarkdownClipboard(classification.doc)) return false;
+    if (!this.canInsertClipboardContent(classification.doc.content)) return false;
 
     try {
+      const clipboardDoc = state.selection.$from.parent.type === schema.nodes.html_block &&
+        state.selection.$from.sameParent(state.selection.$to)
+        ? projectInlineSource(classification.doc)
+        : classification.doc;
       const transaction = state.tr
-        .replaceSelection(createMarkdownClipboardSlice(classification.doc))
+        .replaceSelection(createMarkdownClipboardSlice(clipboardDoc))
         .scrollIntoView();
       if (!transaction.docChanged) return false;
       this.view.dispatch(transaction);
@@ -954,7 +1067,7 @@ export class ProseMirrorEditorCore implements EditorCore {
     }
   }
 
-  private canInsertMarkdownClipboard(doc: ProseMirrorNode): boolean {
+  private canInsertClipboardContent(content: Fragment): boolean {
     if (!this.view) return false;
     const { selection } = this.view.state;
     if (
@@ -968,8 +1081,8 @@ export class ProseMirrorEditorCore implements EditorCore {
       isSelectionInsideNodeType(selection.$from, 'table_cell', 'table_header') ||
       isSelectionInsideNodeType(selection.$to, 'table_cell', 'table_header');
     if (insideTableCell) {
-      for (let index = 0; index < doc.childCount; index += 1) {
-        if (doc.child(index).type !== schema.nodes.paragraph) return false;
+      for (let index = 0; index < content.childCount; index += 1) {
+        if (content.child(index).type !== schema.nodes.paragraph) return false;
       }
     }
     return true;
@@ -1208,16 +1321,33 @@ export class ProseMirrorEditorCore implements EditorCore {
       return false;
     }
 
+    // 挂载首帧会暂时关闭 DOM 编辑；合法命令开始时恢复真实运行状态。
+    if (this.isEditable() && !this.view.editable) {
+      this.view.setProps({ editable: () => this.isEditable() });
+    }
+    if (command.type === 'undo' || command.type === 'redo') {
+      if (isActiveEditComposing(this.view)) return false;
+      // 先结束旧输入缓冲，再应用文档历史，避免失焦把撤销前的值写回。
+      commitActiveEdit(this.view, true);
+    }
     return this.runProseMirrorCommand(command);
   }
 
   canExecute(command: EditorCommand): boolean {
     if (this.destroyed || this.runtime.readonly) {
-      return command.type === 'undo' || command.type === 'redo';
+      return false;
     }
 
     if (this.runtime.mode !== 'semantic' && isPendingInlineMarkCommand(command)) {
       return false;
+    }
+    if (isPendingInlineMarkCommand(command)) {
+      if (!this.view) return false;
+      const formats = {
+        toggleBold: 'strong', toggleItalic: 'em', toggleCode: 'code',
+        toggleStrikethrough: 'strikethrough', toggleUnderline: 'underline', toggleHighlight: 'highlight',
+      } as const;
+      return toggleInlineSourceFormat(formats[command.type as keyof typeof formats])(this.view.state);
     }
 
     return true;
@@ -1251,7 +1381,7 @@ export class ProseMirrorEditorCore implements EditorCore {
   updateOptions(options: Partial<EditorRuntimeOptions>): void {
     this.assertActive();
     if (this.view) dismissQuickInsert(this.view);
-    if (options.mode && options.mode !== this.runtime.mode) {
+    if (options.mode && options.mode !== this.runtime.mode && options.readonly !== true) {
       if (this.view) commitActiveEdit(this.view, true);
       this.commitPendingEdits();
     }
@@ -1265,6 +1395,10 @@ export class ProseMirrorEditorCore implements EditorCore {
     this.view?.setProps({
       editable: () => this.isEditable(),
     });
+    if (this.view && this.runtime.readonly) {
+      cancelActiveEdit(this.view);
+      for (const finish of [...this.compositionWaiters]) finish();
+    }
     this.emit('runtime-options');
   }
 
@@ -1370,7 +1504,7 @@ export class ProseMirrorEditorCore implements EditorCore {
             const { $from: $fromCtrl } = state.selection;
             for (let d = $fromCtrl.depth; d >= 0; d--) {
               if ($fromCtrl.node(d).type.name === 'callout') {
-                const calloutEnd = $fromCtrl.after(d + 1);
+                const calloutEnd = $fromCtrl.after(d);
                 const emptyParagraph = schema.nodes.paragraph.create();
                 const tr = state.tr.insert(calloutEnd, emptyParagraph);
                 if (dispatch) {
@@ -1383,7 +1517,9 @@ export class ProseMirrorEditorCore implements EditorCore {
             }
             // 其他块：在下方插入新段落
             const { $from } = state.selection;
-            const afterPos = $from.after(1);
+            const afterPos = state.selection instanceof NodeSelection && $from.depth === 0
+              ? state.selection.to
+              : $from.after(1);
             const emptyParagraph = schema.nodes.paragraph.create();
             const tr = state.tr.insert(afterPos, emptyParagraph);
             const newPos = afterPos + 1;
@@ -1411,6 +1547,9 @@ export class ProseMirrorEditorCore implements EditorCore {
           'Shift-Enter': chainCommands(
             insertSoftLineBreak,
             newlineInCode,
+            (state, dispatch) =>
+              state.selection.$from.parent.type === schema.nodes.footnote_def &&
+              splitBlockExitHeading(state, dispatch),
             splitTaskListItem(schema.nodes.list_item),
             splitListItem(schema.nodes.list_item),
             createParagraphNear,
@@ -1423,9 +1562,20 @@ export class ProseMirrorEditorCore implements EditorCore {
               const { $from, empty } = state.selection;
               if (!empty || $from.parent.type.name !== 'paragraph') return false;
               if ($from.parent.textContent !== '$$') return false;
+              for (let index = 0; index < $from.parent.childCount; index++) {
+                if (!$from.parent.child(index).isText) return false;
+              }
+              const parent = $from.node($from.depth - 1);
+              const paragraphIndex = $from.index($from.depth - 1);
+              // 表格等容器有内容约束，不能让替换事务越界修复结构。
+              if (
+                !parent.canReplaceWith(paragraphIndex, paragraphIndex + 1, schema.nodes.math_block)
+              ) {
+                return false;
+              }
               if (dispatch) {
-                const blockStart = $from.before(1);
-                const blockEnd = $from.after(1);
+                const blockStart = $from.before($from.depth);
+                const blockEnd = $from.after($from.depth);
                 const node = schema.nodes.math_block.create({ tex: '' });
                 const tr = state.tr.replaceWith(blockStart, blockEnd, node);
                 // 选中新创建的 math_block，触发 NodeView.selectNode → 自动进入编辑态
@@ -1435,6 +1585,9 @@ export class ProseMirrorEditorCore implements EditorCore {
               return true;
             },
             newlineInCode,
+            (state, dispatch) =>
+              state.selection.$from.parent.type === schema.nodes.footnote_def &&
+              splitBlockExitHeading(state, dispatch),
             splitTaskListItem(schema.nodes.list_item),
             splitListItem(schema.nodes.list_item),
             createParagraphNear,
@@ -1549,12 +1702,13 @@ export class ProseMirrorEditorCore implements EditorCore {
 
   private dispatchTransaction(transaction: Transaction): void {
     const currentState = this.view?.state ?? this.suspendedState;
-    if (!currentState) return;
+    if (!currentState || (this.runtime.readonly && transaction.docChanged)) return;
     const previousDoc = currentState.doc;
     const previousSelection = currentState.selection;
     const nextState = currentState.apply(transaction);
     // 空模板清理和原文标记可能由 appendTransaction 完成，不能只看首个事务。
     const docChanged = !nextState.doc.eq(previousDoc);
+    if (this.runtime.readonly && docChanged) return;
     if (this.view) this.view.updateState(nextState);
     else this.suspendedState = nextState;
 
@@ -1568,6 +1722,7 @@ export class ProseMirrorEditorCore implements EditorCore {
     }
 
     if (docChanged) {
+      if (this.view) FootnoteRefNodeView.refreshOpenPreviews(this.view);
       this.contentRevision += 1;
       this.syncRenderRevision += 1;
       this.syncSnapshot = null;
@@ -1690,6 +1845,7 @@ export class ProseMirrorEditorCore implements EditorCore {
     const update = () => this.view!.updateState(selection ? this.restoreSelection(nextState, selection) : nextState);
     if (preserveCodeViewport) CodeBlockNodeView.preserveViewports(this.view, nextState.doc, update);
     else update();
+    FootnoteRefNodeView.refreshOpenPreviews(this.view);
     this.semanticViewDirty = false;
   }
 
@@ -1748,7 +1904,10 @@ export class ProseMirrorEditorCore implements EditorCore {
     }
 
     const deletedSrcs = findFullyRemovedImageSrcs(previousDoc, nextDoc);
-    this.notifyDeletedImageSrcs(deletedSrcs);
+    if (deletedSrcs.length === 0) return;
+    // 当前语义事务尚未同步 this.markdown；用 nextDoc 校验真实删除候选。
+    const nextMarkdown = serializeMarkdown(removeEmptyTrailingParagraph(nextDoc));
+    this.notifyDeletedImageSrcs(filterFullyRemovedImageSrcs(deletedSrcs, nextMarkdown));
   }
 
   private notifyDeletedImageSrcs(deletedSrcs: string[]): void {
@@ -1952,45 +2111,25 @@ function findCurrentTaskListItem(state: EditorState): {
     }
 
     const itemPos = $from.before(depth);
-    const firstText = findFirstTextInNode(itemNode);
-    if (!firstText?.node.text) {
-      return null;
-    }
+    const paragraph = itemNode.firstChild;
+    const marker = paragraph ? readTaskListMarker(paragraph) : null;
+    if (!marker) return null;
 
-    const markerMatch = /^\[[ x]\]\s?/.exec(firstText.node.text);
-    if (!markerMatch) {
-      return null;
-    }
-
-    const markerFrom = itemPos + 1 + firstText.offset;
+    const markerFrom = itemPos + 2;
     return {
       itemNode,
       itemPos,
       itemIndex: $from.index(depth - 1),
       parentListNode,
       parentListPos: $from.before(depth - 1),
-      markerLength: markerMatch[0].length,
+      markerLength: marker.text.length,
       markerRange: {
         from: markerFrom,
-        to: markerFrom + markerMatch[0].length,
+        to: markerFrom + marker.text.length,
       },
     };
   }
   return null;
-}
-
-function findFirstTextInNode(
-  root: ProseMirrorNode,
-): { node: ProseMirrorNode; offset: number } | null {
-  let result: { node: ProseMirrorNode; offset: number } | null = null;
-  root.descendants((node, pos) => {
-    if (node.isText) {
-      result = { node, offset: pos };
-      return false;
-    }
-    return true;
-  });
-  return result;
 }
 
 function isSelectionInsideListItem($pos: ResolvedPos): boolean {
@@ -2138,33 +2277,39 @@ function findFullyRemovedImageSrcs(
   nextDoc: ProseMirrorNode,
 ): string[] {
   const previous = countImageSrcs(previousDoc);
-  const next = countImageSrcs(nextDoc);
-  const deleted: string[] = [];
-
-  for (const [src, previousCount] of previous) {
-    if (previousCount > 0 && !next.has(src)) {
-      deleted.push(src);
-    }
-  }
-
-  return deleted;
+  const next = new Set([...countImageSrcs(nextDoc).keys()].map(normalizeImageSrc));
+  return [...previous.keys()].filter((src) => !next.has(normalizeImageSrc(src)));
 }
 
 function findFullyRemovedMarkdownImageSrcs(
   previousMarkdown: string,
   nextMarkdown: string,
 ): string[] {
-  const previous = countMarkdownImageSrcs(previousMarkdown);
-  const next = countMarkdownImageSrcs(nextMarkdown);
-  const deleted: string[] = [];
+  const previous = collectMarkdownImageSrcs(previousMarkdown);
+  if (previous === null) return [];
+  return filterFullyRemovedImageSrcs([...previous], nextMarkdown);
+}
 
-  for (const [src, previousCount] of previous) {
-    if (previousCount > 0 && !next.has(src)) {
-      deleted.push(src);
-    }
-  }
+/** 只有 tokenizer 和实际解析均确认无引用时，才允许发出资源删除通知。 */
+function filterFullyRemovedImageSrcs(srcs: string[], nextMarkdown: string): string[] {
+  if (srcs.length === 0) return [];
+  const next = collectMarkdownImageSrcs(nextMarkdown);
+  if (next === null) return [];
+  const referenced = new Set([...next].map(normalizeImageSrc));
+  const candidates = srcs.filter((src) => !referenced.has(normalizeImageSrc(src)));
+  if (candidates.length === 0) return [];
 
-  return deleted;
+  // 源码输入常规更新只做 token 扫描；潜在磁盘删除才校验完整文档，解析失败保留资源。
+  const parsed = tryParseMarkdown(nextMarkdown);
+  if (parsed === null) return [];
+  for (const src of countImageSrcs(parsed).keys()) referenced.add(normalizeImageSrc(src));
+  const seen = new Set<string>();
+  return candidates.filter((src) => {
+    const normalized = normalizeImageSrc(src);
+    if (!normalized || referenced.has(normalized) || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
 }
 
 function countImageSrcs(doc: ProseMirrorNode): Map<string, number> {
@@ -2180,20 +2325,5 @@ function countImageSrcs(doc: ProseMirrorNode): Map<string, number> {
     }
     return false;
   });
-  return counts;
-}
-
-function countMarkdownImageSrcs(markdown: string): Map<string, number> {
-  const counts = new Map<string, number>();
-  const imagePattern = /!\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = imagePattern.exec(markdown)) !== null) {
-    const src = match[1].trim();
-    if (src) {
-      counts.set(src, (counts.get(src) ?? 0) + 1);
-    }
-  }
-
   return counts;
 }

@@ -23,6 +23,10 @@ export class MathInlineNodeView {
   private previewRenderId = 0;
   private pendingPointerRatio: number | null = null;
   private activeEditExitFn: (() => void) | null = null;
+  private composing = false;
+  private compositionEndTimer: number | null = null;
+  private compositionWaiters = new Set<() => void>();
+  private deferredExit: { save: boolean; cursorSide: 'before' | 'after' | 'preserve' } | null = null;
 
   // 编辑态 DOM 引用
   private input: HTMLInputElement | null = null;
@@ -83,8 +87,12 @@ export class MathInlineNodeView {
 
   update(node: ProseMirrorNode): boolean {
     if (node.type !== this.node.type) return false;
+    const texChanged = node.attrs.tex !== this.node.attrs.tex;
     this.node = node;
-    if (!this.editing) {
+    if (this.editing && texChanged) {
+      // 外部更新已改变正文，结束旧缓冲并释放其组字等待。
+      this.cleanupEdit();
+    } else if (!this.editing) {
       this.renderKaTeX();
     }
     return true;
@@ -134,6 +142,7 @@ export class MathInlineNodeView {
   // ---- KaTeX 渲染 ----
 
   private async renderKaTeX(): Promise<void> {
+    if (this.editing || this.destroyed) return;
     const id = ++this.renderId;
     const tex = this.node.attrs.tex as string;
     this.dom.setAttribute('data-tex', tex);
@@ -145,14 +154,14 @@ export class MathInlineNodeView {
 
     try {
       const result = await mathRenderer.render(tex, { displayMode: false });
-      if (id !== this.renderId) return; // 放弃过期渲染
+      if (id !== this.renderId || this.editing || this.destroyed) return; // 放弃过期渲染
       if (result.error) {
         this.dom.textContent = `$${tex}$`;
       } else {
         this.dom.innerHTML = result.html;
       }
     } catch {
-      if (id !== this.renderId) return;
+      if (id !== this.renderId || this.editing || this.destroyed) return;
       this.dom.textContent = `$${tex}$`;
     }
   }
@@ -160,11 +169,15 @@ export class MathInlineNodeView {
   // ---- 编辑态管理 ----
 
   private enterEdit(): void {
-    if (this.editing || this.destroyed || this.view.isDestroyed) return;
+    if (this.editing || this.destroyed || this.view.isDestroyed || !this.view.editable) return;
 
+    this.renderId += 1;
     this.editing = true;
     this.activeEditExitFn = () => this.exitEdit(true, 'preserve');
-    registerActiveEdit(this.view, this.activeEditExitFn);
+    registerActiveEdit(this.view, this.activeEditExitFn, undefined, {
+      isComposing: () => this.composing,
+      waitForCompositionEnd: () => this.waitForCompositionEnd(),
+    });
 
     this.originalTex = this.node.attrs.tex as string;
     this.dom.classList.add('is-editing');
@@ -203,13 +216,36 @@ export class MathInlineNodeView {
     window.addEventListener('resize', this.positionHandler);
 
     // 步骤4：input 事件监听
-    this.input.addEventListener('input', () => {
+    const input = this.input;
+    input.addEventListener('input', () => {
+      if (this.input !== input || !this.editing || !this.view.editable) return;
       this.updateInputWidth();
       this.updatePreview();
       this.updatePreviewPosition();
     });
-    this.input.addEventListener('keydown', (e) => this.handleKeyDown(e));
-    this.input.addEventListener('blur', (e) => {
+    input.addEventListener('compositionstart', () => {
+      if (this.input !== input || !this.editing || !this.view.editable) return;
+      if (this.compositionEndTimer !== null) window.clearTimeout(this.compositionEndTimer);
+      this.compositionEndTimer = null;
+      this.composing = true;
+    });
+    input.addEventListener('compositionend', () => {
+      if (this.input !== input || !this.editing) return;
+      // 等最后一个 input 事件落地，再提交或让保存继续读取最终文本。
+      this.compositionEndTimer = window.setTimeout(() => {
+        if (this.input !== input || !this.editing) return;
+        this.compositionEndTimer = null;
+        const deferredExit = this.deferredExit;
+        this.deferredExit = null;
+        this.finishComposition();
+        if (deferredExit) this.exitEdit(deferredExit.save, deferredExit.cursorSide);
+      }, 0);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (this.input === input) this.handleKeyDown(e);
+    });
+    input.addEventListener('blur', (e) => {
+      if (this.input !== input || !this.editing) return;
       if (
         this.previewCard &&
         e.relatedTarget instanceof Node &&
@@ -225,7 +261,7 @@ export class MathInlineNodeView {
 
     // 步骤6：聚焦 input + 定位预览卡片
     requestAnimationFrame(() => {
-      if (!this.input) return;
+      if (this.input !== input || !this.editing || !this.view.editable) return;
       this.input.focus({ preventScroll: true });
       const cursorPos = this.resolveInitialCursorPos();
       this.input.setSelectionRange(cursorPos, cursorPos);
@@ -241,15 +277,27 @@ export class MathInlineNodeView {
 
   private exitEdit(save: boolean, cursorSide: 'before' | 'after' | 'preserve' = 'after'): void {
     if (!this.editing) return;
+    if (this.destroyed || this.view.isDestroyed || !this.view.editable) {
+      this.cleanupEdit();
+      return;
+    }
+    if (this.composing) {
+      this.deferredExit = {
+        save,
+        cursorSide: this.deferredExit?.cursorSide === 'preserve' ? 'preserve' : cursorSide,
+      };
+      return;
+    }
 
-    const newTex = save && this.input ? this.input.value : this.originalTex;
+    const canSave = save && this.view.editable;
+    const newTex = canSave && this.input ? this.input.value : this.originalTex;
     const oldTex = this.node.attrs.tex as string;
     const pos = this.getPos();
 
     this.cleanupEdit();
 
     let tr = this.view.state.tr;
-    if (save && newTex !== oldTex) {
+    if (canSave && newTex !== oldTex) {
       // 一次性提交：修改 node attrs + 移动光标到节点后
       tr = tr.setNodeMarkup(pos, null, { tex: newTex });
     }
@@ -265,8 +313,24 @@ export class MathInlineNodeView {
     if (cursorSide !== 'preserve') this.view.focus();
   }
 
+  private waitForCompositionEnd(): Promise<void> {
+    if (!this.composing) return Promise.resolve();
+    return new Promise((resolve) => this.compositionWaiters.add(resolve));
+  }
+
+  private finishComposition(): void {
+    this.composing = false;
+    for (const resolve of this.compositionWaiters) resolve();
+    this.compositionWaiters.clear();
+  }
+
   private cleanupEdit(): void {
     this.editing = false;
+    this.deferredExit = null;
+    if (this.compositionEndTimer !== null) window.clearTimeout(this.compositionEndTimer);
+    this.compositionEndTimer = null;
+    this.finishComposition();
+    this.previewRenderId += 1;
     if (this.activeEditExitFn) {
       unregisterActiveEdit(this.view, this.activeEditExitFn);
       this.activeEditExitFn = null;
@@ -294,7 +358,7 @@ export class MathInlineNodeView {
   // ---- 键盘处理 ----
 
   private handleKeyDown(e: KeyboardEvent): void {
-    if (!this.input) return;
+    if (!this.input || this.composing || e.isComposing || e.keyCode === 229) return;
 
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -364,13 +428,14 @@ export class MathInlineNodeView {
 
     try {
       const result = await mathRenderer.render(tex, { displayMode: false });
-      if (id !== this.previewRenderId || !this.previewContent) return;
+      if (id !== this.previewRenderId || !this.previewContent || this.destroyed) return;
       if (result.error) {
         this.previewContent.innerHTML = `<span class="math-inline-preview-error">${escapeHtml(result.error)}</span>`;
       } else {
         this.previewContent.innerHTML = result.html;
       }
     } catch {
+      if (id !== this.previewRenderId || !this.previewContent || this.destroyed) return;
       this.previewContent.innerHTML = '<span class="math-inline-preview-error">KaTeX error</span>';
     }
   }

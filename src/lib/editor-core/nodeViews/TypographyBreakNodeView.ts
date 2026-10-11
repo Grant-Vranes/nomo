@@ -2,6 +2,11 @@ import type { Node as ProseMirrorNode } from 'prosemirror-model';
 import type { EditorView, NodeView } from 'prosemirror-view';
 import { getTypographyOptions, subscribeTypography } from '../../typography/options';
 import { softBreakText } from '../../typography/rules';
+import { projectInlineSourceWithMapping } from '../InlineSourceCodec';
+const projections = new WeakMap<
+  ProseMirrorNode,
+  ReturnType<typeof projectInlineSourceWithMapping>
+>();
 const views = new WeakMap<EditorView, Set<TypographyBreakNodeView>>();
 export function refreshTypographyBreaks(view: EditorView) {
   for (const item of views.get(view) ?? []) item.render();
@@ -35,9 +40,27 @@ export class TypographyBreakNodeView implements NodeView {
     if (this.node.attrs.soft && getTypographyOptions().enabled) {
       const pos = this.getPos();
       if (pos === undefined) return;
-      const before = this.view.state.doc.resolve(pos).nodeBefore?.textContent ?? '';
-      const after =
-        this.view.state.doc.resolve(pos + this.node.nodeSize).nodeAfter?.textContent ?? '';
+      const $pos = this.view.state.doc.resolve(pos);
+      let projection = projections.get($pos.parent);
+      if (!projection) {
+        projection = projectInlineSourceWithMapping($pos.parent);
+        projections.set($pos.parent, projection);
+      }
+      // Read visible source boundaries; atoms and other breaks still stop the neighboring text.
+      const leafText = (node: ProseMirrorNode) =>
+        node.type.name === 'hard_break' ? '\n' : '\ufffc';
+      const before = projection.doc.textBetween(
+        0,
+        projection.mapPosition($pos.parentOffset),
+        '',
+        leafText,
+      );
+      const after = projection.doc.textBetween(
+        projection.mapPosition($pos.parentOffset + this.node.nodeSize),
+        projection.doc.content.size,
+        '',
+        leafText,
+      );
       const text = softBreakText(before, after);
       if (this.dom.textContent !== text || this.dom.childElementCount) this.dom.textContent = text;
     } else {

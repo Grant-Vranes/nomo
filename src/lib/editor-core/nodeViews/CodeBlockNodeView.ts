@@ -471,10 +471,29 @@ export class CodeBlockNodeView {
 
   update(node: ProseMirrorNode): boolean {
     if (node.type !== this.node.type) return false;
+    const codeChanged = node.textContent !== this.node.textContent;
+    const languageChanged = node.attrs.params !== this.node.attrs.params;
     this.node = node;
     this.language = node.attrs.params ?? '';
     this.langLabel.textContent = getLangLabel(this.language);
-    if (!this.editing) {
+    if (this.editing && !this.view.editable) {
+      this.exitEdit(false);
+    } else if (this.editing && this.textarea) {
+      if (codeChanged) {
+        this.originalCode = node.textContent;
+        // 外部更新同步输入和取消基线；自身后台提交不重设 value，保留原生撤销与选区。
+        if (this.textarea.value !== node.textContent) {
+          const { selectionStart, selectionEnd, selectionDirection } = this.textarea;
+          this.captureViewport();
+          this.textarea.value = node.textContent;
+          this.textarea.setSelectionRange(selectionStart, selectionEnd, selectionDirection);
+        }
+      }
+      if (codeChanged || languageChanged) {
+        this.handleInput();
+        this.restoreViewport();
+      }
+    } else {
       this.renderDisplay();
     }
     return true;
@@ -653,7 +672,7 @@ export class CodeBlockNodeView {
   // ---- 编辑态管理 ----
 
   enterEdit(target: CodeEditTarget = { kind: 'default' }, preserveViewport = target.kind === 'range'): void {
-    if (this.editing || this.destroyed || this.view.isDestroyed) return;
+    if (this.editing || this.destroyed || this.view.isDestroyed || !this.view.editable) return;
     this.captureViewport();
 
     this.clearDisplaySelectionCapture();
@@ -699,11 +718,12 @@ export class CodeBlockNodeView {
     this.textarea.addEventListener('input', () => this.handleInput());
     this.textarea.addEventListener('keydown', (e) => this.handleKeyDown(e));
     this.textarea.addEventListener('scroll', () => this.handleScroll());
-    this.textarea.addEventListener('blur', () => {
-      // 延迟保存，避免点击语言选择器等内部元素时误触发
+    const textarea = this.textarea;
+    textarea.addEventListener('blur', () => {
+      // 延迟保存，避免点击语言选择器等内部元素时误触发。
       setTimeout(() => {
-        // 如果语言选择器打开中，不退出编辑态
-        if (this.editing && !this.langSelector) this.exitEdit(true);
+        // 旧输入的延迟失焦不能提交后来创建的编辑态。
+        if (this.textarea === textarea && this.editing && !this.langSelector) this.exitEdit(true);
       }, 200);
     });
 
@@ -765,6 +785,7 @@ export class CodeBlockNodeView {
     clickLine: number,
     caret: 'start' | 'end',
   ): boolean {
+    if (view.isDestroyed || !view.editable) return false;
     // 精确匹配
     for (const instance of CodeBlockNodeView.instances) {
       if (instance.view !== view) continue;
@@ -777,6 +798,7 @@ export class CodeBlockNodeView {
   }
 
   static showLanguageSelectorAt(view: EditorView, pos: number): boolean {
+    if (view.isDestroyed || !view.editable) return false;
     for (const instance of CodeBlockNodeView.instances) {
       if (instance.view === view && instance.getPos() === pos) {
         instance.showLangSelector();
@@ -789,6 +811,10 @@ export class CodeBlockNodeView {
   /** 后台保存只回写代码内容，保留 textarea、焦点、原生历史和选区。 */
   private commitContent(): void {
     if (!this.editing || !this.textarea || this.destroyed || this.view.isDestroyed) return;
+    if (!this.view.editable) {
+      this.exitEdit(false);
+      return;
+    }
     const code = this.textarea.value;
     const pos = this.getPos();
     const node = this.view.state.doc.nodeAt(pos);
@@ -802,9 +828,13 @@ export class CodeBlockNodeView {
   }
 
   private exitEdit(save: boolean): void {
-    if (!this.editing) return;
+    if (!this.editing) {
+      this.hideLangSelector();
+      return;
+    }
 
-    const newCode = save && this.textarea ? this.textarea.value : this.originalCode;
+    const shouldSave = save && this.view.editable && !this.destroyed && !this.view.isDestroyed;
+    const newCode = shouldSave && this.textarea ? this.textarea.value : this.originalCode;
 
     this.cleanupEdit();
     const viewport = { ...this.viewport };
@@ -812,7 +842,7 @@ export class CodeBlockNodeView {
     // 先提交最终内容，再按其滚动范围恢复视口；不能让旧正文提前钳制位置。
     // 选区由 ProseMirror 自己维护，避免 blur 后把旧代码块重新选中。
     const oldCode = this.node.textContent;
-    if (save && newCode !== oldCode) {
+    if (shouldSave && newCode !== oldCode) {
       this.saveContent(newCode);
     } else {
       this.renderDisplay();
@@ -845,6 +875,10 @@ export class CodeBlockNodeView {
 
   private handleInput(): void {
     if (!this.textarea) return;
+    if (!this.view.editable || this.destroyed || this.view.isDestroyed) {
+      this.exitEdit(false);
+      return;
+    }
     const code = this.textarea.value;
     const lineCount = countLines(code);
     this.updateLineNumbers(lineCount);
@@ -868,6 +902,11 @@ export class CodeBlockNodeView {
 
   private handleKeyDown(e: KeyboardEvent): void {
     if (!this.textarea || e.isComposing || e.keyCode === 229) return;
+    if (!this.view.editable || this.destroyed || this.view.isDestroyed) {
+      e.preventDefault();
+      this.exitEdit(false);
+      return;
+    }
 
     // Shift+Ctrl+Enter：保存退出编辑态，并在上方插入新段落
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
@@ -1140,7 +1179,8 @@ export class CodeBlockNodeView {
   // ---- 语言选择器 ----
 
   private showLangSelector(): void {
-    if (this.langSelector) return; // 已打开
+    if (this.langSelector || this.destroyed || this.view.isDestroyed || !this.view.editable) return;
+    if (!this.editing) registerActiveEdit(this.view, this.activeEditExitFn);
 
     this.langSelector = document.createElement('div');
     this.langSelector.className = 'lang-selector';
@@ -1234,6 +1274,7 @@ export class CodeBlockNodeView {
     this.langSelector.style.left = `${labelRect.left - cardRect.left}px`;
 
     requestAnimationFrame(() => {
+      if (!this.langSelector?.contains(searchInput) || this.destroyed || !this.view.editable) return;
       searchInput.focus();
       searchInput.select();
     });
@@ -1243,20 +1284,23 @@ export class CodeBlockNodeView {
     if (this.langSelector) {
       this.langSelector.remove();
       this.langSelector = null;
+      if (!this.editing) unregisterActiveEdit(this.view, this.activeEditExitFn);
     }
   }
 
   /** 应用语言选择：更新节点 attrs 并重新高亮 */
   private applyLanguage(lang: string): void {
-    if (!lang) return;
+    if (!lang || this.destroyed || this.view.isDestroyed || !this.view.editable) {
+      this.hideLangSelector();
+      return;
+    }
+    const pos = this.getPos();
+    const node = this.view.state.doc.nodeAt(pos);
+    if (!node || node.type !== this.node.type) return;
     this.language = lang;
     this.langLabel.textContent = getLangLabel(lang);
     // 更新节点 attrs.params
-    const pos = this.getPos();
-    const node = this.view.state.doc.nodeAt(pos);
-    if (node) {
-      this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, null, { params: lang }));
-    }
+    this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, null, { ...node.attrs, params: lang }));
     // 重新高亮
     if (this.editing && this.textarea && this.highlightLayer) {
       this.renderHighlightFor(
@@ -1401,6 +1445,7 @@ export class CodeBlockNodeView {
 
   /** 通过 transaction 更新节点内容 */
   private saveContent(newCode: string): void {
+    if (this.destroyed || this.view.isDestroyed || !this.view.editable) return;
     const pos = this.getPos();
     const node = this.view.state.doc.nodeAt(pos);
     if (!node || node.type !== this.node.type || node.textContent === newCode) return;

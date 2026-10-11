@@ -1,5 +1,5 @@
 import { createLinkAttrs } from '../link';
-import { escapeHtmlAttr } from '../markdownTokenizer';
+import { escapeHtmlAttr, parseHtmlAttributes } from '../markdownTokenizer';
 
 export interface HtmlAnchorAttrs extends Record<string, unknown> {
   href: string | null;
@@ -19,6 +19,13 @@ export function createHtmlAnchorAttrs(
   const link = href === null ? null : createLinkAttrs(href, title);
   if (href !== null && !link) return null;
   return { href: link?.href ?? null, title: link?.title ?? title, id, name, html: true };
+}
+
+/** 按完整属性边界读取锚点，避免把其他引号属性值中的文字当成 id/name。 */
+export function parseHtmlAnchorAttrs(rawTag: string): HtmlAnchorAttrs | null {
+  const attrs = parseHtmlAttributes(rawTag);
+  const read = (name: string) => attrs.find(([key]) => key === name)?.[1] ?? null;
+  return createHtmlAnchorAttrs(read('href'), read('title'), read('id'), read('name'));
 }
 
 export function serializeHtmlAnchorOpen(attrs: Record<string, unknown>): string {

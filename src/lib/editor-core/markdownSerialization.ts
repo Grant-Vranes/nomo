@@ -11,22 +11,51 @@ import {
   type ResolvedPos,
 } from 'prosemirror-model';
 import { schema, type TableColumnAlignment } from './schema';
-import { serializeHtmlBlock } from './html/pmToHtml';
+import { serializeHtmlBlock, serializeHtmlInlineContent } from './html/pmToHtml';
 import { serializeHtmlAnchorOpen } from './html/htmlAnchor';
 import { serializeCallout } from './callout/calloutSerializer';
 import { TOC_START_MARKER, TOC_END_MARKER } from '../toc/tocMarkers';
 import { escapeHtmlAttr } from './markdownTokenizer';
 import { serializeMarkdownLinkDestination, serializeMarkdownLinkTitle } from './link';
-import { isInlineSourceText, projectInlineSource } from './InlineSourceCodec';
+import { analyzeInlineSourceText, escapeInlineSourceLiteral, isInlineSourceText, projectInlineSource, readTaskListMarker } from './InlineSourceCodec';
+
+const paragraphSyntaxRanges = new WeakMap<MarkdownSerializerState, Array<{ from: number; to: number }>>();
 
 const tableMarkdownSerializer = new MarkdownSerializer(
   {
     ...defaultMarkdownSerializer.nodes,
-    paragraph(state, node) {
-      const taskParagraph = splitTaskParagraph(node);
+    horizontal_rule(state, node, parent, index) {
+      if (parent.type === schema.nodes.list_item && index === 0) {
+        // 列表首块不能输出 - ---，否则保存后会被当作列表外的分割线。
+        state.write('***\n');
+        state.closeBlock(node);
+      } else {
+        defaultMarkdownSerializer.nodes.horizontal_rule(state, node, parent, index);
+      }
+    },
+    code_block(state, node) {
+      const code = node.textContent;
+      const params = String(node.attrs.params ?? '');
+      // 反引号围栏的 info 不能含反引号；正文中的同类符号串也不能提前闭合围栏。
+      const marker = params.includes('`') ? '~' : '`';
+      let fenceLength = 3;
+      for (const match of code.matchAll(marker === '~' ? /~+/g : /`+/g)) {
+        fenceLength = Math.max(fenceLength, match[0].length + 1);
+      }
+      const fence = marker.repeat(fenceLength);
+      state.write(`${fence}${params}\n`);
+      state.text(code, false);
+      state.write('\n');
+      state.write(fence);
+      state.closeBlock(node);
+    },
+    paragraph(state, node, parent, index) {
+      const taskParagraph = parent.type === schema.nodes.list_item && index === 0
+        ? splitTaskParagraph(node)
+        : null;
       if (taskParagraph) {
         state.write(taskParagraph.marker);
-        state.renderInline(taskParagraph.content);
+        renderParagraphInline(state, taskParagraph.content);
         state.closeBlock(node);
         return;
       }
@@ -34,11 +63,16 @@ const tableMarkdownSerializer = new MarkdownSerializer(
         // 空段落只需要触发前一个块落盘；不写入当前列表缩进，避免保存成带空格的“空行”。
         flushPendingClosedBlock(state);
       } else {
-        state.renderInline(node);
+        renderParagraphInline(state, node);
       }
       state.closeBlock(node);
     },
     hard_break(state, node, parent, index) {
+      if (parent.type.name === 'heading' || parent.type.name === 'footnote_def') {
+        // 标题和脚注定义必须保持一条源码行，显式保存定义内的软/硬换行属性。
+        state.write(`<br data-nomo-break="${node.attrs.soft === true ? 'soft' : 'hard'}">`);
+        return;
+      }
       if (node.attrs.soft === true) {
         if (hasFollowingInlineContent(parent, index)) {
           state.write('\n');
@@ -46,14 +80,26 @@ const tableMarkdownSerializer = new MarkdownSerializer(
         return;
       }
 
+      if (!hasFollowingInlineContent(parent, index)) {
+        // Markdown 行尾转义无法保留段尾硬换行，使用已有 HTML 换行表示往返。
+        state.write('<br>');
+        return;
+      }
       defaultMarkdownSerializer.nodes.hard_break(state, node, parent, index);
     },
     bullet_list(state, node) {
       state.renderList(node, '  ', () => '- ');
     },
+    ordered_list(state, node) {
+      const start = node.attrs.order ?? 1;
+      const maxWidth = String(start + node.childCount - 1).length;
+      state.renderList(node, state.repeat(' ', maxWidth + 2), (index) => {
+        const marker = String(start + index);
+        return state.repeat(' ', maxWidth - marker.length) + marker + '. ';
+      });
+    },
     table(state, node) {
-      state.ensureNewLine();
-      state.write(serializeTable(node));
+      state.text(serializeTable(node), false);
       state.closeBlock(node);
     },
     table_row() {
@@ -67,44 +113,43 @@ const tableMarkdownSerializer = new MarkdownSerializer(
     },
     html_block(state, node) {
       const html = serializeHtmlBlock(node);
-      state.write(html);
+      state.text(html, false);
       state.closeBlock(node);
     },
     html_anchor(state, node) {
       state.write(`${serializeHtmlAnchorOpen(node.attrs)}</a>`);
     },
     comment_block(state, node) {
-      state.ensureNewLine();
-      state.write(serializeMarkdownComment(String(node.attrs.content ?? ''), true));
+      state.text(serializeMarkdownComment(String(node.attrs.content ?? ''), true), false);
       state.closeBlock(node);
     },
     toc_block(state, node) {
-      state.ensureNewLine();
-      const content = String(node.attrs.content ?? '').trim();
-      state.write(`${TOC_START_MARKER}\n`);
-      if (content) {
-        state.write(`${content}\n`);
-      }
-      state.write(`${TOC_END_MARKER}\n`);
+      const content = String(node.attrs.content ?? '').replace(/^(?:[ \t]*\r?\n)+|(?:\r?\n[ \t]*)+$/g, '');
+      state.text(
+        [TOC_START_MARKER, ...(content ? [content] : []), TOC_END_MARKER].join('\n'),
+        false,
+      );
       state.closeBlock(node);
     },
-    image(state, node) {
+    image(state, node, parent) {
       const src = String(node.attrs.src ?? '');
       const alt = String(node.attrs.alt ?? '');
       const title = node.attrs.title as string | null;
       const align = node.attrs.align as string | null;
       const width = node.attrs.width as string | null;
 
-      if (align === 'left' || align === 'center' || align === 'right') {
+      if (parent.type.name !== 'heading' && (align === 'left' || align === 'center' || align === 'right')) {
         // 有对齐 → 块级 HTML：<p align="...">\n  <img ...>\n</p>
+        const from = (state as unknown as { out: string }).out.length;
         state.ensureNewLine();
         let imgTag = `<img src="${escapeHtmlAttr(src)}" alt="${escapeHtmlAttr(alt)}"`;
         if (title) imgTag += ` title="${escapeHtmlAttr(title)}"`;
         if (width) imgTag += ` width="${escapeHtmlAttr(width)}"`;
         imgTag += '>';
         state.write(`<p align="${align}">\n  ${imgTag}\n</p>`);
+        paragraphSyntaxRanges.get(state)?.push({ from, to: (state as unknown as { out: string }).out.length });
         state.closeBlock(node);
-      } else if (width) {
+      } else if (width && parent.type.name !== 'heading') {
         // 只有宽度 → 内联 <img ...>（不换行，保留在段落内）
         let imgTag = `<img src="${escapeHtmlAttr(src)}" alt="${escapeHtmlAttr(alt)}"`;
         if (title) imgTag += ` title="${escapeHtmlAttr(title)}"`;
@@ -112,18 +157,38 @@ const tableMarkdownSerializer = new MarkdownSerializer(
         imgTag += '>';
         state.write(imgTag);
       } else {
-        // 无样式 → 标准 Markdown 图片
-        const escapedAlt = state.esc(alt, false);
-        const escapedSrc = state.esc(src);
-        const titleStr = title ? ` "${state.esc(title, false)}"` : '';
+        // 标题必须保持单行；图片属性使用已有 Markdown 属性语法保存。
+        const escapedAlt = escapeInlineSourceLiteral(alt).replace(/\r/g, '&#13;').replace(/\n/g, '&#10;');
+        const escapedSrc = serializeMarkdownLinkDestination(src);
+        const titleStr = title ? ` "${serializeMarkdownLinkTitle(title)}"` : '';
         state.write(`![${escapedAlt}](${escapedSrc}${titleStr})`);
+        if (parent.type.name === 'heading') {
+          const attrs: string[] = [];
+          if (align === 'left' || align === 'center' || align === 'right') attrs.push(`align=${align}`);
+          if (width) attrs.push(`width=${width}`);
+          if (attrs.length) state.write(`{${attrs.join(' ')}}`);
+        }
       }
     },
     math_inline(state, node) {
-      state.write(`$${node.attrs.tex.replace(/\$/g, '\\$')}$`);
+      const tex = String(node.attrs.tex).replace(/(\\*)\$/g, (match, slashes: string) =>
+        slashes.length % 2 === 1 ? match : `${slashes}\\$`,
+      );
+      state.write(`$${tex}$`);
     },
-    comment_inline(state, node) {
-      state.write(serializeMarkdownComment(String(node.attrs.content ?? ''), false));
+    comment_inline(state, node, parent, index) {
+      const content = String(node.attrs.content ?? '');
+      // 段首含邻项、空白行和标题会打断 Markdown 行内边界，复用既有 HTML 注释节点表示。
+      if (
+        content.includes('\n') && (
+          parent.type.name === 'heading' ||
+          (parent.childCount > 1 && (index === 0 || /\n[ \t]*\n/.test(content)))
+        )
+      ) {
+        state.write(serializeHtmlInlineComment(content));
+      } else {
+        state.write(serializeMarkdownComment(content, false));
+      }
     },
     footnote_ref(state, node) {
       state.write(`[^${node.attrs.id}]`);
@@ -136,7 +201,11 @@ const tableMarkdownSerializer = new MarkdownSerializer(
     },
     text(state, node, parent) {
       if (isInlineSourceText(node)) {
+        const from = (state as unknown as { out: string }).out.length;
         state.text(node.text ?? '', false);
+        if (node.marks.some((mark) => mark.type.name === 'inline_source' && mark.attrs.literal === true)) {
+          paragraphSyntaxRanges.get(state)?.push({ from, to: (state as unknown as { out: string }).out.length });
+        }
         return;
       }
       let escaped = escapeMarkdownTextWithoutManualInlineMarkers(node.text ?? '');
@@ -147,17 +216,16 @@ const tableMarkdownSerializer = new MarkdownSerializer(
       state.text(atBlank ? escapeMarkdownBlockStart(escaped) : escaped, false);
     },
     math_block(state, node) {
-      state.ensureNewLine();
-      state.write('$$\n');
-      state.write(node.attrs.tex as string);
-      state.write('\n$$\n');
+      state.text(['$$', node.attrs.tex as string, '$$'].join('\n'), false);
       state.closeBlock(node);
     },
     mermaid_block(state, node) {
-      state.ensureNewLine();
-      state.write('```mermaid\n');
-      state.write(node.attrs.code as string);
-      state.write('\n```\n');
+      const code = node.attrs.code as string;
+      let fence = '```';
+      for (const match of code.matchAll(/`+/g)) {
+        if (match[0].length >= fence.length) fence = '`'.repeat(match[0].length + 1);
+      }
+      state.text([`${fence}mermaid`, code, fence].join('\n'), false);
       state.closeBlock(node);
     },
     callout(state, node) {
@@ -228,8 +296,13 @@ const tableCellMarkdownSerializer = new MarkdownSerializer(
       if (index > 0) state.write('<br>');
       state.renderInline(node, false);
     },
-    hard_break(state) {
-      state.write('<br>');
+    hard_break(state, node) {
+      state.write(node.attrs.soft === true ? '<br data-nomo-break="soft">' : '<br>');
+    },
+    comment_inline(state, node, parent, index) {
+      const content = String(node.attrs.content ?? '');
+      if (content.includes('\n')) state.write(serializeHtmlInlineComment(content));
+      else tableMarkdownSerializer.nodes.comment_inline(state, node, parent, index);
     },
     image(state, node, parent, index) {
       const { align, width } = node.attrs;
@@ -623,6 +696,7 @@ function serializeTable(table: ProseMirrorNode): string {
   const rows: ProseMirrorNode[] = [];
   table.forEach((row) => rows.push(row));
   if (rows.length === 0) return '';
+  if (requiresHtmlTable(rows)) return serializeHtmlTable(table);
 
   const columnCount = Math.max(...rows.map((row) => row.childCount));
   const serializedRows = rows.map((row) => serializeTableRow(row, columnCount));
@@ -638,6 +712,48 @@ function serializeTable(table: ProseMirrorNode): string {
   return [serializedRows[0], separator, ...serializedRows.slice(1)]
     .map((cells) => `| ${cells.join(' | ')} |`)
     .join('\n');
+}
+
+/** GFM 只表示单层矩形、首行表头和逐列统一对齐；其它语义保留 HTML。 */
+function requiresHtmlTable(rows: ProseMirrorNode[]): boolean {
+  const width = rows[0].childCount;
+  return rows.some((row, rowIndex) => {
+    if (row.childCount !== width) return true;
+    for (let column = 0; column < row.childCount; column += 1) {
+      const cell = row.child(column);
+      const expectedType = rowIndex === 0 ? schema.nodes.table_header : schema.nodes.table_cell;
+      if (
+        cell.type !== expectedType || cell.attrs.colspan !== 1 || cell.attrs.rowspan !== 1 ||
+        cell.attrs.colwidth !== null || cell.childCount !== 1 ||
+        cell.attrs.align !== rows[0].child(column).attrs.align
+      ) return true;
+    }
+    return false;
+  });
+}
+
+function serializeHtmlTable(table: ProseMirrorNode): string {
+  const rows: string[] = [];
+  projectInlineSource(table).forEach((row) => {
+    const cells: string[] = [];
+    row.forEach((cell) => {
+      const tag = cell.type === schema.nodes.table_header ? 'th' : 'td';
+      const attrs: string[] = [];
+      for (const name of ['colspan', 'rowspan']) {
+        if (cell.attrs[name] !== 1) attrs.push(name + '="' + escapeHtmlAttr(String(cell.attrs[name])) + '"');
+      }
+      if (cell.attrs.colwidth !== null) {
+        attrs.push('data-colwidth="' + escapeHtmlAttr(cell.attrs.colwidth.join(',')) + '"');
+      }
+      if (cell.attrs.align !== null) attrs.push('data-align="' + escapeHtmlAttr(cell.attrs.align) + '"');
+      const paragraphs: string[] = [];
+      cell.forEach((paragraph) => paragraphs.push('<p>' + serializeHtmlInlineContent(paragraph) + '</p>'));
+      cells.push('<' + tag + (attrs.length ? ' ' + attrs.join(' ') : '') + '>' + paragraphs.join('') + '</' + tag + '>');
+    });
+    rows.push('<tr>' + cells.join('') + '</tr>');
+  });
+  // 单行块让引用/列表/Callout 的 Markdown 前缀保持在表格外，正文换行使用行内 codec。
+  return '<table data-nomo-table="semantic"><tbody>' + rows.join('') + '</tbody></table>';
 }
 
 function serializeTableRow(row: ProseMirrorNode, columnCount: number): string[] {
@@ -656,20 +772,18 @@ function splitTaskParagraph(
   node: ProseMirrorNode,
 ): { marker: string; content: ProseMirrorNode } | null {
   const firstChild = node.firstChild;
-  if (!firstChild?.isText) return null;
-
-  const match = /^\[[ x]\]\s?/.exec(firstChild.text ?? '');
-  if (!match) return null;
+  const marker = readTaskListMarker(node);
+  if (!marker || !firstChild) return null;
 
   const children: ProseMirrorNode[] = [];
-  const restText = (firstChild.text ?? '').slice(match[0].length);
+  const restText = (firstChild.text ?? '').slice(marker.text.length);
   if (restText) children.push(node.type.schema.text(restText, firstChild.marks));
   for (let index = 1; index < node.childCount; index++) {
     children.push(node.child(index));
   }
 
   return {
-    marker: match[0].endsWith(' ') ? match[0] : `${match[0]} `,
+    marker: marker.text.endsWith(' ') ? marker.text : `${marker.text} `,
     content: node.type.create(node.attrs, Fragment.fromArray(children), node.marks),
   };
 }
@@ -698,9 +812,44 @@ function escapeMarkdownTextWithoutManualInlineMarkers(text: string, escapePipes 
   return escaped;
 }
 
+function renderParagraphInline(state: MarkdownSerializerState, node: ProseMirrorNode): void {
+  // 先输出容器的列表/引用前缀，只保护段落正文，不能把真实容器语法转成字面文本。
+  state.write();
+  const output = state as unknown as { out: string; delim: string };
+  const from = output.out.length;
+  const syntaxRanges: Array<{ from: number; to: number }> = [];
+  paragraphSyntaxRanges.set(state, syntaxRanges);
+  try {
+    state.renderInline(node);
+  } finally {
+    // out 修正后旧绝对坐标失效；范围只属于这一段，不能影响之后的图片或段落。
+    paragraphSyntaxRanges.delete(state);
+  }
+  const source = output.out.slice(from);
+  for (const span of analyzeInlineSourceText(source).spans) {
+    if (span.type === 'code') syntaxRanges.push({ from: from + span.openFrom, to: from + span.closeTo });
+  }
+  let offset = from;
+  const content = source.split('\n').map((line, index) => {
+    const prefix = index > 0 && line.startsWith(output.delim) ? output.delim : '';
+    const body = line.slice(prefix.length);
+    const start = offset + prefix.length;
+    offset += line.length + 1;
+    if (syntaxRanges.some((range) => start >= range.from && start < range.to)) return line;
+    // Markdown 会裁掉段首空白或把四列缩进解释为代码；实体保留真实空格与 Tab。
+    const indentation = /^[ \t]+(?=\S)/.exec(body)?.[0];
+    if (indentation) {
+      const literalIndentation = indentation.replace(/ /g, '&#32;').replace(/\t/g, '&#9;');
+      return prefix + literalIndentation + body.slice(indentation.length);
+    }
+    return prefix + escapeMarkdownBlockStart(body);
+  }).join('\n');
+  output.out = output.out.slice(0, from) + content;
+}
+
 function escapeMarkdownBlockStart(text: string): string {
   return text.replace(
-    /^(\s{0,3})(#{1,6}(?:\s|$)|>(?:\s|$)|[-+*](?:\s|$)|\d+[.)](?:\s|$)|`{3,}|~{3,}|(?:[-*_]\s*){3,}$)/,
+    /^(\s{0,3})(#{1,6}(?:\s|$)|>(?:\s|$)|[-+*](?:\s|$)|\d+[.)](?:\s|$)|`{3,}(?=[^`]*$)|~{3,}|(?:[-*_]\s*){3,}$|=+\s*$)/,
     (_match, indentation: string, marker: string) =>
       /^\d+[.)]/.test(marker)
         ? `${indentation}${marker.replace(/[.)]/, '\\$&')}`
@@ -733,8 +882,13 @@ function serializeMarkdownComment(content: string, block: boolean): string {
     return `<!--\n${safeContent}\n-->`;
   }
 
-  const inlineContent = safeContent.replace(/\n+/g, ' ').trim();
-  return inlineContent ? `<!-- ${inlineContent} -->` : '<!---->';
+  return safeContent ? `<!-- ${safeContent} -->` : '<!---->';
+}
+
+function serializeHtmlInlineComment(content: string): string {
+  const safeContent = content.replace(/-->/g, '-- >').replace(/\r\n/g, '\n');
+  const attribute = escapeHtmlAttr(safeContent).replace(/\|/g, '&#124;');
+  return `<span class="comment-inline" data-comment="${attribute}"></span>`;
 }
 
 export function serializeClipboardText(slice: Slice, preserveInlineSource = false): string {

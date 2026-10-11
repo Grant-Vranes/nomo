@@ -1,5 +1,5 @@
 import { normalizeHeadingTitle, type OutlineItem } from '../../lib/outline/outlineService';
-import { slugifyHeading } from '../../lib/toc/tocService';
+import { createHeadingIdAllocator } from '../../lib/toc/tocService';
 import { getOutlineItemAtLine } from './outlineState';
 import type { MarkdownSourceEditorHandle } from '../components/markdownSourceEditor';
 
@@ -559,7 +559,7 @@ function getSemanticHeadings(semanticPane: HTMLElement | undefined) {
     semanticPane.querySelectorAll<HTMLElement>(
       '.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6',
     ),
-  );
+  ).filter((element) => !element.closest('.html-card'));
 }
 
 function getSemanticHeadingAnchors(
@@ -587,16 +587,11 @@ function getSemanticHeadingAnchors(
   }
 
   const headings = getSemanticHeadings(semanticPane);
-  const usedIds = new Map<string, number>();
+  const allocateId = createHeadingIdAllocator();
   const anchors = headings.map((element, index) => {
     const title = normalizeHeadingTitle(element.textContent ?? '');
-    const baseId = slugifyHeading(title) || `heading-${index + 1}`;
-    const seen = usedIds.get(baseId) ?? 0;
-    usedIds.set(baseId, seen + 1);
-    return {
-      id: seen === 0 ? baseId : `${baseId}-${seen + 1}`,
-      element,
-    };
+    const fallbackId = allocateId(title, index + 1);
+    return { id: element.id || fallbackId, element };
   });
   semanticHeadingCache.set(semanticPane, {
     editor,

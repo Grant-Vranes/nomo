@@ -65,7 +65,7 @@ The Windows NSIS installer and macOS app declare support for opening `.md`, `.ma
 - **Encoding-safe saves**: Markdown opens and preserves UTF-8, UTF-8 BOM, UTF-16 LE / BE BOM, and GBK. Atomic replacement prevents interrupted saves from leaving a partially written file.
 - **Complete document elements**: H1–H6, paragraphs, hard breaks, bold, italic, underline, strikethrough, highlight, links, inline code and math, lists, task lists, blockquotes, five callout types, front matter, footnotes, comments, horizontal rules, and safe HTML.
 - **Technical content editing**: Code blocks provide Shiki highlighting, titles, language selection, copying, line numbers, and indentation preferences. KaTeX handles inline and display math; multiline formulas allow `$$` on separate lines or alongside the opening and closing formula content. Mermaid includes flowchart, sequence, class, state, pie, Gantt, and ER templates, live previews, and fullscreen viewing.
-- **Structured tables and navigation**: Choose table dimensions, add or remove rows and columns, align columns, toggle headers, or delete a table. In-document TOCs track headings, while heading-level indicators, the outline, and footnote navigation help with long documents.
+- **Structured tables and navigation**: Choose table dimensions, add or remove rows and columns, align columns, toggle headers, or delete a table. Tables without headers, merged cells, and other structures that plain Markdown tables cannot preserve are saved as embedded HTML, keeping header state and cell positions when reopened. In-document TOCs track headings, while heading-level indicators, the outline, and footnote navigation help with long documents.
 
 ### Large TXT / JSON Files
 

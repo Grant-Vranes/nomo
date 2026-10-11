@@ -1,3 +1,5 @@
+import { serializeMarkdownLinkDestination } from '../../lib/editor-core/link';
+
 export function getImageFiles(fileList: FileList | undefined | null) {
   return Array.from(fileList ?? []).filter((file) => file.type.startsWith('image/'));
 }
@@ -13,5 +15,5 @@ export function createImageMarkdownSrc(fileName: string, imageName: string) {
 
 export function createImageMarkdown(alt: string, src: string) {
   const safeAlt = alt.replace(/[\[\]\n\r]/g, ' ').trim() || 'image';
-  return `![${safeAlt}](${src})`;
+  return `![${safeAlt}](${serializeMarkdownLinkDestination(src)})`;
 }

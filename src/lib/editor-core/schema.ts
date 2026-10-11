@@ -47,7 +47,40 @@ const imageNodeSpec = {
     /** 图片宽度：如 "60%" 或 "600"（px），null=原始尺寸 */
     width: { default: null },
   },
+  parseDOM: [
+    {
+      tag: 'img[src]',
+      getAttrs: (dom: HTMLElement) => ({
+        src: dom.getAttribute('src'),
+        alt: dom.getAttribute('alt'),
+        title: dom.getAttribute('title'),
+        width: dom.style.width || dom.getAttribute('width'),
+        align: readImageAlignment(dom),
+      }),
+    },
+  ],
+  toDOM(node: import('prosemirror-model').Node): DOMOutputSpec {
+    const { src, alt, title, width, align } = node.attrs;
+    const styles: string[] = [];
+    if (width) styles.push(`width: ${/^\d+$/.test(width) ? `${width}px` : width}; height: auto`);
+    if (align === 'left' || align === 'center' || align === 'right') {
+      styles.push(`display: block; margin-left: ${align === 'left' ? '0' : 'auto'}; margin-right: ${align === 'right' ? '0' : 'auto'}`);
+    }
+    return ['img', { src, alt, title, width, align, style: styles.join('; ') || null }];
+  },
 };
+
+function readImageAlignment(dom: HTMLElement): TableColumnAlignment | null {
+  for (const element of [dom, dom.parentElement]) {
+    if (!element) continue;
+    const value = element.getAttribute('align') || element.style.textAlign || element.getAttribute('data-align');
+    if (value === 'left' || value === 'center' || value === 'right') return value;
+    if (element.style.marginLeft === 'auto' && element.style.marginRight === 'auto') return 'center';
+    if (element.style.marginLeft === 'auto') return 'right';
+    if (element.style.marginRight === 'auto') return 'left';
+  }
+  return null;
+}
 
 function readCellAlignment(dom: HTMLElement): TableColumnAlignment | null {
   const value = dom.style.textAlign || dom.getAttribute('data-align');
@@ -57,6 +90,11 @@ function readCellAlignment(dom: HTMLElement): TableColumnAlignment | null {
 export const schema = new Schema({
   nodes: markdownSchema.spec.nodes
     .update('doc', docNodeSpec)
+    .update('heading', {
+      ...markdownSchema.spec.nodes.get('heading')!,
+      // 标题允许完整行内内容，避免公式、脚注和换行使整个标题无效。
+      content: 'inline*',
+    })
     .update('hard_break', hardBreakNodeSpec)
     .update('image', imageNodeSpec)
     .append(
@@ -254,6 +292,10 @@ export const schema = new Schema({
         parseDOM: [
           {
             tag: 'div.footnote-def',
+            contentElement(dom) {
+              // 编号是展示控件，只导入定义正文；无包装的外部 HTML 继续按原规则读取。
+              return (dom as HTMLElement).querySelector('.footnote-def-content') ?? dom as HTMLElement;
+            },
             getAttrs(dom) {
               const el = dom as HTMLElement;
               return { id: el.getAttribute('data-footnote-id') ?? '' };

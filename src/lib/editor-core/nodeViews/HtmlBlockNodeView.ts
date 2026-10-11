@@ -71,13 +71,13 @@ export class HtmlBlockNodeView {
   private syncContentElementAttrs(): void {
     const { class: cls, id } = this.node.attrs;
     const classNames = ['html-card-content'];
-    if (typeof cls === 'string' && cls.trim()) {
-      classNames.push(cls.trim());
+    if (typeof cls === 'string' && cls) {
+      classNames.push(cls);
     }
 
     this.contentDOM.setAttribute('class', classNames.join(' '));
-    if (typeof id === 'string' && id.trim()) {
-      this.contentDOM.setAttribute('id', id.trim());
+    if (typeof id === 'string') {
+      this.contentDOM.setAttribute('id', id);
     } else {
       this.contentDOM.removeAttribute('id');
     }

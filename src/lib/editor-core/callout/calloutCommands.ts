@@ -40,29 +40,35 @@ export function insertCallout(
       ? state.tr.replaceWith($from.before(1), $from.after(1), callout)
       : state.tr.replaceSelectionWith(callout);
 
-  setSelectionInsideInsertedCallout(tr, state.selection.from);
+  setSelectionInsideInsertedCallout(tr);
 
   dispatch(tr.scrollIntoView());
   return true;
 }
 
-function setSelectionInsideInsertedCallout(tr: Transaction, originalSelectionFrom: number): void {
+function setSelectionInsideInsertedCallout(tr: Transaction): void {
   const calloutType = tr.doc.type.schema.nodes.callout;
-  const mappedPos = tr.mapping.map(originalSelectionFrom, -1);
   let calloutPos: number | null = null;
 
-  const directNode = tr.doc.nodeAt(mappedPos);
-  if (directNode?.type === calloutType) {
-    calloutPos = mappedPos;
-  } else {
-    tr.doc.descendants((node, pos) => {
-      if (node.type === calloutType && calloutPos === null) {
-        calloutPos = pos;
-        return false;
-      }
-      return true;
+  // 段落拆分会在插入节点前补齐边界，只在本次事务新增的范围内找 callout。
+  tr.mapping.maps.forEach((stepMap, index) => {
+    const remainingMapping = tr.mapping.slice(index + 1);
+    stepMap.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
+      if (calloutPos !== null || newStart === newEnd) return;
+      const from = remainingMapping.map(newStart, -1);
+      const to = remainingMapping.map(newEnd, 1);
+      if (from >= to) return;
+
+      tr.doc.nodesBetween(from, to, (node, pos) => {
+        if (calloutPos !== null) return false;
+        if (node.type === calloutType && pos >= from && pos + node.nodeSize <= to) {
+          calloutPos = pos;
+          return false;
+        }
+        return true;
+      });
     });
-  }
+  });
 
   if (calloutPos === null) return;
 
@@ -109,8 +115,8 @@ export function toggleCalloutType(
 
       if (nextType === currentType) return false;
 
-      const pos = $from.before(d + 1);
-      const tr = state.tr.setNodeMarkup(pos, undefined, { type: nextType });
+      const pos = $from.before(d);
+      const tr = state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, type: nextType });
       dispatch(tr.scrollIntoView());
       return true;
     }
@@ -120,7 +126,7 @@ export function toggleCalloutType(
 }
 
 /**
- * 取消 callout：去掉 callout 外壳，内容替换为普通段落。
+ * 取消 callout：去掉 callout 外壳，原位保留内部块及其属性。
  * 如果当前不在 callout 内，返回 false。
  */
 export function unwrapCallout(
@@ -135,9 +141,9 @@ export function unwrapCallout(
     if ($from.node(d).type === schema.nodes.callout) {
       if (!dispatch) return true;
 
-      const calloutPos = $from.before(d + 1);
+      const calloutPos = $from.before(d);
       const calloutNode = $from.node(d);
-      const calloutEnd = calloutPos + calloutNode.nodeSize;
+      const calloutEnd = $from.after(d);
 
       // 将 callout 的子节点提取出来，替换整个 callout
       const content = calloutNode.content;

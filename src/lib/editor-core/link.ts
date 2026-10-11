@@ -1,6 +1,7 @@
 const DISALLOWED_LINK_PROTOCOLS = /^(?:javascript|vbscript|data)\s*:/i;
 const ALLOWED_ABSOLUTE_LINK_PROTOCOLS = /^(?:https?|mailto):/i;
 const WINDOWS_DRIVE_PATH = /^[a-zA-Z]:[\\/]/;
+const LINK_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
 export interface NormalizedLinkAttrs {
   href: string;
@@ -16,6 +17,8 @@ export interface NormalizedLinkAttrs {
 export function normalizeLinkHref(value: unknown): string | null {
   const href = String(value ?? '').trim();
   if (!href) return null;
+  // URL 解析会忽略 TAB/LF/CR；拒绝残留控制字符，避免绕过协议校验。
+  if (LINK_CONTROL_CHARACTERS.test(href)) return null;
   if (DISALLOWED_LINK_PROTOCOLS.test(href)) return null;
 
   const protocolMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href);
@@ -49,9 +52,19 @@ export function canOpenLinkHref(value: unknown): boolean {
 }
 
 export function serializeMarkdownLinkDestination(href: string): string {
-  return href.replace(/\\/g, '\\\\').replace(/\)/g, '\\)');
+  // 先保护字面实体，再转义配对边界；空白地址使用 CommonMark 的尖括号形式。
+  const escaped = href
+    .replace(/&/g, '&amp;')
+    .replace(/\\/g, '\\\\')
+    .replace(/[()<>]/g, '\\$&');
+  return /\s/.test(href) ? '<' + escaped + '>' : escaped;
 }
 
 export function serializeMarkdownLinkTitle(title: string): string {
-  return title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return title
+    .replace(/&/g, '&amp;')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, '&#13;')
+    .replace(/\n/g, '&#10;');
 }

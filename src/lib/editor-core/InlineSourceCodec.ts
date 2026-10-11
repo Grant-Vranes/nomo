@@ -58,6 +58,22 @@ export function isInlineSourceText(node: ProseMirrorNode): boolean {
   return node.isText && node.marks.some((mark) => mark.type.name === 'inline_source');
 }
 
+/** 读取任务项首段起点标记；代码、链接和字面文本不产生任务状态。 */
+export function readTaskListMarker(
+  paragraph: ProseMirrorNode,
+): { text: string; checked: boolean } | null {
+  const first = paragraph.firstChild;
+  if (
+    paragraph.type.name !== 'paragraph' || !first?.isText ||
+    first.marks.some((mark) =>
+      formatNames.has(mark.type.name as InlineFormatName) || mark.type.name === 'link' ||
+      (mark.type.name === 'inline_source' && mark.attrs.literal === true),
+    )
+  ) return null;
+  const match = /^\[([ xX])\]\s?/.exec(first.text ?? '');
+  return match ? { text: match[0], checked: match[1].toLowerCase() === 'x' } : null;
+}
+
 export function isInlineSourceBlock(node: ProseMirrorNode): boolean {
   return node.isTextblock && node.type.name !== 'code_block' && node.type.name !== 'html_block';
 }
@@ -385,8 +401,10 @@ function materializeSourceNode(
   let alreadySource = true;
   doc.forEach((child) => {
     if (
-      (child.isText && !isInlineSourceText(child)) ||
-      child.marks.some((mark) => formatNames.has(mark.type.name as InlineFormatName))
+      child.isText && (
+        !isInlineSourceText(child) ||
+        child.marks.some((mark) => formatNames.has(mark.type.name as InlineFormatName))
+      )
     )
       alreadySource = false;
   });
@@ -422,6 +440,8 @@ function materializeSourceNode(
       ? child.marks
           .filter((mark) => formatNames.has(mark.type.name as InlineFormatName))
           .map((mark) => mark.type.name as InlineFormatName)
+          // 字面代码必须处于最内层，不能把外层格式的定界符吞进正文。
+          .sort((left, right) => Number(left === 'code') - Number(right === 'code'))
       : [];
     const linkMarks = child.marks.filter((mark) => mark.type.name === 'link');
     let common = 0;
@@ -496,10 +516,8 @@ function materializeSourceNode(
       }
       append(literal ? escapeInlineSourceLiteral(raw) : raw, child.marks);
     } else {
-      const marks = child.marks.filter(
-        (mark) => !formatNames.has(mark.type.name as InlineFormatName),
-      );
-      children.push(Mark.sameSet(child.marks, marks) ? child : child.mark(marks));
+      // 原子节点没有可承载定界符的文字，保留其合法语义 marks，避免 HTML 导入丢格式。
+      children.push(child);
       if (maps)
         for (let i = 1; i <= child.nodeSize; i++) {
           maps.left[oldContent + offset + i] = maps.right[oldContent + offset + i] =
@@ -627,7 +645,7 @@ export function isRetainedInlineToken(token: Token): boolean {
     (token.type === 'text_special' && token.info === 'entity') ||
     (token.type === 'html_inline' &&
       (/^<\/?a(?:\s|\/?>)/i.test(token.content) ||
-        /^<br\s*\/?>$/i.test(token.content) ||
+        /^<br(?:\s|\/?>)/i.test(token.content) ||
         /^<!--[\s\S]*-->$/.test(token.content)))
   );
 }

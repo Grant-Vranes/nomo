@@ -1,18 +1,15 @@
 import type { EditorState, Transaction } from 'prosemirror-state';
-import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
+import { Plugin, PluginKey, Selection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { isInTable, TableMap } from 'prosemirror-tables';
+import { isInTable, rowIsHeader, TableMap, tableNodeTypes } from 'prosemirror-tables';
 import type { Node } from 'prosemirror-model';
 import { onInterfaceLocaleChanged, t } from '../../../app/i18n';
 import {
   addTableColumnAfter,
   addTableColumnBefore,
-  addTableRowAfter,
-  addTableRowBefore,
   deleteCurrentTable,
   deleteCurrentTableColumn,
-  deleteCurrentTableRow,
-  normalizeFirstTableRowHeader,
+  normalizeTableRowChange,
   resizeCurrentTable,
   setTableColumnAlignment,
   toggleFirstTableRowHeader,
@@ -74,7 +71,7 @@ class TableControlsView {
 
   update(view: EditorView): void {
     const table = findActiveTableElement(view);
-    if (!isInTable(view.state) || !table) {
+    if (!view.editable || !isInTable(view.state) || !table) {
       this.resizePickerOpen = false;
       this.dom.classList.remove('visible');
       this.dom.replaceChildren();
@@ -311,6 +308,7 @@ class TableControlsView {
     btn.addEventListener('mousedown', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (!this.view.editable) return;
       onClick();
     });
 
@@ -359,7 +357,7 @@ class TableControlsView {
       const centerY = (rowRect.top - tableRect.top + rowRect.height / 2) / scale.y;
 
       const btn = this.createButton(t.deleteTableRow({ index: r + 1 }), '−', 'delete-row-btn', () =>
-        this.deleteRowAt(r, 0),
+        this.deleteRowAt(r),
       );
       btn.style.top = `${Math.round(centerY)}px`;
       this.dom.appendChild(btn);
@@ -641,6 +639,7 @@ class TableControlsView {
     button.addEventListener('mousedown', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (!this.view.editable) return;
       onClick();
     });
     return button;
@@ -664,19 +663,43 @@ class TableControlsView {
     const info = this.getTableInfo();
     if (!info) return;
     const map = TableMap.get(info.node);
+    if (pos < 0 || pos > map.height) return;
 
-    // 将光标移到目标行，然后执行插入命令
-    if (pos === 0) {
-      this.moveCursorTo(info, map, 0, 0);
-      addTableRowBefore()(this.view.state, (tr) => this.view.dispatch(tr));
-      normalizeFirstTableRowHeader()(this.view.state, (tr) => this.view.dispatch(tr));
-    } else if (pos >= map.height) {
-      this.moveCursorTo(info, map, map.height - 1, 0);
-      addTableRowAfter()(this.view.state, (tr) => this.view.dispatch(tr));
-    } else {
-      this.moveCursorTo(info, map, pos - 1, 0);
-      addTableRowAfter()(this.view.state, (tr) => this.view.dispatch(tr));
+    // 控件指定逻辑行间隙，不能用跨行单元格的选区底部代替插入位置。
+    const tr = this.view.state.tr;
+    let rowPosition = info.tableStart;
+    for (let row = 0; row < pos; row++) rowPosition += info.node.child(row).nodeSize;
+    const types = tableNodeTypes(info.node.type.schema);
+    let referenceRow: number | null = pos > 0 ? pos - 1 : 0;
+    if (rowIsHeader(map, info.node, referenceRow)) {
+      referenceRow = pos === 0 || pos === map.height ? null : pos;
     }
+    const cells: Node[] = [];
+    const extended = new Set<number>();
+    for (let column = 0; column < map.width; column++) {
+      const index = pos * map.width + column;
+      const cellOffset = map.map[index];
+      if (pos > 0 && pos < map.height && cellOffset === map.map[index - map.width]) {
+        if (extended.has(cellOffset)) continue;
+        extended.add(cellOffset);
+        const cell = info.node.nodeAt(cellOffset)!;
+        tr.setNodeMarkup(info.tableStart + cellOffset, undefined, {
+          ...cell.attrs,
+          rowspan: cell.attrs.rowspan + 1,
+        });
+      } else {
+        const type =
+          referenceRow === null
+            ? types.cell
+            : info.node.nodeAt(map.map[referenceRow * map.width + column])!.type;
+        const cell = type.createAndFill();
+        if (cell) cells.push(cell);
+      }
+    }
+    tr.insert(rowPosition, types.row.create(null, cells));
+    normalizeTableRowChange(tr, info.tableStart, info.node, pos, true);
+    this.moveSelectionToTableRow(tr, info.tableStart, pos);
+    this.view.dispatch(tr);
     this.view.focus();
   }
 
@@ -702,12 +725,36 @@ class TableControlsView {
 
   // ===== 操作：删除行/列 =====
 
-  private deleteRowAt(row: number, col: number): void {
+  private deleteRowAt(row: number): void {
     const info = this.getTableInfo();
     if (!info) return;
     const map = TableMap.get(info.node);
-    this.moveCursorTo(info, map, row, col);
-    deleteCurrentTableRow()(this.view.state, (tr) => this.view.dispatch(tr));
+    if (map.height === 1 || row < 0 || row >= map.height) return;
+
+    // 仅删除按钮对应的一行；跨列合并格按位置去重，缩短 rowspan 或下移其内容。
+    const tr = this.view.state.tr;
+    let rowPosition = info.tableStart;
+    for (let index = 0; index < row; index++) rowPosition += info.node.child(index).nodeSize;
+    tr.delete(rowPosition, rowPosition + info.node.child(row).nodeSize);
+    const touched = new Set<number>();
+    for (let column = 0; column < map.width; column++) {
+      const index = row * map.width + column;
+      const cellOffset = map.map[index];
+      if (touched.has(cellOffset)) continue;
+      touched.add(cellOffset);
+      const cell = info.node.nodeAt(cellOffset)!;
+      const attrs = { ...cell.attrs, rowspan: cell.attrs.rowspan - 1 };
+      if (row > 0 && cellOffset === map.map[index - map.width]) {
+        tr.setNodeMarkup(tr.mapping.map(info.tableStart + cellOffset), undefined, attrs);
+      } else if (row + 1 < map.height && cellOffset === map.map[index + map.width]) {
+        const nextCellPosition = info.tableStart + map.positionAt(row + 1, column, info.node);
+        const copy = cell.type.create(attrs, cell.content, cell.marks);
+        tr.insert(tr.mapping.map(nextCellPosition), copy);
+      }
+    }
+    normalizeTableRowChange(tr, info.tableStart, info.node, row, false);
+    this.moveSelectionToTableRow(tr, info.tableStart, Math.min(row, map.height - 2));
+    this.view.dispatch(tr);
     this.view.focus();
   }
 
@@ -722,6 +769,16 @@ class TableControlsView {
 
   // ===== 辅助方法 =====
 
+  /** 完全被 rowspan 覆盖的空行仍需落到覆盖它的单元格正文中。 */
+  private moveSelectionToTableRow(tr: Transaction, tableStart: number, row: number): void {
+    const table = tr.doc.nodeAt(tableStart - 1);
+    if (!table || table.type.spec.tableRole !== 'table') return;
+    const map = TableMap.get(table);
+    const rowCells = map.cellsInRect({ left: 0, right: map.width, top: row, bottom: row + 1 });
+    const cellPosition = tableStart + (rowCells[0] ?? map.map[row * map.width]);
+    tr.setSelection(Selection.near(tr.doc.resolve(cellPosition + 1)));
+  }
+
   /** 将光标移动到指定单元格内 */
   private moveCursorTo(
     info: { tableStart: number; node: Node },
@@ -729,9 +786,9 @@ class TableControlsView {
     row: number,
     col: number,
   ): void {
-    const cellNodePos = info.tableStart + map.positionAt(row, col, info.node);
+    const cellNodePos = info.tableStart + map.map[row * map.width + col];
     const tr = this.view.state.tr.setSelection(
-      TextSelection.create(this.view.state.doc, cellNodePos + 1),
+      Selection.near(this.view.state.doc.resolve(cellNodePos + 1)),
     );
     this.view.dispatch(tr);
   }
@@ -739,6 +796,7 @@ class TableControlsView {
   private run(
     command: (state: EditorState, dispatch?: (tr: Transaction) => void) => boolean,
   ): void {
+    if (!this.view.editable) return;
     command(this.view.state, (tr) => this.view.dispatch(tr));
     this.view.focus();
     this.update(this.view);
@@ -746,6 +804,7 @@ class TableControlsView {
 
   /** 获取当前光标所在表格的信息 */
   private getTableInfo(): { tableStart: number; node: Node } | null {
+    if (!this.view.editable) return null;
     const { $from } = this.view.state.selection;
     for (let depth = $from.depth; depth > 0; depth--) {
       const node = $from.node(depth);

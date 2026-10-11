@@ -1,5 +1,7 @@
-import { lift, setBlockType, splitBlockAs, wrapIn } from 'prosemirror-commands';
+import { setBlockType, splitBlockAs, wrapIn } from 'prosemirror-commands';
+import { liftTarget } from 'prosemirror-transform';
 import { appendClearInlineSourceStyles, toggleInlineSourceFormat } from './inlineSourceCommands';
+import { readTaskListMarker } from './InlineSourceCodec';
 import { closeHistory, redo, undo } from 'prosemirror-history';
 import { liftListItem, wrapInList } from 'prosemirror-schema-list';
 import {
@@ -39,7 +41,9 @@ function insertParagraphAfterCurrentBlock(
   if (!dispatch) return false;
   const { $from } = state.selection;
   const topDepth = 1;
-  const afterPos = $from.after(topDepth);
+  const afterPos = state.selection instanceof NodeSelection && $from.depth === 0
+    ? state.selection.to
+    : $from.after(topDepth);
   const emptyParagraph = schema.nodes.paragraph.create();
   const tr = state.tr.insert(afterPos, emptyParagraph);
   // 光标移到新段落的起始位置
@@ -183,8 +187,8 @@ function decreaseHeadingLevel(state: EditorState, dispatch?: (tr: Transaction) =
 }
 
 /**
- * 自定义 split 命令：在标题内按 Enter 时，拆分出的新块退化为普通段落，
- * 而不是继续继承 heading 的 level 属性。
+ * 自定义 split 命令：标题、脚注定义内回车时，新块退化为普通段落。
+ * 行首回车在左侧插入段落，保留右侧原块内容、标题级别及脚注 ID。
  * 其他场景（正文、列表项等）沿用 splitBlock 默认行为。
  */
 export function splitBlockExitHeading(
@@ -192,29 +196,39 @@ export function splitBlockExitHeading(
   dispatch?: (tr: Transaction) => void,
 ): boolean {
   const { $from, empty } = state.selection;
-  const isHeadingStart =
-    empty && $from.parent.type === schema.nodes.heading && $from.parentOffset === 0;
+  const isPreservedBlockStart =
+    empty && $from.parentOffset === 0 && (
+      $from.parent.type === schema.nodes.heading ||
+      ($from.parent.type === schema.nodes.footnote_def && $from.parent.content.size > 0)
+    );
   const splitCommand = splitBlockAs((node) => {
-    // 标题行首回车：让默认拆分逻辑把空白左侧转为正文，并保留右侧原标题。
-    if (isHeadingStart && node.type === schema.nodes.heading) {
+    // 行首回车让默认拆分逻辑把空白左侧转为正文，并保留右侧原块。
+    if (isPreservedBlockStart && (
+      node.type === schema.nodes.heading || node.type === schema.nodes.footnote_def
+    )) {
       return null;
     }
 
-    // 标题中间或末尾回车：强制新块为普通段落。
-    if (node.type === schema.nodes.heading) {
+    // 中间或末尾回车退出原块；脚注 ID 只能留在原定义上，不能复制到新块。
+    if (node.type === schema.nodes.heading || node.type === schema.nodes.footnote_def) {
       return { type: schema.nodes.paragraph };
     }
     // 其他场景沿用默认行为
     return null;
   });
 
-  if (!isHeadingStart || !dispatch) {
-    return splitCommand(state, dispatch);
-  }
+  if (!dispatch) return splitCommand(state);
 
-  // 默认拆分会把光标留在右侧标题开头；派发同一事务前将其移入左侧空段落。
   return splitCommand(state, (tr) => {
-    dispatch(tr.setSelection(TextSelection.create(tr.doc, $from.pos)));
+    if (!empty && $from.parent.type === schema.nodes.footnote_def && $from.parentOffset === 0) {
+      // 行首选区被删除后，默认逻辑会把空白左侧转为正文；恢复原定义，避免丢失脚注 ID。
+      tr.setNodeMarkup(tr.mapping.map($from.before(), -1), schema.nodes.footnote_def, $from.parent.attrs);
+    }
+    if (isPreservedBlockStart) {
+      // 行首拆分保留右侧原块，光标移入左侧新段落。
+      tr.setSelection(TextSelection.create(tr.doc, $from.pos));
+    }
+    dispatch(tr);
   });
 }
 
@@ -264,39 +278,20 @@ function findListItem($pos: ResolvedPos): { itemPos: number; itemNode: PmNode } 
   return null;
 }
 
-// 查找 list_item 中首个文本节点的内容偏移（相对于 list_item 内容起始）
-function findFirstTextInItem(item: PmNode): { offset: number } | null {
-  let result: { offset: number } | null = null;
-  item.descendants((node, pos) => {
-    if (node.isText) {
-      result = { offset: pos };
-      return false;
-    }
-  });
-  return result;
-}
-
-// 判断 list_item 首段文本是否以 [ ] 或 [x] 开头
+// 任务标记只取列表项首段开头；后续文本、段落和嵌套列表不参与判断。
 function findTaskMarkerInItem(item: PmNode): { offset: number; length: number } | null {
-  let result: { offset: number; length: number } | null = null;
-  item.descendants((node) => {
-    if (node.isText) {
-      const match = /^\[[ x]\]\s?/.exec(node.text ?? '');
-      if (match) result = { offset: 0, length: match[0].length };
-      return false;
-    }
-  });
-  return result;
+  const paragraph = item.firstChild;
+  const marker = paragraph ? readTaskListMarker(paragraph) : null;
+  return marker ? { offset: 1, length: marker.text.length } : null;
 }
 
 function getTaskMarkerRange(listItem: {
   itemPos: number;
   itemNode: PmNode;
 }): { from: number; to: number } | null {
-  const textInfo = findFirstTextInItem(listItem.itemNode);
   const taskMarker = findTaskMarkerInItem(listItem.itemNode);
-  if (!textInfo || !taskMarker) return null;
-  const from = listItem.itemPos + 1 + textInfo.offset + taskMarker.offset;
+  if (!taskMarker) return null;
+  const from = listItem.itemPos + 1 + taskMarker.offset;
   return { from, to: from + taskMarker.length };
 }
 
@@ -350,10 +345,23 @@ export function toggleList(
   const currentList = findParentList($from);
 
   if (currentList?.listType === listType) {
-    const listItem = findListItem($from);
-    const taskRange = listItem ? getTaskMarkerRange(listItem) : null;
-    const tr = taskRange ? state.tr.delete(taskRange.from, taskRange.to) : undefined;
-    return liftCurrentListItem(state, dispatch, tr);
+    // 与 liftListItem 使用同一范围；仅移除实际提升项的标记，保留其嵌套任务。
+    const range = $from.blockRange(
+      state.selection.$to,
+      (node) => node.childCount > 0 && node.firstChild?.type === schema.nodes.list_item,
+    );
+    if (!range) return false;
+    const taskRanges: Array<{ from: number; to: number }> = [];
+    let itemPos = range.start;
+    for (let index = range.startIndex; index < range.endIndex; index++) {
+      const itemNode = range.parent.child(index);
+      const marker = getTaskMarkerRange({ itemPos, itemNode });
+      if (marker) taskRanges.push(marker);
+      itemPos += itemNode.nodeSize;
+    }
+    const tr = state.tr;
+    for (const marker of taskRanges.reverse()) tr.delete(marker.from, marker.to);
+    return liftCurrentListItem(state, dispatch, tr.docChanged ? tr : undefined);
   }
 
   if (currentList) {
@@ -375,9 +383,9 @@ export function toggleTaskListAtCursor(
   const listItem = findListItem($from);
 
   if (listItem) {
-    const textInfo = findFirstTextInItem(listItem.itemNode);
-    if (!textInfo) return false;
-    const textPos = listItem.itemPos + 1 + textInfo.offset;
+    const paragraph = listItem.itemNode.firstChild;
+    if (paragraph?.type !== schema.nodes.paragraph) return false;
+    const textPos = listItem.itemPos + 2;
     const taskRange = getTaskMarkerRange(listItem);
 
     if (taskRange) {
@@ -408,13 +416,17 @@ export function toggleTaskListAtCursor(
   return true;
 }
 
-/** 切换引用：已在引用内则取消（lift），否则包裹 */
+/** 切换引用：只提升引用的直接子块，保留块内列表和其他容器。 */
 function toggleBlockquote(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
-  const { $from } = state.selection;
-  // 向上查找是否已在 blockquote 内
-  for (let d = $from.depth; d >= 0; d--) {
+  const { $from, $to } = state.selection;
+  for (let d = $from.depth; d > 0; d--) {
     if ($from.node(d).type === schema.nodes.blockquote) {
-      return lift(state, dispatch);
+      const range = $from.blockRange($to, (node) => node.type === schema.nodes.blockquote);
+      if (!range) return false;
+      const target = liftTarget(range);
+      if (target === null || target !== range.depth - 1) return false;
+      if (dispatch) dispatch(state.tr.lift(range, target).scrollIntoView());
+      return true;
     }
   }
   return wrapIn(schema.nodes.blockquote)(state, dispatch);
@@ -607,7 +619,7 @@ function findMarkRangeNearPosition(
 ): { from: number; to: number } | null {
   let found: { from: number; to: number } | null = null;
   state.doc.nodesBetween(0, state.doc.content.size, (node, nodePos) => {
-    if (found || !node.isText || !mark.isInSet(node.marks)) return true;
+    if (found || !node.isInline || !mark.isInSet(node.marks)) return true;
     const from = nodePos;
     const to = nodePos + node.nodeSize;
     if (pos >= from && pos <= to) {
@@ -627,21 +639,22 @@ function expandMarkRange(
 ): { from: number; to: number } {
   let from = initialFrom;
   let to = initialTo;
+  const $from = doc.resolve(initialFrom);
+  const $to = doc.resolve(initialTo);
+  if (!$from.sameParent($to)) return { from, to };
 
-  doc.nodesBetween(0, doc.content.size, (node, pos) => {
-    if (!node.isText || !mark.isInSet(node.marks)) return true;
-    const nodeTo = pos + node.nodeSize;
-    if (nodeTo === from) {
-      from = pos;
-      return true;
-    }
-    if (pos === to) {
-      to = nodeTo;
-      return true;
-    }
-    return true;
-  });
-
+  // 同一行内容器内双向遍历连续兄弟节点，包含图片/公式且不跨其它链接。
+  const parent = $from.parent;
+  for (let index = $from.index() - 1; index >= 0; index -= 1) {
+    const node = parent.child(index);
+    if (!node.isInline || !mark.isInSet(node.marks)) break;
+    from -= node.nodeSize;
+  }
+  for (let index = $to.index(); index < parent.childCount; index += 1) {
+    const node = parent.child(index);
+    if (!node.isInline || !mark.isInSet(node.marks)) break;
+    to += node.nodeSize;
+  }
   return { from, to };
 }
 
@@ -706,6 +719,9 @@ function replaceRangeWithPlainText(tr: Transaction, from: number, to: number, te
 }
 
 function createMappedSelection(tr: Transaction, from: number, to: number): Selection {
+  if (from === to) {
+    return TextSelection.create(tr.doc, clampDocPosition(tr.mapping.map(from, 1), tr.doc));
+  }
   const mappedFrom = clampDocPosition(tr.mapping.map(from, -1), tr.doc);
   const mappedTo = clampDocPosition(tr.mapping.map(to, 1), tr.doc);
   try {
@@ -755,11 +771,7 @@ export function insertQuickInsertContent(
         command.type === 'toggleOrderedList' ? schema.nodes.ordered_list : schema.nodes.bullet_list;
       const currentList = findParentList($from);
       const item = findListItem($from);
-      const taskMarker = /^\[[ x]\]\s?/.exec(item?.itemNode.firstChild?.textContent ?? '');
-      const taskRange =
-        item && taskMarker
-          ? { from: item.itemPos + 2, to: item.itemPos + 2 + taskMarker[0].length }
-          : null;
+      const taskRange = item ? getTaskMarkerRange(item) : null;
       if (currentList) {
         if (currentList.listType !== listType) {
           tr.setNodeMarkup(currentList.listPos, listType, getListAttrsForType(listType));
@@ -776,7 +788,7 @@ export function insertQuickInsertContent(
       }
       if (command.type === 'toggleTaskList' && !taskRange) {
         const item = findListItem(tr.selection.$from);
-        if (!item) return false;
+        if (item?.itemNode.firstChild?.type !== schema.nodes.paragraph) return false;
         tr.insertText('[ ] ', item.itemPos + 2);
       }
       break;
@@ -1302,7 +1314,7 @@ export function findActiveLinkRange(state: EditorState): ActiveLinkRange | null 
       href: String(linkMark.attrs.href ?? ''),
       title: linkMark.attrs.title ? String(linkMark.attrs.title) : null,
       text: '',
-      active: true,
+      active: false,
     };
   }
 
@@ -1322,7 +1334,7 @@ function findFirstLinkMarkInRange(
 ): Pick<ActiveLinkRange, 'href' | 'title'> | null {
   let found: Pick<ActiveLinkRange, 'href' | 'title'> | null = null;
   state.doc.nodesBetween(from, to, (node) => {
-    if (found || !node.isText) return true;
+    if (found || !node.isInline) return true;
     const link = node.marks.find((mark) => mark.type === state.schema.marks.link);
     if (link) {
       found = {
@@ -1341,36 +1353,51 @@ function applyLinkMark(view: EditorView, href: string, title?: string, text?: st
   if (!attrs) return false;
 
   const { state } = view;
-  const linkMark = state.schema.marks.link.create(attrs);
+  const markType = state.schema.marks.link;
   const activeLink = findActiveLinkRange(state);
-  const targetText = text?.trim();
+  const targetText = text?.trim() ? text : undefined;
 
-  if (activeLink?.active) {
-    const replacementText = targetText || activeLink.text || attrs.href;
-    const tr = state.tr.removeMark(activeLink.from, activeLink.to, state.schema.marks.link);
-    if (replacementText !== activeLink.text) {
+  if (activeLink && (activeLink.active || !state.selection.empty)) {
+    if (activeLink.from >= activeLink.to) return false;
+    const replacementText = targetText || activeLink.text;
+    const textChanged = replacementText !== activeLink.text;
+    // 修改文字只允许发生在同一行内容器，避免替换跨段选区时吞掉块结构。
+    if (textChanged && !state.doc.resolve(activeLink.from).sameParent(state.doc.resolve(activeLink.to))) {
+      return false;
+    }
+
+    const tr = state.tr;
+    let originalLink: Mark | undefined;
+    let hasInlineTarget = false;
+    state.doc.nodesBetween(activeLink.from, activeLink.to, (node, pos, parent) => {
+      if (!node.isInline) return true;
+      if (!parent?.type.allowsMarkType(markType)) return false;
+      hasInlineTarget = true;
+      const existingLink = node.marks.find((mark) => mark.type === markType);
+      originalLink ??= existingLink;
+      // 每个原链接独立保留锚点属性，不把首个 id/name 复制到其它链接。
+      if (!textChanged) {
+        const linkMark = markType.create({ ...existingLink?.attrs, ...attrs });
+        tr.addMark(Math.max(activeLink.from, pos), Math.min(activeLink.to, pos + node.nodeSize), linkMark);
+      }
+      return false;
+    });
+    if (!hasInlineTarget) return false;
+
+    if (textChanged) {
+      const linkMark = markType.create({ ...originalLink?.attrs, ...attrs });
       tr.replaceWith(activeLink.from, activeLink.to, schema.text(replacementText, [linkMark]));
       tr.setSelection(
         TextSelection.create(tr.doc, activeLink.from, activeLink.from + replacementText.length),
       );
     } else {
-      tr.addMark(activeLink.from, activeLink.to, linkMark);
       tr.setSelection(TextSelection.create(tr.doc, activeLink.from, activeLink.to));
     }
     view.dispatch(tr.scrollIntoView());
     return true;
   }
 
-  if (!state.selection.empty) {
-    const selectedText = state.doc.textBetween(state.selection.from, state.selection.to, '\n');
-    const replacementText = targetText || selectedText || attrs.href;
-    const tr = state.tr.replaceSelectionWith(schema.text(replacementText, [linkMark]), false);
-    const from = tr.selection.from - replacementText.length;
-    tr.setSelection(TextSelection.create(tr.doc, from, from + replacementText.length));
-    view.dispatch(tr.scrollIntoView());
-    return true;
-  }
-
+  const linkMark = markType.create(attrs);
   const replacementText = targetText || attrs.href;
   const tr = state.tr.replaceSelectionWith(schema.text(replacementText, [linkMark]), false);
   const from = tr.selection.from - replacementText.length;
@@ -1381,7 +1408,7 @@ function applyLinkMark(view: EditorView, href: string, title?: string, text?: st
 
 function removeLinkMark(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
   const activeLink = findActiveLinkRange(state);
-  if (!activeLink?.active) return false;
+  if (!activeLink?.active || activeLink.from >= activeLink.to) return false;
   if (dispatch) {
     const tr = state.tr.removeMark(activeLink.from, activeLink.to, state.schema.marks.link);
     dispatch(
@@ -1481,7 +1508,8 @@ function insertBlockComment(view: EditorView, content?: string): boolean {
 }
 
 function createNextFootnoteId(doc: PmNode): string {
-  let maxNumericId = 0;
+  // 数字编号按十进制字符串比较和递增，避免超过安全整数时复用已有 ID。
+  let maxNumericId = '0';
   doc.descendants((node) => {
     if (node.type.name !== 'footnote_ref' && node.type.name !== 'footnote_def') {
       return true;
@@ -1489,11 +1517,26 @@ function createNextFootnoteId(doc: PmNode): string {
 
     const id = String(node.attrs.id ?? '');
     if (/^\d+$/.test(id)) {
-      maxNumericId = Math.max(maxNumericId, Number(id));
+      const numericId = id.replace(/^0+/, '') || '0';
+      if (
+        numericId.length > maxNumericId.length ||
+        (numericId.length === maxNumericId.length && numericId > maxNumericId)
+      ) {
+        maxNumericId = numericId;
+      }
     }
     return true;
   });
-  return String(maxNumericId + 1);
+
+  const digits = maxNumericId.split('');
+  for (let index = digits.length - 1; index >= 0; index -= 1) {
+    if (digits[index] !== '9') {
+      digits[index] = String(Number(digits[index]) + 1);
+      return digits.join('');
+    }
+    digits[index] = '0';
+  }
+  return `1${digits.join('')}`;
 }
 
 function setSelectionInFirstTableCell(tr: Transaction, tablePos: number): void {

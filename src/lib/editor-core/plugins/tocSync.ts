@@ -1,7 +1,7 @@
 import type { Node as ProseMirrorNode } from 'prosemirror-model';
 import { Plugin, PluginKey, type Transaction } from 'prosemirror-state';
-import { createTocList } from '../../toc/tocService';
-import { serializeMarkdown } from '../markdown';
+import { Decoration, DecorationSet } from 'prosemirror-view';
+import { createDocumentTocList, extractDocumentTocItems } from '../../toc/tocService';
 import { schema } from '../schema';
 
 const tocSyncKey = new PluginKey('tocSync');
@@ -13,8 +13,24 @@ const tocSyncKey = new PluginKey('tocSync');
  * 插件会基于新文档状态重新生成目录。
  */
 export function tocSyncPlugin(): Plugin {
+  let decoratedDoc: ProseMirrorNode | null = null;
+  let headingDecorations = DecorationSet.empty;
   return new Plugin({
     key: tocSyncKey,
+    props: {
+      decorations(state) {
+        if (decoratedDoc !== state.doc) {
+          decoratedDoc = state.doc;
+          headingDecorations = DecorationSet.create(state.doc,
+            extractDocumentTocItems(state.doc).map((item) => {
+              const node = state.doc.nodeAt(item.pos)!;
+              return Decoration.node(item.pos, item.pos + node.nodeSize, { id: item.id });
+            }),
+          );
+        }
+        return headingDecorations;
+      },
+    },
     appendTransaction(transactions, _oldState, newState) {
       if (!transactions.some((transaction) => transaction.docChanged)) return null;
       if (transactions.every((transaction) => transaction.getMeta(tocSyncKey))) return null;
@@ -23,7 +39,7 @@ export function tocSyncPlugin(): Plugin {
       const tocNodes = collectTocNodes(newState.doc);
       if (tocNodes.length === 0) return null;
 
-      const content = createTocList(serializeMarkdown(newState.doc));
+      const content = createDocumentTocList(newState.doc);
       const staleTocNodes = tocNodes.filter(({ node }) => node.attrs.content !== content);
       if (staleTocNodes.length === 0) return null;
 

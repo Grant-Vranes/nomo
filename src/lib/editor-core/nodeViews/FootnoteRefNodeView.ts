@@ -2,6 +2,7 @@ import { DOMSerializer, type Node as ProseMirrorNode } from 'prosemirror-model';
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { onInterfaceLocaleChanged, t } from '../../../app/i18n';
+import { projectInlineSource } from '../InlineSourceCodec';
 
 type FootnoteDefinitionLocation = {
   node: ProseMirrorNode;
@@ -12,6 +13,16 @@ type FootnoteDefinitionLocation = {
  * 正文脚注引用 NodeView：负责跳转到底部定义，并在 hover/focus 时显示只读预览。
  */
 export class FootnoteRefNodeView {
+  private static openPreviews = new WeakMap<EditorView, Set<FootnoteRefNodeView>>();
+
+  /** 新文档安装后刷新该编辑器的已开卡片，引用节点本身可能仍被复用。 */
+  static refreshOpenPreviews(view: EditorView): void {
+    for (const preview of FootnoteRefNodeView.openPreviews.get(view) ?? []) {
+      preview.renderPreviewContent();
+      preview.updatePreviewPosition();
+    }
+  }
+
   dom: HTMLElement;
 
   private node: ProseMirrorNode;
@@ -133,6 +144,12 @@ export class FootnoteRefNodeView {
       this.previewContent.className = 'footnote-preview-content';
       this.previewCard.appendChild(this.previewContent);
       document.body.appendChild(this.previewCard);
+      let previews = FootnoteRefNodeView.openPreviews.get(this.view);
+      if (!previews) {
+        previews = new Set();
+        FootnoteRefNodeView.openPreviews.set(this.view, previews);
+      }
+      previews.add(this);
 
       this.positionHandler = () => this.updatePreviewPosition();
       window.addEventListener('scroll', this.positionHandler, true);
@@ -166,7 +183,11 @@ export class FootnoteRefNodeView {
       this.positionHandler = null;
     }
     this.previewCard?.remove();
+    const previews = FootnoteRefNodeView.openPreviews.get(this.view);
+    previews?.delete(this);
+    if (previews?.size === 0) FootnoteRefNodeView.openPreviews.delete(this.view);
     this.previewCard = null;
+    this.previewTitle = null;
     this.previewContent = null;
   }
 
@@ -207,7 +228,7 @@ export class FootnoteRefNodeView {
     this.previewContent.classList.remove('is-missing');
     const serializer = DOMSerializer.fromSchema(this.view.state.schema);
     this.previewContent.appendChild(
-      serializer.serializeFragment(definition.node.content, { document }),
+      serializer.serializeFragment(projectInlineSource(definition.node).content, { document }),
     );
   }
 

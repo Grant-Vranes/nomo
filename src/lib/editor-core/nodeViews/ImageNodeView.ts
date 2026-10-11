@@ -18,6 +18,7 @@ import {
  * 3. 提供与 Mermaid 图表一致的全屏查看体验。
  */
 export class ImageNodeView {
+  private static instances = new Map<HTMLElement, ImageNodeView>();
   private static readonly FULLSCREEN_DEFAULT_SCALE = 1;
   private static readonly FULLSCREEN_MIN_SCALE = 0.25;
   private static readonly FULLSCREEN_MAX_SCALE = 4;
@@ -28,6 +29,9 @@ export class ImageNodeView {
   private node: ProseMirrorNode;
   private renderId = 0;
   private resolved: ImageResolveResult | null = null;
+  private resolvedSrc: string | null = null;
+  private pendingResolve: Promise<void> | null = null;
+  private finishPendingResolve: (() => void) | null = null;
   private fullscreenOverlayEl: HTMLElement | null = null;
   private fullscreenViewportEl: HTMLElement | null = null;
   private fullscreenZoomSurfaceEl: HTMLElement | null = null;
@@ -57,6 +61,7 @@ export class ImageNodeView {
   ) {
     this.node = node;
     this.dom = document.createElement('span');
+    ImageNodeView.instances.set(this.dom, this);
     this.dom.className = 'image-node';
     this.dom.contentEditable = 'false';
     this.dom.addEventListener('mousedown', (event) => this.handleMouseDown(event));
@@ -71,17 +76,49 @@ export class ImageNodeView {
     this.render();
   }
 
+  /** 导出只等待当前宿主的图片；地址替换和销毁会释放已失效请求。 */
+  static async flushUpdates(root?: HTMLElement): Promise<void> {
+    while (true) {
+      const pending = [...ImageNodeView.instances.values()]
+        .filter((instance) => !root || root.contains(instance.dom))
+        .map((instance) => instance.pendingResolve)
+        .filter((promise): promise is Promise<void> => promise !== null);
+      if (pending.length === 0) return;
+      await Promise.all(pending);
+    }
+  }
+
+  static getExportSnapshot(dom: HTMLElement): HTMLElement | null {
+    return ImageNodeView.instances.get(dom)?.exportSnapshot() ?? null;
+  }
+
+  /** 加载中或失败时仍保留当前图片，交由导出资源处理报告缺失。 */
+  exportSnapshot(): HTMLElement {
+    const snapshot = this.dom.cloneNode(false) as HTMLElement;
+    snapshot.classList.remove('is-loading');
+    const renderedImage = this.dom.querySelector('img');
+    const image = renderedImage
+      ? renderedImage.cloneNode(false) as HTMLImageElement
+      : this.createImageElement(this.currentResolved()?.displaySrc ?? String(this.node.attrs.src ?? ''));
+    image.removeAttribute('loading');
+    snapshot.appendChild(image);
+    return snapshot;
+  }
+
   update(node: ProseMirrorNode): boolean {
     if (node.type !== this.node.type) {
       return false;
     }
+    const srcChanged = node.attrs.src !== this.node.attrs.src;
     const changed =
-      node.attrs.src !== this.node.attrs.src ||
+      srcChanged ||
       node.attrs.alt !== this.node.attrs.alt ||
       node.attrs.title !== this.node.attrs.title ||
       node.attrs.align !== this.node.attrs.align ||
       node.attrs.width !== this.node.attrs.width;
     this.node = node;
+    if (srcChanged) this.closeFullscreen();
+    if (srcChanged || !this.view.editable) this.closeSizeEditor();
     if (changed) {
       this.render();
     }
@@ -109,12 +146,22 @@ export class ImageNodeView {
     this.closeSizeEditor();
     this.unsubscribeLocale();
     this.renderId += 1;
+    this.finishPendingResolve?.();
+    this.pendingResolve = null;
+    this.finishPendingResolve = null;
+    ImageNodeView.instances.delete(this.dom);
   }
 
   private render(): void {
     const renderId = ++this.renderId;
     const src = String(this.node.attrs.src ?? '');
     const alt = String(this.node.attrs.alt ?? '');
+    this.finishPendingResolve?.();
+    this.pendingResolve = null;
+    this.finishPendingResolve = null;
+    this.resolved = null;
+    this.resolvedSrc = null;
+    this.applyAlignment();
     this.dom.dataset.src = src;
     this.dom.classList.toggle('is-badge', isBadgeImageSrc(src));
     this.dom.dataset.loadingLabel = t.imageLoading();
@@ -127,13 +174,25 @@ export class ImageNodeView {
       return;
     }
 
-    loader
-      .resolve(src, this.getImageContext())
-      .then((result) => this.renderImage(result, renderId))
-      .catch((error) => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    this.pendingResolve = pending;
+    this.finishPendingResolve = finish;
+    void (async () => {
+      try {
+        const result = await loader.resolve(src, this.getImageContext());
+        this.renderImage(result, renderId);
+      } catch (error) {
         if (renderId !== this.renderId) return;
         this.renderError(error instanceof Error ? error.message : t.imageParseFailed(), alt);
-      });
+      } finally {
+        finish();
+        if (this.pendingResolve === pending) {
+          this.pendingResolve = null;
+          this.finishPendingResolve = null;
+        }
+      }
+    })();
   }
 
   private renderImage(result: ImageResolveResult, renderId: number): void {
@@ -142,6 +201,7 @@ export class ImageNodeView {
     }
 
     this.resolved = result;
+    this.resolvedSrc = String(this.node.attrs.src ?? '');
     this.dom.classList.remove('is-loading');
     this.dom.replaceChildren();
 
@@ -150,38 +210,7 @@ export class ImageNodeView {
       return;
     }
 
-    const img = document.createElement('img');
-    if (/^https?:/i.test(result.src.trim())) {
-      // 避免应用来源触发远程图床的防盗链限制，须在设置 src 前生效。
-      img.referrerPolicy = 'no-referrer';
-    }
-    img.src = result.displaySrc;
-    img.alt = String(this.node.attrs.alt ?? '');
-    if (this.node.attrs.title) {
-      img.title = String(this.node.attrs.title);
-    }
-    // 应用对齐样式：block + margin auto 实现段落内图片对齐
-    const align = this.node.attrs.align as string | null;
-    if (align) {
-      this.dom.style.display = 'block';
-      this.dom.style.width = 'fit-content';
-      this.dom.style.marginLeft = align === 'right' ? 'auto' : align === 'center' ? 'auto' : '0';
-      this.dom.style.marginRight = align === 'left' ? 'auto' : align === 'center' ? 'auto' : '0';
-    } else {
-      this.dom.style.display = '';
-      this.dom.style.width = '';
-      this.dom.style.marginLeft = '';
-      this.dom.style.marginRight = '';
-    }
-    // 应用宽度
-    const width = this.node.attrs.width as string | null;
-    if (width) {
-      img.style.width = /^\d+$/.test(width) ? `${width}px` : width;
-      img.style.height = 'auto';
-    } else {
-      img.style.width = '';
-      img.style.height = '';
-    }
+    const img = this.createImageElement(result.displaySrc);
     img.loading = 'lazy';
     img.decoding = 'async';
     img.addEventListener('error', () => {
@@ -202,6 +231,35 @@ export class ImageNodeView {
     });
 
     this.dom.append(img, button);
+  }
+
+  private currentResolved(): ImageResolveResult | null {
+    return this.resolvedSrc === String(this.node.attrs.src ?? '') ? this.resolved : null;
+  }
+
+  private createImageElement(src: string): HTMLImageElement {
+    const img = document.createElement('img');
+    if (/^https?:/i.test(String(this.node.attrs.src ?? '').trim())) {
+      // 避免应用来源触发远程图床的防盗链限制，须在设置 src 前生效。
+      img.referrerPolicy = 'no-referrer';
+    }
+    img.src = src;
+    img.alt = String(this.node.attrs.alt ?? '');
+    if (this.node.attrs.title) img.title = String(this.node.attrs.title);
+    const width = this.node.attrs.width as string | null;
+    if (width) {
+      img.style.width = /^\d+$/.test(width) ? width + 'px' : width;
+      img.style.height = 'auto';
+    }
+    return img;
+  }
+
+  private applyAlignment(): void {
+    const align = this.node.attrs.align as string | null;
+    this.dom.style.display = align ? 'block' : '';
+    this.dom.style.width = align ? 'fit-content' : '';
+    this.dom.style.marginLeft = align ? (align === 'left' ? '0' : 'auto') : '';
+    this.dom.style.marginRight = align ? (align === 'right' ? '0' : 'auto') : '';
   }
 
   private handleMouseDown(event: MouseEvent): void {
@@ -246,13 +304,13 @@ export class ImageNodeView {
   private getContextMenuItems(): ContextMenuItem[] {
     const align = this.node.attrs.align as string | null;
     const width = this.node.attrs.width as string | null;
-    const src = String(this.node.attrs.src ?? '');
-    // absolutePath 是 resolve 后的磁盘绝对路径，用于文件操作
-    const absolutePath = this.resolved?.absolutePath ?? src;
-    const displaySrc = this.resolved?.displaySrc ?? src;
+    // 菜单可能在地址变化前打开，执行时必须读取当前节点和当前解析结果。
+    const absolutePath = () => this.currentResolved()?.absolutePath ?? String(this.node.attrs.src ?? '');
+    const displaySrc = () => this.currentResolved()?.displaySrc ?? String(this.node.attrs.src ?? '');
     const disabled = !this.view.editable;
 
     const setNodeAttr = (name: string, value: unknown) => {
+      if (!this.view.editable || this.view.isDestroyed) return;
       const pos = this.findOwnPos();
       if (pos < 0) return;
       const attrs = { ...this.node.attrs, [name]: value };
@@ -260,6 +318,7 @@ export class ImageNodeView {
     };
 
     const removeNode = () => {
+      if (!this.view.editable || this.view.isDestroyed) return;
       const pos = this.findOwnPos();
       if (pos < 0) return;
       this.view.dispatch(this.view.state.tr.delete(pos, pos + this.node.nodeSize));
@@ -313,17 +372,17 @@ export class ImageNodeView {
       {
         label: t.openImageLocation(),
         icon: 'open',
-        action: () => this.openImageLocation(absolutePath),
+        action: () => this.openImageLocation(absolutePath()),
       },
       {
         label: t.copyImage(),
         icon: 'copy',
-        action: () => this.copyImageToClipboard(displaySrc),
+        action: () => this.copyImageToClipboard(displaySrc()),
       },
       {
         label: t.copyImagePath(),
         icon: 'copy',
-        action: () => this.copyImagePath(absolutePath),
+        action: () => this.copyImagePath(absolutePath()),
       },
       // 危险操作
       { label: '', separator: true },
@@ -359,6 +418,7 @@ export class ImageNodeView {
 
   /** 打开尺寸编辑内联浮层 */
   private openSizeEditor(): void {
+    if (!this.view.editable || this.view.isDestroyed) return;
     // 关闭已有的浮层
     this.closeSizeEditor();
 
@@ -497,6 +557,7 @@ export class ImageNodeView {
   }
 
   private openAltEditor(): void {
+    if (!this.view.editable || this.view.isDestroyed) return;
     this.closeSizeEditor();
     const overlay = document.createElement('div');
     overlay.className = 'image-size-editor-overlay';
@@ -524,6 +585,10 @@ export class ImageNodeView {
     confirmBtn.className = 'image-size-editor-confirm';
     confirmBtn.textContent = t.ok();
     confirmBtn.addEventListener('click', () => {
+      if (!this.view.editable || this.view.isDestroyed) {
+        this.closeSizeEditor();
+        return;
+      }
       const pos = this.findOwnPos();
       if (pos >= 0) {
         this.view.dispatch(
@@ -565,6 +630,7 @@ export class ImageNodeView {
   }
 
   private setImageWidth(width: string | null): void {
+    if (!this.view.editable || this.view.isDestroyed) return;
     const pos = this.findOwnPos();
     if (pos < 0) return;
     const attrs = { ...this.node.attrs, width };
@@ -635,7 +701,7 @@ export class ImageNodeView {
   }
 
   private openFullscreen(): void {
-    if (this.fullscreenOverlayEl || !this.resolved?.exists) {
+    if (this.fullscreenOverlayEl || !this.currentResolved()?.exists) {
       return;
     }
 

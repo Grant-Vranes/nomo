@@ -148,6 +148,10 @@ export class CalloutNodeView implements NodeView {
   // ---- 类型切换面板 ----
 
   private togglePicker(): void {
+    if (!this.view.editable) {
+      this.hidePicker();
+      return;
+    }
     if (this.dom.classList.contains('is-picker-open')) {
       this.hidePicker();
     } else {
@@ -156,6 +160,7 @@ export class CalloutNodeView implements NodeView {
   }
 
   private showPicker(): void {
+    if (!this.view.editable) return;
     this.typeBtn.setAttribute('aria-expanded', 'true');
     this.dom.classList.add('is-picker-open');
     this.updatePickerActiveType(this.node.attrs.type as CalloutType);
@@ -244,6 +249,7 @@ export class CalloutNodeView implements NodeView {
   }
 
   private applyType(newType: CalloutType): void {
+    if (!this.view.editable) return;
     const currentType = this.node.attrs.type as string;
     if (newType === currentType) return;
 

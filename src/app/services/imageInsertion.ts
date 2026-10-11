@@ -13,6 +13,7 @@ interface ImageInsertionOptions {
   getFileName(): string;
   getNativePath(): string | null;
   getSourceEditor(): MarkdownSourceEditorHandle | undefined;
+  getReadonly?(): boolean;
   isDocumentOpen?(): boolean;
   isDocumentFocused?(): boolean;
   getSourceRuntimeState?(): MarkdownSourceRuntimeState | undefined;
@@ -83,8 +84,10 @@ export function createImageInsertionHandlers(options: ImageInsertionOptions) {
     const editor = options.getEditor();
     const documentOpen = () => options.isDocumentOpen?.() !== false && options.getEditor() === editor;
     const cancelIfClosed = () => {
-      if (documentOpen()) return false;
-      timer.end({ cancelled: true, reason: 'source-document-closed' });
+      const open = documentOpen();
+      const readonly = options.getReadonly?.() === true || !editor.canExecute({ type: 'insertImage', src: '' });
+      if (open && !readonly) return false;
+      timer.end({ cancelled: true, reason: readonly ? 'source-document-readonly' : 'source-document-closed' });
       return true;
     };
     const cancelIfTargetChanged = () => {

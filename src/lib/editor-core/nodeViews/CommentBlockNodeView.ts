@@ -19,6 +19,10 @@ export class CommentBlockNodeView {
   private originalContent = '';
   private textarea: HTMLTextAreaElement | null = null;
   private activeEditExitFn: (() => void) | null = null;
+  private composing = false;
+  private compositionEndTimer: number | null = null;
+  private compositionWaiters = new Set<() => void>();
+  private deferredExit: { save: boolean; preserveSelection: boolean } | null = null;
   private unsubscribeLocale: () => void = () => undefined;
 
   constructor(node: ProseMirrorNode, view: EditorView, getPos: () => number) {
@@ -45,9 +49,10 @@ export class CommentBlockNodeView {
       this.enterEdit();
     });
     this.dom.addEventListener('keydown', (event) => {
-      if (this.editing) return;
+      if (this.editing || event.defaultPrevented || event.target !== this.dom) return;
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
+        event.stopPropagation();
         this.enterEdit();
       }
     });
@@ -76,9 +81,11 @@ export class CommentBlockNodeView {
 
   update(node: ProseMirrorNode): boolean {
     if (node.type !== this.node.type) return false;
+    const contentChanged = node.attrs.content !== this.node.attrs.content;
     this.node = node;
     this.dom.setAttribute('aria-label', this.createAriaLabel());
-    if (!this.editing) this.renderDisplay();
+    if (this.editing && contentChanged) this.cleanupEdit();
+    else if (!this.editing) this.renderDisplay();
     return true;
   }
 
@@ -122,12 +129,15 @@ export class CommentBlockNodeView {
   }
 
   private enterEdit(): void {
-    if (this.editing || this.destroyed || this.view.isDestroyed) return;
+    if (this.editing || this.destroyed || this.view.isDestroyed || !this.view.editable) return;
+
+    this.activeEditExitFn = () => this.exitEdit(true, true);
+    registerActiveEdit(this.view, this.activeEditExitFn, undefined, {
+      isComposing: () => this.composing,
+      waitForCompositionEnd: () => this.waitForCompositionEnd(),
+    });
 
     this.editing = true;
-    this.activeEditExitFn = () => this.exitEdit(true, true);
-    registerActiveEdit(this.view, this.activeEditExitFn);
-
     this.originalContent = this.getContent();
     this.dom.classList.add('is-editing');
     this.dom.classList.remove('ProseMirror-selectednode');
@@ -141,29 +151,68 @@ export class CommentBlockNodeView {
     this.dom.textContent = '';
     this.dom.appendChild(this.textarea);
 
-    this.textarea.addEventListener('keydown', (event) => this.handleKeyDown(event));
-    this.textarea.addEventListener('blur', () => this.exitEdit(true));
+    const textarea = this.textarea;
+    textarea.addEventListener('compositionstart', () => {
+      if (this.textarea !== textarea || !this.view.editable) return;
+      if (this.compositionEndTimer !== null) window.clearTimeout(this.compositionEndTimer);
+      this.compositionEndTimer = null;
+      this.composing = true;
+    });
+    textarea.addEventListener('compositionend', () => {
+      if (this.textarea !== textarea) return;
+      // 最后的 input 可能紧随 compositionend，下一轮再提交完整内容。
+      this.compositionEndTimer = window.setTimeout(() => {
+        this.compositionEndTimer = null;
+        const deferredExit = this.deferredExit;
+        this.deferredExit = null;
+        this.finishComposition();
+        if (deferredExit) this.exitEdit(deferredExit.save, deferredExit.preserveSelection);
+      }, 0);
+    });
+    textarea.addEventListener('keydown', (event) => {
+      if (this.textarea === textarea) this.handleKeyDown(event);
+    });
+    textarea.addEventListener('blur', () => {
+      if (this.textarea === textarea) this.exitEdit(true);
+    });
 
     requestAnimationFrame(() => {
-      if (!this.textarea) return;
-      this.textarea.focus({ preventScroll: true });
-      this.textarea.setSelectionRange(this.textarea.value.length, this.textarea.value.length);
+      if (this.textarea !== textarea || !this.view.editable) return;
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     });
   }
 
   private exitEdit(save: boolean, preserveSelection = false): void {
     if (!this.editing) return;
+    if (this.destroyed || this.view.isDestroyed || !this.view.editable) {
+      this.cleanupEdit();
+      return;
+    }
+    if (this.composing) {
+      // 新节点接管编辑后，随后到达的旧输入失焦不能抢回选区。
+      this.deferredExit = {
+        save,
+        preserveSelection: preserveSelection || this.deferredExit?.preserveSelection === true,
+      };
+      return;
+    }
 
     const nextContent =
       save && this.textarea ? sanitizeCommentContent(this.textarea.value) : this.originalContent;
-    const previousContent = this.getContent();
     const pos = this.getPos();
+    const currentNode = typeof pos === 'number' ? this.view.state.doc.nodeAt(pos) : null;
+    if (!currentNode || currentNode.type !== this.node.type) {
+      this.cleanupEdit();
+      return;
+    }
+    const previousContent = String(currentNode.attrs.content ?? '');
 
     this.cleanupEdit();
 
     let tr = this.view.state.tr;
     if (save && nextContent !== previousContent) {
-      tr = tr.setNodeMarkup(pos, null, { content: nextContent });
+      tr = tr.setNodeMarkup(pos, null, { ...currentNode.attrs, content: nextContent });
     }
 
     if (!preserveSelection) tr = tr.setSelection(NodeSelection.create(tr.doc, pos));
@@ -173,6 +222,10 @@ export class CommentBlockNodeView {
 
   private cleanupEdit(): void {
     this.editing = false;
+    this.deferredExit = null;
+    if (this.compositionEndTimer !== null) window.clearTimeout(this.compositionEndTimer);
+    this.compositionEndTimer = null;
+    this.finishComposition();
     if (this.activeEditExitFn) {
       unregisterActiveEdit(this.view, this.activeEditExitFn);
       this.activeEditExitFn = null;
@@ -182,15 +235,35 @@ export class CommentBlockNodeView {
     this.renderDisplay();
   }
 
+  private waitForCompositionEnd(): Promise<void> {
+    if (!this.composing) return Promise.resolve();
+    return new Promise((resolve) => this.compositionWaiters.add(resolve));
+  }
+
+  private finishComposition(): void {
+    this.composing = false;
+    for (const resolve of this.compositionWaiters) resolve();
+    this.compositionWaiters.clear();
+  }
+
   private handleKeyDown(event: KeyboardEvent): void {
+    if (!this.textarea || this.destroyed || this.view.isDestroyed) return;
+    if (!this.view.editable) {
+      this.exitEdit(false, true);
+      return;
+    }
+    if (this.composing || event.isComposing || event.keyCode === 229) return;
+
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       this.exitEdit(false);
       return;
     }
 
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();
+      event.stopPropagation();
       this.exitEdit(true);
       const pos = this.getPos();
       const paragraph = this.view.state.schema.nodes.paragraph.create();

@@ -46,6 +46,7 @@
     type EditorThemeOptions,
     type EditorCore,
   } from '../lib/editor-core';
+  import { collectMarkdownImageSrcs, normalizeImageSrc, tryParseMarkdown } from '../lib/editor-core/markdown';
   import {
     extractOutline,
     type DocumentStats,
@@ -3605,7 +3606,7 @@
     onQuickInsertPicker: (event) => openQuickInsertPicker(activeTabId, event),
     onOpenLink: (href) => openLinkFromEditor(href),
     getImageContext: () => getImageContext(),
-    onImagesDeleted: (event) => handleDeletedImageResources(event),
+    onImagesDeleted: (event) => handleDeletedImageResources(event, activeTabId, bootEditor),
     onContextMenuOpen: handleContextMenuOpen,
   });
   const bootEditor = editor;
@@ -3651,7 +3652,7 @@
       onQuickInsertPicker: (event) => openQuickInsertPicker(tab.id, event),
       onOpenLink: (href) => openLinkFromEditor(href, tab.id),
       getImageContext: () => getImageContext(tab.id),
-      onImagesDeleted: (event) => handleDeletedImageResources(event, tab.id),
+      onImagesDeleted: (event) => handleDeletedImageResources(event, tab.id, core),
       onContextMenuOpen: (event) => { focusComparisonDocument(tab.id); handleContextMenuOpen(event); },
     });
     core.setMarkdown(tab.markdown, { dirty: tab.dirty, savedMarkdown: tab.savedMarkdown, reason: 'open-file' });
@@ -3679,6 +3680,7 @@
       getEditor: () => core, getMode: () => runtime.mode === 'source' ? 'source' : 'semantic',
       getFileName: () => currentDocument()?.fileName ?? tab.fileName, getNativePath: () => currentDocument()?.nativePath ?? null,
       getSourceEditor: () => runtime.sourceEditor, getImageContext: () => getImageContext(tab.id),
+      getReadonly: () => currentDocument()?.readonlyDocumentMode ?? true,
       isDocumentOpen: () => !runtime.disposed && Boolean(currentDocument()),
       isDocumentFocused: () => activeTabId === tab.id,
       getSourceRuntimeState: () => runtime.sourceState,
@@ -5000,6 +5002,7 @@
     getNativePath: () => nativePath,
     getSourceEditor: () => sourceEditor,
     getImageContext: () => getImageContext(),
+    getReadonly: () => readonlyDocumentMode,
     saveMarkdownFile: (saveAs) => saveMarkdownFile(saveAs),
     setMarkdown: (value) => editor.setMarkdown(value),
     setStatusMessage: (message) => {
@@ -7152,13 +7155,19 @@
     }
 
     const { exportHtml, exportPdf } = await import('./services/exportService');
+    await editor.awaitCompositionEnd?.();
     editor.commitPendingEdits();
     editor.refreshSemanticView();
     if (editorHost) {
-      // 屏幕外图表平时按需换肤，导出快照必须先补齐同一主题。
-      const { MermaidBlockNodeView } =
-        await import('../lib/editor-core/nodeViews/MermaidBlockNodeView');
-      await MermaidBlockNodeView.flushThemeUpdates(editorHost);
+      // 导出快照先等待当前宿主的图表和图片资源完成更新。
+      const [{ MermaidBlockNodeView }, { ImageNodeView }] = await Promise.all([
+        import('../lib/editor-core/nodeViews/MermaidBlockNodeView'),
+        import('../lib/editor-core/nodeViews/ImageNodeView'),
+      ]);
+      await Promise.all([
+        MermaidBlockNodeView.flushThemeUpdates(editorHost),
+        ImageNodeView.flushUpdates(editorHost),
+      ]);
     }
     const renderedHtml = editor.getExportHtml?.() ?? editorHost?.innerHTML ?? '';
     const suggestedFileName = fileName.replace(/\.(md|markdown|txt)$/i, '') || 'Untitled';
@@ -7570,14 +7579,44 @@
     return outlineInteraction.getSourceLineHeight();
   }
 
-  function handleDeletedImageResources(event: EditorImageDeletionEvent, sourceTabId = activeTabId) {
+  function handleDeletedImageResources(
+    event: EditorImageDeletionEvent,
+    sourceTabId: string,
+    sourceCore: EditorCore,
+  ) {
     const loader = getImageLoader();
     if (!imageSettings.autoDeleteUnusedLocalImages || !loader?.remove || event.srcs.length === 0) {
       return;
     }
 
+    const tab = tabs.find((candidate) => candidate.id === sourceTabId);
+    const runtime = documentRuntimes.get(sourceTabId);
+    if (
+      !isMarkdownTab(tab) || runtime?.disposed ||
+      (runtime && runtime.editor !== sourceCore) ||
+      (!runtime && (sourceTabId !== activeTabId || editor !== sourceCore || sourceCore !== bootEditor))
+    ) {
+      return;
+    }
+
+    // 删除通知早于标签状态同步；必须读取发出通知的 core，不能使用旧 tabs.markdown。
+    const latestMarkdown = sourceCore.getMarkdown();
+    const imageSrcs = collectMarkdownImageSrcs(latestMarkdown);
+    const parsed = imageSrcs === null ? null : tryParseMarkdown(latestMarkdown);
+    // 解析失败或引用边界不确定时保留资源，不能把字面回退视为已无引用。
+    if (imageSrcs === null || parsed === null) return;
+    const referencedSrcs = new Set([...imageSrcs].map(normalizeImageSrc));
+    parsed.descendants((node) => {
+      if (node.type.name === 'image') referencedSrcs.add(normalizeImageSrc(node.attrs.src));
+    });
+    const deletedSrcs = [...new Set(event.srcs)].filter((src) => {
+      const normalized = normalizeImageSrc(src);
+      return normalized && !referencedSrcs.has(normalized);
+    });
+    if (deletedSrcs.length === 0) return;
+
     const context = getImageContext(sourceTabId);
-    Promise.allSettled(event.srcs.map((src) => loader.remove!(src, context))).then((results) => {
+    Promise.allSettled(deletedSrcs.map((src) => loader.remove!(src, context))).then((results) => {
       const removed = results.filter(
         (result) => result.status === 'fulfilled' && result.value.removed,
       ).length;

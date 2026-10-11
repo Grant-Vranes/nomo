@@ -109,14 +109,19 @@
           keymap.of([...defaultKeymap, ...historyKeymap]),
           EditorView.lineWrapping,
           sourceSpacerField,
-          readonlyCompartment.of(EditorView.editable.of(!readonlyDocumentMode)),
+          readonlyCompartment.of([
+            EditorState.readOnly.of(readonlyDocumentMode),
+            EditorView.editable.of(!readonlyDocumentMode),
+          ]),
           EditorView.contentAttributes.of({ spellcheck: 'false', autocapitalize: 'off' }),
           EditorView.domEventHandlers({
             paste: (event) => {
+              if (readonlyDocumentMode) { event.preventDefault(); return true; }
               onPaste(event);
               return event.defaultPrevented;
             },
             drop: (event) => {
+              if (readonlyDocumentMode) { event.preventDefault(); return true; }
               onDrop(event);
               return event.defaultPrevented;
             },
@@ -231,7 +236,10 @@
 
   $: if (view) {
     view.dispatch({
-      effects: readonlyCompartment.reconfigure(EditorView.editable.of(!readonlyDocumentMode)),
+      effects: readonlyCompartment.reconfigure([
+        EditorState.readOnly.of(readonlyDocumentMode),
+        EditorView.editable.of(!readonlyDocumentMode),
+      ]),
     });
   }
 

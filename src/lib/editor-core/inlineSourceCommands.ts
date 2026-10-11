@@ -5,6 +5,7 @@ import {
   analyzeInlineSource,
   analyzeInlineSourceText,
   inlineFormatDelimiters,
+  escapeInlineSourceLiteral,
 } from './InlineSourceCodec';
 import {
   findEmptyInlineSourceTemplate,
@@ -28,7 +29,14 @@ const FORMATS: readonly InlineSourceFormat[] = [
   'highlight',
 ];
 type SourceSpan = ReturnType<typeof analyzeInlineSource>['spans'][number];
-type TextEdit = { from: number; to: number; text: string; order?: number; marks?: readonly Mark[] };
+type TextEdit = {
+  from: number;
+  to: number;
+  text: string;
+  node?: PmNode;
+  order?: number;
+  marks?: readonly Mark[];
+};
 type SourceBlock = {
   node: PmNode;
   start: number;
@@ -85,10 +93,15 @@ export function getActiveInlineSourceFormats(state: EditorState): Set<InlineSour
 export function toggleInlineSourceFormat(type: InlineSourceFormat): Command {
   return (state, dispatch) => {
     if (inStandaloneHtmlBlock(state)) return toggleMark(state.schema.marks[type])(state, dispatch);
-    const blocks = selectedBlocks(state).filter(
+    let blocks = selectedBlocks(state).filter(
       (block) => type !== 'code' || state.selection.empty || hasSelectedCodeText(block),
     );
     if (!blocks.length) return false;
+    if (type !== 'code') {
+      const aligned = blocks.map((block) => alignSelectionWithCode(block, type));
+      if (aligned.some((block) => block === null)) return false;
+      blocks = aligned as SourceBlock[];
+    }
     const template = state.selection.empty ? findEmptyInlineSourceTemplate(state, type) : undefined;
     if (template) {
       if (dispatch) {
@@ -122,7 +135,7 @@ export function toggleInlineSourceFormat(type: InlineSourceFormat): Command {
       if (span) {
         if (dispatch) {
           const tr = state.tr;
-          applyEdits(state, tr, delimiterRemoval(block.start, span));
+          applyEdits(state, tr, removeFormatEdits({ ...block, spans: [span] }, type));
           restoreSelection(state, tr);
           dispatch(tr.scrollIntoView());
         }
@@ -176,7 +189,12 @@ export function toggleInlineSourceFormat(type: InlineSourceFormat): Command {
 export function appendClearInlineSourceStyles(state: EditorState, tr: Transaction): boolean {
   const blocks = selectedBlocks(state);
   const edits = blocks.flatMap((block) =>
-    FORMATS.flatMap((type) => removeFormatEdits(block, type)),
+    FORMATS.flatMap((type) =>
+      removeFormatEdits(
+        type === 'code' ? block : (alignSelectionWithCode(block, type) ?? block),
+        type,
+      ),
+    ),
   );
   for (const template of getEmptyInlineSourceTemplates(state)) {
     const { from, to, empty } = state.selection;
@@ -224,6 +242,171 @@ function selectedBlocks(state: EditorState): SourceBlock[] {
     });
   }
   return result;
+}
+
+/** 外层格式覆盖完整代码片段；截断字面代码的选区保持不可执行。 */
+function alignSelectionWithCode(block: SourceBlock, type: InlineSourceFormat): SourceBlock | null {
+  let { from, to } = block;
+  for (const span of block.spans.filter((candidate) => candidate.type === 'code')) {
+    if (from === to) {
+      if (
+        from > span.openFrom &&
+        from < span.closeTo &&
+        !block.spans.some(
+          (candidate) =>
+            candidate.type === type && from > candidate.openFrom && from < candidate.closeTo,
+        )
+      )
+        return null;
+    } else if (from < span.to && to > span.from) {
+      const positions = analyzeInlineSource(block.node).visiblePositions.filter(
+        (position) => position >= span.from && position < span.to,
+      );
+      const bodyFrom = positions[0] ?? span.from;
+      const bodyTo = /^<code\b/i.test(block.source.slice(span.openFrom, span.openTo))
+        ? span.to
+        : (positions[positions.length - 1] ?? span.to - 1) + 1;
+      if (from > bodyFrom || to < bodyTo) return null;
+      from = Math.min(from, span.openFrom);
+      to = Math.max(to, span.closeTo);
+    }
+  }
+  return from === block.from && to === block.to ? block : { ...block, from, to };
+}
+
+/** 代码正文的粘贴保持字面内容，并在同一事务中重选安全的反引号边界。 */
+export function replaceInlineSourceCodeText(state: EditorState, text: string): Transaction | null {
+  const { $from, $to } = state.selection;
+  if (!$from.sameParent($to)) return null;
+  const block = selectedBlocks(state)[0];
+  const span = block?.spans.find(
+    (candidate) =>
+      candidate.type === 'code' && block.from >= candidate.from && block.to <= candidate.to,
+  );
+  if (!block || !span) return null;
+  const tr = state.tr;
+  const html = /^<code\b/i.test(block.source.slice(span.openFrom, span.openTo));
+  const literal = text.replace(/\r\n?/g, '\n');
+  const inserted = html
+    ? literal.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    : literal.replace(/\n/g, ' ');
+  const raw = block.source.slice(span.from, span.to);
+  const padding =
+    !html && /^ ([\s\S]+) $/.test(raw.replace(/\n/g, ' ')) && /[^ ]/.test(raw) ? 1 : 0;
+  if (padding)
+    applyEdits(state, tr, [
+      { from: block.start + span.from, to: block.start + span.from + 1, text: '' },
+      { from: block.start + span.to - 1, to: block.start + span.to, text: '' },
+    ]);
+  const from = tr.mapping.map(state.selection.from, 1);
+  const to = tr.mapping.map(state.selection.to, -1);
+  tr.replaceWith(
+    from,
+    Math.max(from, to),
+    state.schema.text(inserted, codeBodyMarks(block, block.from)),
+  );
+  tr.setSelection(TextSelection.create(tr.doc, from + inserted.length));
+  if (!html) {
+    const left = block.source.slice(span.from + padding, Math.max(span.from + padding, block.from));
+    const right = block.source.slice(Math.min(span.to - padding, block.to), span.to - padding);
+    const pair = inlineFormatDelimiters('code', (left + inserted + right).replace(/\n/g, ' '));
+    applyEdits(state, tr, [
+      {
+        from: block.start + span.openFrom,
+        to: block.start + span.openTo,
+        text: pair.open,
+        marks: codeBodyMarks(block, span.openFrom),
+      },
+      {
+        from: block.start + span.closeFrom,
+        to: block.start + span.closeTo,
+        text: pair.close,
+        marks: codeBodyMarks(block, span.closeFrom),
+      },
+    ]);
+  }
+  return tr;
+}
+
+function codeBodyMarks(block: SourceBlock, position: number): readonly Mark[] {
+  const source = block.node.type.schema.marks.inline_source;
+  const marks = (block.node.childAfter(position).node?.marks ?? []).filter(
+    (mark) =>
+      mark.type.name !== 'inline_source' && !FORMATS.includes(mark.type.name as InlineSourceFormat),
+  );
+  return source.create().addToSet(marks);
+}
+
+/** 按实际可见代码正文释放字符；逐字符编辑保留链接身份及选区映射。 */
+function releaseCodeTextEdits(
+  block: SourceBlock,
+  span: SourceSpan,
+  from: number,
+  to: number,
+): TextEdit[] {
+  const analysis = analyzeInlineSource(block.node);
+  const units: Array<{ from: number; to: number; text: string }> = [];
+  const html = /^<code\b/i.test(block.source.slice(span.openFrom, span.openTo));
+  for (let index = 0; index < analysis.visiblePositions.length; index++) {
+    const position = analysis.visiblePositions[index];
+    if (position < span.from || position >= span.to) continue;
+    const previous = units[units.length - 1];
+    if (previous?.from === position) previous.text += analysis.visibleText[index];
+    else {
+      const entity = html
+        ? /^&(?:#x[\da-f]+|#\d+|[a-z][a-z\d]+);/i.exec(block.source.slice(position))
+        : null;
+      units.push({
+        from: position,
+        to: position + (entity?.[0].length ?? 1),
+        text: analysis.visibleText[index],
+      });
+    }
+  }
+  const edits: TextEdit[] = [];
+  if (!html && units.length) {
+    if (units[0].from > span.from)
+      edits.push({ from: block.start + span.from, to: block.start + units[0].from, text: '' });
+    const end = units[units.length - 1].to;
+    if (end < span.to) edits.push({ from: block.start + end, to: block.start + span.to, text: '' });
+  }
+  const released = units.filter((unit) => unit.from >= from && unit.from < to);
+  const literal = released.map((unit) => unit.text).join('');
+  let offset = 0;
+  for (const unit of released) {
+    const child = block.node.childAfter(unit.from).node;
+    if (!child?.isText && child?.type.name !== 'hard_break') {
+      offset += unit.text.length;
+      continue;
+    }
+    if (unit.text === '\n') {
+      edits.push({
+        from: block.start + unit.from,
+        to: block.start + unit.to,
+        text: '',
+        node: block.node.type.schema.nodes.hard_break.create({ soft: false }),
+      });
+      offset += unit.text.length;
+      continue;
+    }
+    // 实体的 & 需要观察后续正文；其它转义只取当前可见字符。
+    const escaped =
+      unit.text === '&' && /^&(?:#(?:x[\da-f]+|\d+);|[a-z][a-z\d]+;)/i.test(literal.slice(offset))
+        ? '\\&'
+        : escapeInlineSourceLiteral(unit.text);
+    const raw = block.source.slice(unit.from, unit.to);
+    if (escaped !== raw) {
+      const marks = codeBodyMarks(block, unit.from);
+      edits.push({
+        from: block.start + unit.from,
+        to: block.start + unit.to,
+        text: escaped,
+        marks,
+      });
+    }
+    offset += unit.text.length;
+  }
+  return edits;
 }
 
 function inStandaloneHtmlBlock(state: EditorState): boolean {
@@ -282,15 +465,25 @@ function removeFormatEdits(block: SourceBlock, type: InlineSourceFormat): TextEd
     )
       continue;
     edits.push(...delimiterRemoval(block.start, span));
+    if (type === 'code') {
+      edits.push(
+        ...releaseCodeTextEdits(
+          block,
+          span,
+          cursor ? span.from : block.from,
+          cursor ? span.to : block.to,
+        ),
+      );
+    }
     if (cursor) continue;
     const leftTo = Math.min(block.from, span.to);
     const rightFrom = Math.max(block.to, span.from);
     // Split only the selected format. HTML boundaries avoid ambiguous adjacent * runs.
     if (leftTo > span.from) {
-      edits.push(...wrapEdits(block, type, span.from, leftTo, true));
+      edits.push(...wrapEdits(block, type, span.from, leftTo, true, [], type === 'code'));
     }
     if (rightFrom < span.to) {
-      edits.push(...wrapEdits(block, type, rightFrom, span.to, true));
+      edits.push(...wrapEdits(block, type, rightFrom, span.to, true, [], type === 'code'));
     }
   }
   return edits;
@@ -325,8 +518,9 @@ function wrapEdits(
   to: number,
   preferHtml = false,
   removedSpans: SourceSpan[] = [],
+  preserveCodeBody = false,
 ): TextEdit[] {
-  if (type === 'code') return wrapCodeEdits(block, from, to, removedSpans);
+  if (type === 'code') return wrapCodeEdits(block, from, to, removedSpans, preserveCodeBody);
   let { open, close } = inlineFormatDelimiters(type, block.source.slice(from, to));
   if (type === 'strong' || type === 'em' || type === 'strikethrough') {
     const candidate =
@@ -369,6 +563,7 @@ function wrapCodeEdits(
   from: number,
   to: number,
   removedSpans: SourceSpan[],
+  preserveCodeBody = false,
 ): TextEdit[] {
   const removed = removedSpans
     .flatMap((span) => [
@@ -417,7 +612,16 @@ function wrapCodeEdits(
         span.to >= segment.to &&
         /^<code\b/i.test(block.source.slice(span.openFrom, span.openTo)),
     );
-    const text = segment.parts.map((part) => block.source.slice(part.from, part.to)).join('');
+    const analysis = preserveCodeBody ? analyzeInlineSource(block.node) : null;
+    const text = analysis
+      ? [...analysis.visiblePositions.entries()]
+          .filter(([, position]) =>
+            segment.parts.some((part) => position >= part.from && position < part.to),
+          )
+          .map(([index]) => analysis.visibleText[index])
+          .join('')
+      : segment.parts.map((part) => block.source.slice(part.from, part.to)).join('');
+    if (preserveCodeBody && !text) continue;
     const pair = inheritedHtml
       ? { open: '<code>', close: '</code>' }
       : inlineFormatDelimiters('code', text);
@@ -426,14 +630,15 @@ function wrapCodeEdits(
       from: block.start + segment.from,
       to: block.start + segment.from,
       text: pair.open,
-      order: 1,
+      // 同一端点的外层格式必须位于代码外，避免局部清除时标签落入代码正文。
+      order: 2,
       marks,
     });
     edits.push({
       from: block.start + segment.to,
       to: block.start + segment.to,
       text: pair.close,
-      order: 0,
+      order: -1,
       marks,
     });
   }
@@ -463,19 +668,27 @@ function applyEdits(state: EditorState, tr: Transaction, input: TextEdit[]): voi
   const unique = new Map<string, TextEdit>();
   for (const edit of input)
     unique.set(
-      `${edit.from}:${edit.to}:${edit.text}:${edit.order ?? 0}:${edit.marks?.map((mark) => JSON.stringify(mark.toJSON())).join(',') ?? ''}`,
+      `${edit.from}:${edit.to}:${edit.text}:${edit.node ? JSON.stringify(edit.node.toJSON()) : ''}:${edit.order ?? 0}:${edit.marks?.map((mark) => JSON.stringify(mark.toJSON())).join(',') ?? ''}`,
       edit,
     );
   const edits = [...unique.values()];
-  // Deletions first, then mapped insertions: spans may share a delimiter endpoint.
+  // 原子替换保留正文光标映射；纯删除先完成，再处理共享定界符端点的插入。
   for (const edit of edits.filter((edit) => edit.to > edit.from).sort((a, b) => b.from - a.from)) {
     const from = tr.mapping.map(edit.from, 1);
     const to = tr.mapping.map(edit.to, -1);
-    if (to > from) tr.delete(from, to);
+    if (to <= from) continue;
+    if (edit.node) tr.replaceWith(from, to, edit.node);
+    else if (edit.text)
+      tr.replaceWith(
+        from,
+        to,
+        state.schema.text(edit.text, edit.marks ?? sourceMarksAt(state, edit.from)),
+      );
+    else tr.delete(from, to);
   }
   const insertionMapping = tr.mapping.slice();
   for (const edit of edits
-    .filter((edit) => edit.text)
+    .filter((edit) => edit.text && edit.from === edit.to)
     .sort((a, b) => b.from - a.from || (b.order ?? 0) - (a.order ?? 0))) {
     const position = insertionMapping.map(edit.from, 1);
     tr.insert(

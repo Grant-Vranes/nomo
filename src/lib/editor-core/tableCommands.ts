@@ -36,35 +36,89 @@ export function createTableNode(bodyRows: number, columns: number): ProseMirrorN
 }
 
 export function addTableRowBefore(): Command {
-  return addRowBefore;
+  return (state, dispatch) => {
+    const context = findTableContext(state);
+    if (!context) return false;
+    if (!dispatch) return addRowBefore(state);
+
+    const row = selectedRect(state).top;
+    return addRowBefore(state, (tr) => {
+      normalizeTableRowChange(tr, context.tableStart, context.table, row, true);
+      dispatch(tr.scrollIntoView());
+    });
+  };
 }
 
 export function addTableRowAfter(): Command {
   return (state, dispatch) => {
     const context = findTableContext(state);
     if (!context) return false;
+    if (!dispatch) return addRowAfter(state);
 
+    const row = selectedRect(state).bottom;
     return addRowAfter(state, (tr) => {
-      moveSelectionToInsertedRow(tr, context);
-      dispatch?.(tr.scrollIntoView());
+      normalizeTableRowChange(tr, context.tableStart, context.table, row, true);
+      moveSelectionToInsertedRow(tr, context, row);
+      dispatch(tr.scrollIntoView());
     });
   };
 }
 
 export function addTableColumnBefore(): Command {
-  return addColumnBefore;
+  return (state, dispatch) => {
+    const context = findTableContext(state);
+    if (!context) return false;
+    if (!dispatch) return addColumnBefore(state);
+
+    const column = selectedRect(state).left;
+    return addColumnBefore(state, (tr) => {
+      normalizeInsertedTableColumn(tr, context.tableStart, context.table, column);
+      dispatch(tr.scrollIntoView());
+    });
+  };
 }
 
 export function addTableColumnAfter(): Command {
-  return addColumnAfter;
+  return (state, dispatch) => {
+    const context = findTableContext(state);
+    if (!context) return false;
+    if (!dispatch) return addColumnAfter(state);
+
+    const column = selectedRect(state).right;
+    return addColumnAfter(state, (tr) => {
+      normalizeInsertedTableColumn(tr, context.tableStart, context.table, column);
+      dispatch(tr.scrollIntoView());
+    });
+  };
 }
 
 export function deleteCurrentTableRow(): Command {
-  return deleteRow;
+  return (state, dispatch) => {
+    const context = findTableContext(state);
+    if (!context) return false;
+    if (!dispatch) return deleteRow(state);
+
+    const row = selectedRect(state).top;
+    return deleteRow(state, (tr) => {
+      normalizeTableRowChange(tr, context.tableStart, context.table, row, false);
+      dispatch(tr.scrollIntoView());
+    });
+  };
 }
 
 export function deleteCurrentTableColumn(): Command {
-  return deleteColumn;
+  return (state, dispatch) => {
+    const context = findTableContext(state);
+    if (!context) return false;
+    if (!dispatch) return deleteColumn(state);
+
+    return deleteColumn(state, (tr) => {
+      if (hasFirstTableRowHeader(context.table)) {
+        normalizeFirstTableRowHeaderInTransaction(tr, context.tableStart);
+      }
+      dispatch(tr.scrollIntoView());
+    });
+  };
 }
 
 export function deleteCurrentTable(): Command {
@@ -76,8 +130,8 @@ export function resizeCurrentTable(rows: number, columns: number): Command {
     const context = findTableContext(state);
     if (!context) return false;
 
-    const targetRows = clampTableSize(rows, 1, 20);
-    const targetColumns = clampTableSize(columns, 1, 12);
+    const targetRows = clampTableSize(rows, 1, Math.max(20, context.map.height));
+    const targetColumns = clampTableSize(columns, 1, Math.max(12, context.map.width));
     const resizedTable = resizeTableNode(context.table, targetRows, targetColumns);
     if (resizedTable.eq(context.table)) return false;
 
@@ -159,28 +213,98 @@ export function normalizeFirstTableRowHeader(): Command {
     if (!context || context.map.height === 0) return false;
 
     const tr = state.tr;
-    const touched = new Set<number>();
-
-    for (let rowIndex = 0; rowIndex < context.map.height; rowIndex += 1) {
-      const targetType = rowIndex === 0 ? schema.nodes.table_header : schema.nodes.table_cell;
-
-      for (let columnIndex = 0; columnIndex < context.map.width; columnIndex += 1) {
-        const cellPosition =
-          context.tableStart + context.map.positionAt(rowIndex, columnIndex, context.table);
-        if (touched.has(cellPosition)) continue;
-        touched.add(cellPosition);
-
-        const cell = state.doc.nodeAt(cellPosition);
-        if (cell && cell.type !== targetType) {
-          tr.setNodeMarkup(cellPosition, targetType, cell.attrs);
-        }
-      }
-    }
-
+    normalizeFirstTableRowHeaderInTransaction(tr, context.tableStart);
     if (!tr.docChanged) return false;
     dispatch?.(tr.scrollIntoView());
     return true;
   };
+}
+
+/** 行插入与删除共用同一事务，按逻辑列继承对齐并保持首行表头语义。 */
+export function normalizeTableRowChange(
+  tr: Transaction,
+  tableStart: number,
+  sourceTable: ProseMirrorNode,
+  row: number,
+  inserted: boolean,
+): void {
+  const table = tr.doc.nodeAt(tableStart - 1);
+  if (!table || table.type !== schema.nodes.table) return;
+
+  if (inserted) {
+    const sourceMap = TableMap.get(sourceTable);
+    const map = TableMap.get(table);
+    const touched = new Set<number>();
+    for (let column = 0; column < map.width; column++) {
+      const cellOffset = map.map[row * map.width + column];
+      if (touched.has(cellOffset) || map.findCell(cellOffset).top !== row) continue;
+      touched.add(cellOffset);
+      const cell = tr.doc.nodeAt(tableStart + cellOffset);
+      const align = sourceTable.nodeAt(sourceMap.map[column])?.attrs.align ?? null;
+      if (cell && cell.attrs.align !== align) {
+        tr.setNodeMarkup(tableStart + cellOffset, undefined, { ...cell.attrs, align });
+      }
+    }
+  }
+
+  // 普通行操作保留用户关闭表头的选择；首行位置变化沿用边界控件的归一化约定。
+  if (row === 0 || hasFirstTableRowHeader(sourceTable)) {
+    normalizeFirstTableRowHeaderInTransaction(tr, tableStart);
+  }
+}
+
+function normalizeInsertedTableColumn(
+  tr: Transaction,
+  tableStart: number,
+  sourceTable: ProseMirrorNode,
+  column: number,
+): void {
+  const table = tr.doc.nodeAt(tableStart - 1);
+  if (!table || table.type !== schema.nodes.table) return;
+
+  const sourceMap = TableMap.get(sourceTable);
+  const sourceColumn = column === 0 ? 0 : column - 1;
+  const align = sourceTable.nodeAt(sourceMap.map[sourceColumn])?.attrs.align ?? null;
+  const map = TableMap.get(table);
+  const touched = new Set<number>();
+  for (let row = 0; row < map.height; row++) {
+    const cellOffset = map.map[row * map.width + column];
+    // 插入点位于 colspan 中时库只扩展原格，不把它误当成新列的默认格。
+    if (touched.has(cellOffset) || map.findCell(cellOffset).left !== column) continue;
+    touched.add(cellOffset);
+    const cell = tr.doc.nodeAt(tableStart + cellOffset);
+    if (cell && cell.attrs.align !== align) {
+      tr.setNodeMarkup(tableStart + cellOffset, undefined, { ...cell.attrs, align });
+    }
+  }
+  if (hasFirstTableRowHeader(sourceTable)) {
+    normalizeFirstTableRowHeaderInTransaction(tr, tableStart);
+  }
+}
+
+function hasFirstTableRowHeader(table: ProseMirrorNode): boolean {
+  let hasHeader = false;
+  table.firstChild?.forEach((cell) => {
+    if (cell.type === schema.nodes.table_header) hasHeader = true;
+  });
+  return hasHeader;
+}
+
+function normalizeFirstTableRowHeaderInTransaction(tr: Transaction, tableStart: number): void {
+  const table = tr.doc.nodeAt(tableStart - 1);
+  if (!table || table.type !== schema.nodes.table) return;
+  const map = TableMap.get(table);
+  const touched = new Set<number>();
+  for (let row = 0; row < map.height; row++) {
+    const targetType = row === 0 ? schema.nodes.table_header : schema.nodes.table_cell;
+    for (let column = 0; column < map.width; column++) {
+      const cellPosition = tableStart + map.map[row * map.width + column];
+      if (touched.has(cellPosition)) continue;
+      touched.add(cellPosition);
+      const cell = tr.doc.nodeAt(cellPosition);
+      if (cell && cell.type !== targetType) tr.setNodeMarkup(cellPosition, targetType, cell.attrs);
+    }
+  }
 }
 
 function createTableRow(columns: number, rowIndex: number, header: boolean): ProseMirrorNode {
@@ -198,6 +322,7 @@ function resizeTableNode(
   targetColumns: number,
 ): ProseMirrorNode {
   const rows: ProseMirrorNode[] = [];
+  const sourceMap = TableMap.get(table);
 
   for (let rowIndex = 0; rowIndex < targetRows; rowIndex += 1) {
     const sourceRow = rowIndex < table.childCount ? table.child(rowIndex) : null;
@@ -207,7 +332,9 @@ function resizeTableNode(
     for (let columnIndex = 0; columnIndex < targetColumns; columnIndex += 1) {
       const sourceCell =
         sourceRow && columnIndex < sourceRow.childCount ? sourceRow.child(columnIndex) : null;
-      cells.push(sourceCell ?? createEmptyTableCell(headerRow));
+      const sourceColumn = Math.min(columnIndex, sourceMap.width - 1);
+      const align = table.nodeAt(sourceMap.map[sourceColumn])?.attrs.align ?? null;
+      cells.push(sourceCell ?? createEmptyTableCell(headerRow, align));
     }
 
     rows.push(schema.nodes.table_row.createChecked(sourceRow?.attrs ?? null, cells));
@@ -216,9 +343,9 @@ function resizeTableNode(
   return schema.nodes.table.createChecked(table.attrs, rows);
 }
 
-function createEmptyTableCell(header: boolean): ProseMirrorNode {
+function createEmptyTableCell(header: boolean, align: TableColumnAlignment): ProseMirrorNode {
   const cellType = header ? schema.nodes.table_header : schema.nodes.table_cell;
-  const cell = cellType.createAndFill(null, schema.nodes.paragraph.createAndFill());
+  const cell = cellType.createAndFill({ align }, schema.nodes.paragraph.createAndFill());
   if (!cell) {
     throw new Error('Unable to create an empty table cell.');
   }
@@ -271,14 +398,14 @@ export function findTableContext(state: EditorState): TableContext | null {
   };
 }
 
-function moveSelectionToInsertedRow(tr: Transaction, context: TableContext): void {
+function moveSelectionToInsertedRow(tr: Transaction, context: TableContext, row: number): void {
   const table = tr.doc.nodeAt(context.tableStart - 1);
   if (!table || table.type !== schema.nodes.table) return;
 
   const map = TableMap.get(table);
-  const targetRow = Math.min(context.rowIndex + 1, map.height - 1);
+  const targetRow = Math.min(row, map.height - 1);
   const targetColumn = Math.min(context.columnIndex, map.width - 1);
-  const cellPos = context.tableStart + map.positionAt(targetRow, targetColumn, table);
+  const cellPos = context.tableStart + map.map[targetRow * map.width + targetColumn];
   const cell = tr.doc.nodeAt(cellPos);
   if (!cell) return;
 

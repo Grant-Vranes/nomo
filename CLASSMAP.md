@@ -38,7 +38,7 @@
 | Responsibility | Primary code | Related code | Change when |
 |---|---|---|---|
 | 精细段落排版 | `src/lib/typography/knuthPlass.ts` | `types.ts`, `rules.ts`, `hyphenation.ts`, `measure.ts`, `renderPlan.ts`, `positions.ts`, `solver.ts`, `typography.worker.ts` | 修改 KP 间距质量评分、两端/左对齐选择、中文规则、英文 Liang 断词、可取消分批/有界同步测量、目标几何快照、文字测量 LRU 或位置映射 |
-| 精细排版编辑适配 | `src/lib/editor-core/plugins/typography.ts` | `nodeViews/TypographyBreakNodeView.ts`, `ProseMirrorEditorCore.ts`, `src/lib/typography/options.ts`, `rules.ts`, `interaction.ts`, `src/app/styles/editor-document.css`, `src/app/services/settings.ts` | 修改输入与导航保护、字素光标移动、局部缓存、正文输入与符号显隐同帧排版、编辑态真实空格宽度和长空格串换行、超预算编辑降级与空闲追补、宽度持续 KP、缩放停止后追补与可见区更新、增量装饰提交、手势阅读锚点、DOM 绑定校验、视觉断点、软换行、KP 选区背景或设置开关 |
+| 精细排版编辑适配 | `src/lib/editor-core/plugins/typography.ts` | `nodeViews/TypographyBreakNodeView.ts`, `InlineSourceCodec.ts`, `ProseMirrorEditorCore.ts`, `src/lib/typography/options.ts`, `rules.ts`, `interaction.ts`, `src/app/styles/editor-document.css`, `src/app/services/settings.ts` | 修改输入与导航保护、字素光标移动、局部缓存、正文输入与符号显隐同帧排版、编辑态真实空格宽度和长空格串换行、超预算编辑降级与空闲追补、宽度持续 KP、缩放停止后追补与可见区更新、增量装饰提交、手势阅读锚点、DOM 绑定校验、视觉断点、软换行、KP 选区背景或设置开关 |
 | 排版交互生命周期 | `src/lib/typography/interaction.ts` | `src/app/actions/typographyRange.ts`, `src/app/services/settings.ts`, `src/app/services/editorSettingsController.ts`, `src/app/components/StatusBar.svelte`, `src/app/App.svelte` | 修改窗口内重叠交互 token、150 ms 静默收束、即时 CSS 与几何版本通知、阅读锚点回调、缩放滑块直接更新、滑块结束保护或跨窗口几何更新 |
 | 只读与离线排版 | `src/lib/typography/dom.ts` | `exportRuntime.ts`, `scripts/typography-runtime-plugin.ts`, `src/quicklook/preview-entry.ts`, `src/app/components/MarkdownMiniLargePreview.svelte` | 修改只读布局、离线运行时或打印就绪契约 |
 | 编辑器工厂与 API | `src/lib/editor-core/createEditorCore.ts` | `src/lib/editor-core/index.ts` | EditorCore 创建参数或对外接口变更 |
@@ -62,7 +62,7 @@
 | Responsibility | Primary code | Related code | Change when |
 |---|---|---|---|
 | 代码块 NodeView | `src/lib/editor-core/nodeViews/CodeBlockNodeView.ts` | `src/lib/services/shikiCodeTokenizer.ts`, `src/lib/services/logger.ts`, `renderers.ts`, `ProseMirrorEditorCore.ts`, `nodeViews/activeEditRegistry.ts` | 代码块展示/编辑/高亮、WebView2 中文输入边界与展示换行偏移、Tab / Shift+Tab 选区整行缩进与原生撤销、后台提交保留选区、滚动位置保留及同文档刷新恢复 |
-| 图片 NodeView | `src/lib/editor-core/nodeViews/ImageNodeView.ts` | `src/app/services/desktopImageLoader.ts` | 图片加载/对齐/尺寸/右键行为变更 |
+| 图片 NodeView | `src/lib/editor-core/nodeViews/ImageNodeView.ts` | `src/app/services/desktopImageLoader.ts`, `ProseMirrorEditorCore.ts`, `App.svelte` | 图片加载/对齐/尺寸/右键、资源更新等待与导出快照变更 |
 | 公式 NodeView | `src/lib/editor-core/nodeViews/MathBlockNodeView.ts`, `MathInlineNodeView.ts` | `src/lib/services/katexMathRenderer.ts` | 公式渲染/编辑体验变更 |
 | 图表 NodeView | `src/lib/editor-core/nodeViews/MermaidBlockNodeView.ts` | `src/lib/services/mermaidDiagramRenderer.ts` | Mermaid 图表渲染变更 |
 | Callout NodeView | `src/lib/editor-core/nodeViews/CalloutNodeView.ts` | `src/lib/editor-core/callout/` | 提示块展示/编辑变更 |
@@ -71,7 +71,7 @@
 | 注释块/行内注释 NodeView | `src/lib/editor-core/nodeViews/CommentBlockNodeView.ts`, `CommentInlineNodeView.ts` | `src/lib/editor-core/nodeViews/activeEditRegistry.ts` | 注释卡片展示/编辑/编辑态协调 |
 | 脚注 NodeView | `src/lib/editor-core/nodeViews/FootnoteDefNodeView.ts`, `FootnoteRefNodeView.ts` | — | 脚注定义/引用展示、跳转、预览 |
 | 分割线 NodeView | `src/lib/editor-core/nodeViews/HorizontalRuleNodeView.ts` | — | 水平分割线渲染/选中 |
-| 编辑态注册表 | `src/lib/editor-core/nodeViews/activeEditRegistry.ts` | `CodeBlockNodeView.ts`, `CommentInlineNodeView.ts`, `CommentBlockNodeView.ts`, `ProseMirrorEditorCore.ts` | 每篇文档内编辑态互斥；代码块后台提交保留编辑态，模式切换结束编辑 |
+| 编辑态注册表 | `src/lib/editor-core/nodeViews/activeEditRegistry.ts` | 代码、公式、图表、图片和注释 NodeView，`ProseMirrorEditorCore.ts` | 编辑对象切换、组字等待、只读取消与保存提交协调 |
 
 ### 编辑器插件
 
@@ -80,12 +80,12 @@
 | 代码块导航 | `src/lib/editor-core/plugins/codeBlockNavigation.ts` | — | 代码块内外光标移动 |
 | 代码高亮装饰 | `src/lib/editor-core/plugins/codeHighlight.ts` | `src/lib/services/shikiCodeTokenizer.ts` | 语法高亮装饰逻辑 |
 | 公式输入规则 | `src/lib/editor-core/plugins/displayMathInput.ts`, `mathInlineInput.ts`, `mathBlock.ts` | — | 公式快捷输入 |
-| 六类行内原文与投影 | `src/lib/editor-core/InlineSourceCodec.ts` | `markdownTokenizer.ts`, `markdown.ts`, `markdownSerialization.ts`, `schema.ts` | 原文/定界符/格式范围、等价语法、位置映射、HTML 导入与输出语义 |
+| 六类行内原文与投影 | `src/lib/editor-core/InlineSourceCodec.ts`, `inlineSourceCommands.ts` | `markdownTokenizer.ts`, `markdown.ts`, `markdownSerialization.ts`, `schema.ts`, `ProseMirrorEditorCore.ts` | 原文/格式与位置映射、代码字面粘贴和清除、外层格式组合、HTML 导入与输出语义 |
 | 六类行内显隐与组字 | `src/lib/editor-core/plugins/inlineSourceEditing.ts` | `src/app/styles/editor-document.css`, `plugins/typography.ts` | 光标/选区所在格式局部展开、单击与实际拖选区分、拖选保持、IME 冻结、真实符号装饰与空模板追踪 |
 | 当前标题层级角标 | `src/lib/editor-core/plugins/headingLevelIndicator.ts` | `src/app/styles/editor-document.css` | H1-H6 当前标题角标的定位、显隐或 GSAP 动效 |
-| 表格控件 | `src/lib/editor-core/plugins/tableControls.ts` | `src/lib/editor-core/plugins/tableControlDom.ts`, `markdownSerialization.ts` | 表格行列控制 UI 与单元格内容保存 |
+| 表格控件 | `src/lib/editor-core/plugins/tableControls.ts` | `src/lib/editor-core/plugins/tableControlDom.ts`, `tableCommands.ts`, `markdownSerialization.ts` | 表格行列控制 UI、共用行增删事务内的列对齐与首行表头归一化、单元格内容保存 |
 | 不可编辑 HTML 回退展示 | `src/lib/editor-core/plugins/tableHtml.ts` | `html/htmlClassifier.ts`, `utils/html.ts` | 原始 HTML widget 展示；Markdown 表格由统一 parser 与 schema 渲染 |
-| 任务列表 | `src/lib/editor-core/plugins/taskList.ts` | — | 任务列表交互 |
+| 任务列表 | `src/lib/editor-core/plugins/taskList.ts` | `src/lib/editor-core/InlineSourceCodec.ts`, `editorCommands.ts`, `ProseMirrorEditorCore.ts`, `markdownSerialization.ts` | 修改任务首段标记识别、列表切换/续行、只读复选框或保存边界 |
 | 链接交互 | `src/lib/editor-core/plugins/linkInteraction.ts` | `src/app/components/LinkQuickEditor.svelte` | 链接点击/悬浮/编辑 |
 | 六类行内字符命令 | `src/lib/editor-core/inlineSourceCommands.ts` | `editorCommands.ts`, `ProseMirrorEditorCore.ts` | 工具栏/快捷键包裹、局部取消、清除格式与空模板；pendingInlineMarks 为兼容派生接口 |
 | 搜索高亮 | `src/lib/editor-core/plugins/searchHighlight.ts` | `src/app/services/searchReplace.ts` | 搜索/替换高亮 |
@@ -558,6 +558,7 @@
 - 目录树、最近文件、行内重命名、创建文件/文件夹，以及节点、根目录、单文件和空白区域菜单项
 - 文件节点与单文件视图提供“复制文件”，经 App.svelte 调用原生文件剪贴板；浏览器和未保存文件禁用
 - 当前文件选中底板及其虚拟树坐标滑动动画
+- 侧栏隐藏时的键盘焦点与无障碍交互隔离
 - 已展开节点的键入定位、临时匹配提示与中文输入法接收，不触发目录扫描或正文搜索
 - 侧边栏 resize 逻辑
 
@@ -1361,7 +1362,7 @@
 - 语义选区变化与选中 Markdown 片段通知
 - 文档脏状态管理
 - 模式切换（语义/源码）
-- 命令执行
+- 命令执行、只读事务门禁、撤销前活动编辑提交与节点组字等待
 - 插件和 NodeView 注册
 - 提供独立内容/渲染修订的同步快照、嵌套锚点几何与光标坐标；不改选区或历史
 - 保留旧块对齐 decoration 兼容接口，双栏运行路径不再调用
@@ -1427,6 +1428,7 @@
 - 基于 `markdown-it` 和 `prosemirror-markdown` 的 Markdown 解析
 - ProseMirror doc 序列化回 Markdown
 - 表格文本的反斜杠保留与行内代码围栏，避免序列化丢字导致后续同步锚点偏移
+- 合并格、无表头等保真表格 HTML 的完整校验与 schema 表格恢复；未知或不合法表格 HTML 保留原文
 - 顶层 Front Matter 文档属性与正文的解析、序列化
 - 表格、图片扩展属性、公式、脚注、HTML、Callout、TOC、Mermaid、注释等语法处理
 
@@ -1678,7 +1680,7 @@
 **Kind:** service
 
 **Owns：**
-- 从 Markdown 计算标题大纲
+- 复用 `tocService.ts` 的真实 Markdown 标题集合、来源行号与统一 ID，提供大纲兼容入口
 - 同步统计兼容入口；词数、字数与范围查询由 `writingStats.ts` 负责
 
 **Does not own：**
@@ -1687,7 +1689,7 @@
 
 **Called by:** `src/app/App.svelte`, `src/app/services/documentActionsController.ts`
 
-**Depends on:** `src/lib/outline/writingStats.ts`
+**Depends on:** `src/lib/outline/writingStats.ts`, `src/lib/toc/tocService.ts`
 
 **Change this when：**
 - 修改大纲提取算法
@@ -1734,14 +1736,15 @@
 
 **Owns：**
 - 生成 TOC Markdown 块
-- 生成目录项数据
+- 基于真实 Markdown 纯预处理与 token 生成目录项及来源行号，统一大纲与文档标题 ID
+- 提供标题归一化与全局唯一 ID 分配，DOM 标题属性和目录导航复用文档位置映射
 
 **Does not own：**
 - 不拥有 TOC 块展示（在 TocBlockNodeView.ts 中）
 
-**Called by:** `src/app/services/editorInteractionController.ts`, `src/lib/editor-core/nodeViews/TocBlockNodeView.ts`
+**Called by:** `src/app/services/editorInteractionController.ts`, `src/lib/editor-core/nodeViews/TocBlockNodeView.ts`, `src/lib/editor-core/plugins/tocSync.ts`, `src/lib/outline/outlineService.ts`, `src/app/services/outlineNavigation.ts`
 
-**Depends on:** —
+**Depends on:** `src/lib/editor-core/markdownTokenizer.ts`, `src/lib/editor-core/markdownSerialization.ts`, `src/lib/editor-core/InlineSourceCodec.ts`, `src/lib/editor-core/markdown.ts`（纯 tokenizer 与来源行号 API）
 
 **Change this when：**
 - 修改 TOC 生成逻辑
@@ -2982,6 +2985,7 @@
 **Owns:**
 - Svelte 过渡动画工具：`motionIn`、`transitionDuration`、`pulseOnChange`
 - 工具栏收展、侧边栏、标签/目录选中底板和模式切换的 GSAP 动画
+- 侧栏占位宽度与固定宽度滑动共用可反向播放进度，兼容拖拽、小窗与减少动态效果设置
 - 活动标签共用插值的几何通知，供工作区轮廓同步填充、描边和阴影
 - 统一的 fade/slide 动画配置与 reduced-motion 降级
 
@@ -3109,16 +3113,17 @@
 **Kind:** utility
 
 **Owns:**
-- HTML 块分类：判断 rawHtml 是否可编辑
-- 标签名提取、危险属性检测、允许属性提取
-- 行内 HTML 标签属性提取
+- 无 DOM 的 HTML 块分类：仅单根及可保真的行内结构可编辑；其它结构/属性保留原文 fallback
+- 按实际属性边界提取、实体解码与安全协议校验
+- 与 HTML 导入共用现有行内原子节点的属性识别（图片、换行、数学、注释、脚注）
 
 **Does not own:**
-- 不拥有白名单定义（在 htmlPolicy.ts 中）
+- 不拥有标签/mark 映射白名单（在 htmlPolicy.ts 中）
+- 不拥有 DOM 导入与 HTML 输出（在 htmlToPmLogic.ts、pmToHtml.ts 中）
 
-**Called by:** `src/lib/editor-core/markdown.ts`
+**Called by:** `src/lib/editor-core/markdown.ts`、`src/lib/editor-core/html/htmlToPmLogic.ts`、`src/lib/outline/writingStats.ts`
 
-**Depends on:** `src/lib/editor-core/html/htmlPolicy.ts`
+**Depends on:** `htmlPolicy.ts`、`../markdownTokenizer.ts`、`htmlAnchor.ts`、`../link.ts`
 
 **Change this when:**
 - 修改 HTML 块可编辑性判断规则
@@ -3185,6 +3190,7 @@
 
 **Owns:**
 - 标题内容或等级变化后的 TOC 节点属性同步
+- 基于同一文档标题映射派生 DOM heading id Decoration，不写持久节点属性
 - 将 TOC 派生事务排除在独立撤销步骤之外
 - 基于事务变更范围跳过普通正文编辑
 
@@ -3194,7 +3200,7 @@
 
 **Called by:** `src/lib/editor-core/ProseMirrorEditorCore.ts`（插件注册）
 
-**Depends on:** `src/lib/editor-core/markdown.ts`, `src/lib/editor-core/schema.ts`, `src/lib/toc/tocService.ts`
+**Depends on:** `src/lib/editor-core/schema.ts`, `src/lib/toc/tocService.ts`, `prosemirror-view`
 
 **Change this when:**
 - 修改标题变化后的目录同步时机
@@ -3293,13 +3299,14 @@
 
 **Owns:**
 - 跨 NodeView 编辑态协调注册表，每篇文档独立维护活动编辑实例
-- 同一文档内切换编辑对象时结束上一个编辑态
+- 同一文档内切换编辑对象时请求结束上一个编辑态，并保留尚未结束的组字实例
+- 保存时等待全部节点组字完成；运行时切只读取消活动编辑
 - 通过可选原位提交回调，让代码块在后台保存和快照时保留编辑态；模式切换可显式结束编辑态
 
 **Does not own:**
 - 不拥有具体 NodeView 的编辑态实现
 
-**Called by:** `src/lib/editor-core/ProseMirrorEditorCore.ts`, `src/lib/editor-core/nodeViews/CodeBlockNodeView.ts`, `src/lib/editor-core/nodeViews/CommentBlockNodeView.ts`, `src/lib/editor-core/nodeViews/CommentInlineNodeView.ts`
+**Called by:** `src/lib/editor-core/ProseMirrorEditorCore.ts`，代码、公式、图表、图片和注释 NodeView
 
 **Depends on:** —
 
@@ -3340,7 +3347,7 @@
 **Kind:** nodeView
 
 **Owns:**
-- 行内 Markdown 注释 NodeView：正文内注释标签展示、原位 input 编辑
+- 行内 Markdown 注释 NodeView：正文内注释标签展示、支持换行的原位 textarea 编辑、只读与输入法组字协调
 
 **Does not own:**
 - 不拥有注释解析（在 markdown.ts 中）
@@ -3386,14 +3393,14 @@
 **Kind:** nodeView
 
 **Owns:**
-- 正文脚注引用 NodeView：跳转到底部定义、hover/focus 只读预览卡片
+- 正文脚注引用 NodeView：跳转到底部定义、hover/focus 只读预览卡片与文档更新后已开预览刷新
 
 **Does not own:**
 - 不拥有脚注解析（在 markdown.ts 中）
 
-**Called by:** `src/lib/editor-core/ProseMirrorEditorCore.ts`（NodeView 注册）
+**Called by:** `src/lib/editor-core/ProseMirrorEditorCore.ts`（NodeView 注册及文档更新后的预览刷新）
 
-**Depends on:** `src/app/i18n.ts`
+**Depends on:** `src/app/i18n.ts`, `src/lib/editor-core/InlineSourceCodec.ts`
 
 **Change this when:**
 - 修改脚注引用展示/预览行为
@@ -4091,7 +4098,7 @@
 
 **Kind:** pure Markdown syntax / serialization
 
-**Owns:** 可复用的 markdown-it 规则工厂、表格/Callout/目录 token 归一化、无 DOM 的 Markdown 与选区/剪贴板纯文本序列化。
+**Owns:** 可复用的 markdown-it 规则工厂、表格/Callout/目录 token 归一化、无 DOM 的 Markdown 与选区/剪贴板纯文本序列化；普通 GFM 表格及不能保真的合并格、无表头表格 HTML 保存。
 
 **Called by:** `markdown.ts`、正文统计与统计 Worker；原模块继续重导出序列化 API。
 
