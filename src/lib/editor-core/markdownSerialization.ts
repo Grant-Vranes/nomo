@@ -12,6 +12,7 @@ import {
 } from 'prosemirror-model';
 import { schema, type TableColumnAlignment } from './schema';
 import { serializeHtmlBlock } from './html/pmToHtml';
+import { serializeHtmlAnchorOpen } from './html/htmlAnchor';
 import { serializeCallout } from './callout/calloutSerializer';
 import { TOC_START_MARKER, TOC_END_MARKER } from '../toc/tocMarkers';
 import { escapeHtmlAttr } from './markdownTokenizer';
@@ -68,6 +69,9 @@ const tableMarkdownSerializer = new MarkdownSerializer(
       const html = serializeHtmlBlock(node);
       state.write(html);
       state.closeBlock(node);
+    },
+    html_anchor(state, node) {
+      state.write(`${serializeHtmlAnchorOpen(node.attrs)}</a>`);
     },
     comment_block(state, node) {
       state.ensureNewLine();
@@ -200,8 +204,11 @@ const tableMarkdownSerializer = new MarkdownSerializer(
       expelEnclosingWhitespace: true,
     },
     link: {
-      open: '[',
+      open(_state, mark) {
+        return mark.attrs.html ? serializeHtmlAnchorOpen(mark.attrs) : '[';
+      },
       close(_state, mark) {
+        if (mark.attrs.html) return '</a>';
         const href = serializeMarkdownLinkDestination(String(mark.attrs.href ?? ''));
         const title = mark.attrs.title
           ? ` "${serializeMarkdownLinkTitle(String(mark.attrs.title))}"`
@@ -211,6 +218,37 @@ const tableMarkdownSerializer = new MarkdownSerializer(
       mixable: true,
     },
   },
+);
+
+// 表格单元格复用完整行内规则；图片属性和换行必须保持在同一条表格源码行内。
+const tableCellMarkdownSerializer = new MarkdownSerializer(
+  {
+    ...tableMarkdownSerializer.nodes,
+    paragraph(state, node, _parent, index) {
+      if (index > 0) state.write('<br>');
+      state.renderInline(node, false);
+    },
+    hard_break(state) {
+      state.write('<br>');
+    },
+    image(state, node, parent, index) {
+      const { align, width } = node.attrs;
+      const inlineImage = node.type.create({ ...node.attrs, align: null, width: null });
+      tableMarkdownSerializer.nodes.image(state, inlineImage, parent, index);
+      const attrs: string[] = [];
+      if (align === 'left' || align === 'center' || align === 'right') attrs.push(`align=${align}`);
+      if (width) attrs.push(`width=${width}`);
+      if (attrs.length) state.write(`{${attrs.join(' ')}}`);
+    },
+    text(state, node) {
+      const text = node.text ?? '';
+      state.text(
+        isInlineSourceText(node) ? text : escapeMarkdownTextWithoutManualInlineMarkers(text, false),
+        false,
+      );
+    },
+  },
+  tableMarkdownSerializer.marks,
 );
 
 function emphasisNeedsHtml(mark: Mark, parent: ProseMirrorNode, index: number): boolean {
@@ -610,54 +648,8 @@ function serializeTableRow(row: ProseMirrorNode, columnCount: number): string[] 
 }
 
 function serializeTableCell(cell: ProseMirrorNode): string {
-  const parts: string[] = [];
-  cell.descendants((node, _pos, parent, index) => {
-    if (node.isText) {
-      parts.push(serializeInlineText(node, parent!, index));
-      return false;
-    }
-    if (node.type.name === 'hard_break') {
-      parts.push('<br>');
-      return false;
-    }
-    return true;
-  });
   // 表格分隔符只在最终输出时转义，不能删除正文或代码中的反斜杠。
-  return parts.join('').replace(/\n/g, ' ').replace(/\|/g, '\\|').trim();
-}
-
-function serializeInlineText(node: ProseMirrorNode, parent: ProseMirrorNode, index: number): string {
-  const raw = node.text ?? '';
-  const code = node.marks.some((mark) => mark.type.name === 'code');
-  let text = isInlineSourceText(node) ? raw : escapeTableText(raw);
-  if (code) {
-    // 代码跨度内不能用反斜杠转义反引号；围栏须长于正文中的最长连续反引号。
-    const delimiter = '`'.repeat(
-      (raw.match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length), 0) + 1,
-    );
-    const padding = /^`|`$/.test(raw) || (/^ .* $/.test(raw) && /[^ ]/.test(raw)) ? ' ' : '';
-    text = `${delimiter}${padding}${raw}${padding}${delimiter}`;
-  }
-  return node.marks.reduce((value, mark) => {
-    if (mark.type.name === 'strong') {
-      return emphasisNeedsHtml(mark, parent, index) ? `<strong>${value}</strong>` : `**${value}**`;
-    }
-    if (mark.type.name === 'em') {
-      return emphasisNeedsHtml(mark, parent, index) ? `<em>${value}</em>` : `*${value}*`;
-    }
-    if (mark.type.name === 'code') return value;
-    if (mark.type.name === 'strikethrough') return `~~${value}~~`;
-    if (mark.type.name === 'underline') return `<u>${value}</u>`;
-    if (mark.type.name === 'highlight') return `<mark>${value}</mark>`;
-    if (mark.type.name === 'link') {
-      const href = serializeMarkdownLinkDestination(String(mark.attrs.href ?? ''));
-      const title = mark.attrs.title
-        ? ` "${serializeMarkdownLinkTitle(String(mark.attrs.title))}"`
-        : '';
-      return `[${value}](${href}${title})`;
-    }
-    return value;
-  }, text);
+  return tableCellMarkdownSerializer.serialize(cell).replace(/\n/g, ' ').replace(/\|/g, '\\|').trim();
 }
 
 function splitTaskParagraph(
@@ -682,12 +674,8 @@ function splitTaskParagraph(
   };
 }
 
-function escapeTableText(text: string): string {
-  return text.replace(/\\/g, '\\\\');
-}
-
-function escapeMarkdownTextWithoutManualInlineMarkers(text: string): string {
-  let escaped = text.replace(/[`\\[\]|_]/g, (match, index) =>
+function escapeMarkdownTextWithoutManualInlineMarkers(text: string, escapePipes = true): string {
+  let escaped = text.replace(escapePipes ? /[`\\[\]|_]/g : /[`\\[\]_]/g, (match, index) =>
     match === '_' &&
     index > 0 &&
     index + 1 < text.length &&

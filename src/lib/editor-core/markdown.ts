@@ -15,6 +15,7 @@ import { type Node as ProseMirrorNode } from 'prosemirror-model';
 import { schema, type TableColumnAlignment } from './schema';
 import { classifyHtmlBlock } from './html/htmlClassifier';
 import { parseHtmlContent } from './html/htmlToPmLogic';
+import { createHtmlAnchorAttrs } from './html/htmlAnchor';
 import { createLinkAttrs, normalizeLinkHref } from './link';
 import { calloutParserTokens } from './callout/calloutParser';
 import { splitFrontMatterBlock } from '../markdown/frontMatter';
@@ -181,12 +182,18 @@ tableMarkdownParserWithHandlers.tokenHandlers.html_inline = (
   const isClosing = content.startsWith('</');
   const isSelfClosing = /\/>$/.test(content);
 
+  if (tag === 'br') {
+    state.openNode(schema.nodes.hard_break);
+    state.closeNode();
+    return;
+  }
+
   if (isSelfClosing) {
-    if (tag === 'br') {
-      state.addText('\n');
-    } else {
-      state.addText(content);
-    }
+    const attrs = tag === 'a' ? getHtmlAnchorAttrs(content) : null;
+    if (attrs) {
+      state.openNode(schema.nodes.html_anchor, attrs);
+      state.closeNode();
+    } else state.addText(content);
     return;
   }
 
@@ -213,10 +220,7 @@ tableMarkdownParserWithHandlers.tokenHandlers.html_inline = (
     const markType = schema.marks[markName];
     let attrs: Record<string, unknown> | null = null;
     if (markName === 'link') {
-      const linkAttrs = createLinkAttrs(
-        extractAttr(content, 'href'),
-        extractAttr(content, 'title'),
-      );
+      const linkAttrs = getHtmlAnchorAttrs(content);
       attrs = linkAttrs ? { ...linkAttrs } : null;
       if (!attrs) {
         state.addText(content);
@@ -252,9 +256,26 @@ tableMarkdownParserWithHandlers.tokenHandlers.inline = (state, token) => {
       event.range != null && event.range.from >= 0 && event.range.to <= source.length,
     )
     .sort((a, b) => a.range.from - b.range.from);
-  for (const event of events) {
+  for (let index = 0; index < events.length; index++) {
+    const event = events[index];
     if (event.range.from < cursor) continue;
     appendSource(source.slice(cursor, event.range.from));
+    const next = events[index + 1];
+    // 空锚点无法用 mark 表示；相邻开闭标签合并为保留属性的行内节点。
+    if (
+      event.token.type === 'html_inline' && /^<a(?:\s|>)/i.test(event.token.content) &&
+      next?.token.type === 'html_inline' && /^<\/a\s*>$/i.test(next.token.content) &&
+      event.range.to === next.range.from
+    ) {
+      const attrs = getHtmlAnchorAttrs(event.token.content);
+      if (attrs) {
+        state.openNode(schema.nodes.html_anchor, attrs);
+        state.closeNode();
+        cursor = next.range.to;
+        index++;
+        continue;
+      }
+    }
     if (event.token.type === 'text_special' && event.token.info === 'entity') {
       // 实体保持原来的显示字符，六类语法字符则用真实反斜杠保护其字面含义。
       appendSource(escapeInlineSourceLiteral(event.token.content));
@@ -407,7 +428,9 @@ export function parseMarkdown(markdown: string): ProseMirrorNode {
   } catch {
     resetHtmlInlineStack();
     return schema.node('doc', { frontMatterPrefix }, [
-      schema.node('paragraph', null, rawBody ? [schema.text(rawBody)] : undefined),
+      schema.node('paragraph', null, rawBody
+        ? [schema.text(rawBody, [schema.marks.inline_source.create({ literal: true })])]
+        : undefined),
     ]);
   }
 }
@@ -560,9 +583,22 @@ function findLastIndex<T>(arr: T[], predicate: (value: T) => boolean): number {
 }
 
 function extractAttr(rawTag: string, name: string): string | null {
-  const regex = new RegExp(`${name}="([^"]*)"`, 'i');
+  const regex = new RegExp(`(?:\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
   const match = regex.exec(rawTag);
-  return match ? match[1] : null;
+  if (!match) return null;
+  return (match[1] ?? match[2] ?? match[3]).replace(
+    /&(?:#x[\da-f]+|#\d+|[a-z][a-z\d]+);/gi,
+    (entity) => markdownIt.utils.unescapeAll(entity),
+  );
+}
+
+function getHtmlAnchorAttrs(rawTag: string) {
+  return createHtmlAnchorAttrs(
+    extractAttr(rawTag, 'href'),
+    extractAttr(rawTag, 'title'),
+    extractAttr(rawTag, 'id'),
+    extractAttr(rawTag, 'name'),
+  );
 }
 
 function isMarkdownComment(content: string): boolean {

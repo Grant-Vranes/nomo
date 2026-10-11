@@ -3,6 +3,7 @@ import { schema as markdownSchema } from 'prosemirror-markdown';
 import { tableNodes } from 'prosemirror-tables';
 import { calloutNodeSpec } from './callout/calloutSchema';
 import { createLinkAttrs } from './link';
+import { createHtmlAnchorAttrs } from './html/htmlAnchor';
 import { t } from '../../app/i18n';
 
 export type TableColumnAlignment = 'left' | 'center' | 'right';
@@ -77,6 +78,46 @@ export const schema = new Schema({
       }),
     )
     .append({
+      /** 空 HTML 锚点没有文本可承载 mark，需作为行内节点保留目标属性。 */
+      html_anchor: {
+        inline: true,
+        group: 'inline',
+        atom: true,
+        selectable: false,
+        attrs: {
+          href: { default: null },
+          title: { default: null },
+          id: { default: null },
+          name: { default: null },
+          html: { default: true },
+        },
+        parseDOM: [
+          {
+            tag: 'a',
+            // 空节点规则先于 link mark，避免粘贴时没有文本承载的锚点被丢掉。
+            priority: 60,
+            getAttrs(dom) {
+              const el = dom as HTMLElement;
+              if (el.childNodes.length) return false;
+              return createHtmlAnchorAttrs(
+                el.getAttribute('href'),
+                el.getAttribute('title'),
+                el.getAttribute('id'),
+                el.getAttribute('name'),
+              ) ?? false;
+            },
+          },
+        ],
+        toDOM(node) {
+          const attrs: Record<string, string> = {};
+          const link = createLinkAttrs(node.attrs.href, node.attrs.title);
+          if (link) attrs.href = link.href;
+          for (const key of ['title', 'id', 'name']) {
+            if (node.attrs[key] != null) attrs[key] = String(node.attrs[key]);
+          }
+          return ['a', attrs];
+        },
+      },
       math_inline: {
         inline: true,
         group: 'inline',
@@ -289,26 +330,41 @@ export const schema = new Schema({
     })
     .update('link', {
       attrs: {
-        href: {},
+        href: { default: null },
         title: { default: null },
+        id: { default: null },
+        name: { default: null },
+        html: { default: false },
       },
       inclusive: false,
       parseDOM: [
         {
-          tag: 'a[href]',
+          tag: 'a',
           getAttrs(dom) {
             const el = dom as HTMLElement;
+            if (!el.hasAttribute('href') || el.hasAttribute('id') || el.hasAttribute('name')) {
+              return createHtmlAnchorAttrs(
+                el.getAttribute('href'),
+                el.getAttribute('title'),
+                el.getAttribute('id'),
+                el.getAttribute('name'),
+              ) ?? false;
+            }
             return createLinkAttrs(el.getAttribute('href'), el.getAttribute('title')) ?? false;
           },
         },
       ],
       toDOM(mark) {
         const attrs = createLinkAttrs(mark.attrs.href, mark.attrs.title);
-        const domAttrs: Record<string, string> = {
-          href: attrs?.href ?? '',
-        };
+        const domAttrs: Record<string, string> = {};
+        if (attrs) domAttrs.href = attrs.href;
         if (attrs?.title) {
           domAttrs.title = attrs.title;
+        }
+        if (mark.attrs.html) {
+          for (const key of ['title', 'id', 'name']) {
+            if (mark.attrs[key] != null) domAttrs[key] = String(mark.attrs[key]);
+          }
         }
         return ['a', domAttrs, 0];
       },

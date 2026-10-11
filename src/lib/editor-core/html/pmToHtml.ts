@@ -1,5 +1,6 @@
 import type { Node as ProseMirrorNode } from 'prosemirror-model';
 import { createLinkAttrs } from '../link';
+import { serializeHtmlAnchorOpen } from './htmlAnchor';
 
 /**
  * 将 html_block ProseMirror 节点序列化为 HTML 字符串。
@@ -23,6 +24,8 @@ function serializeInlineContent(node: ProseMirrorNode): string {
   node.forEach((child) => {
     if (child.isText) {
       parts.push(wrapTextWithMarks(child));
+    } else if (child.type.name === 'html_anchor') {
+      parts.push(`${serializeHtmlAnchorOpen(child.attrs)}</a>`);
     }
   });
   return parts.join('');
@@ -48,6 +51,10 @@ function wrapTextWithMarks(textNode: ProseMirrorNode): string {
         text = `<u>${text}</u>`;
         break;
       case 'link': {
+        if (mark.attrs.html) {
+          text = `${serializeHtmlAnchorOpen(mark.attrs)}${text}</a>`;
+          break;
+        }
         const attrs = createLinkAttrs(mark.attrs.href, mark.attrs.title);
         if (!attrs) break;
         const title = attrs.title ? ` title="${escapeHtmlAttr(attrs.title)}"` : '';

@@ -1,6 +1,6 @@
 import type { Schema } from 'prosemirror-model';
 import { INLINE_TAG_TO_MARK } from './htmlPolicy';
-import { createLinkAttrs } from '../link';
+import { createHtmlAnchorAttrs } from './htmlAnchor';
 
 /**
  * 在 MarkdownParseState 上下文中遍历 DOM 片段，调用 openMark/addText/closeMark。
@@ -11,6 +11,8 @@ export function parseHtmlContent(
     openMark(mark: unknown): void;
     closeMark(markType: unknown): void;
     addText(text: string): void;
+    openNode(type: unknown, attrs?: Record<string, unknown>): void;
+    closeNode(): void;
   },
   innerHTML: string,
   schema: Schema,
@@ -25,6 +27,8 @@ function walkDOMFragment(
     openMark(mark: unknown): void;
     closeMark(markType: unknown): void;
     addText(text: string): void;
+    openNode(type: unknown, attrs?: Record<string, unknown>): void;
+    closeNode(): void;
   },
   parent: Node,
   schema: Schema,
@@ -37,6 +41,20 @@ function walkDOMFragment(
       const tag = el.tagName.toLowerCase();
       const markName = INLINE_TAG_TO_MARK[tag];
 
+      if (tag === 'a' && !el.childNodes.length) {
+        const attrs = createHtmlAnchorAttrs(
+          el.getAttribute('href'),
+          el.getAttribute('title'),
+          el.getAttribute('id'),
+          el.getAttribute('name'),
+        );
+        if (attrs) {
+          state.openNode(schema.nodes.html_anchor, attrs);
+          state.closeNode();
+        }
+        continue;
+      }
+
       if (markName) {
         const markType = (
           schema.marks as Record<
@@ -47,7 +65,12 @@ function walkDOMFragment(
         if (markType) {
           let attrs: Record<string, unknown> | null = null;
           if (markName === 'link') {
-            const linkAttrs = createLinkAttrs(el.getAttribute('href'), el.getAttribute('title'));
+            const linkAttrs = createHtmlAnchorAttrs(
+              el.getAttribute('href'),
+              el.getAttribute('title'),
+              el.getAttribute('id'),
+              el.getAttribute('name'),
+            );
             attrs = linkAttrs ? { ...linkAttrs } : null;
             if (!attrs) {
               walkDOMFragment(state, el, schema);
@@ -56,14 +79,7 @@ function walkDOMFragment(
           }
           const mark = markType.create(attrs);
           state.openMark(mark);
-          // 直接遍历子节点，text 节点 addText，元素节点递归
-          for (const grandchild of Array.from(el.childNodes)) {
-            if (grandchild.nodeType === Node.TEXT_NODE) {
-              state.addText(grandchild.textContent ?? '');
-            } else if (grandchild.nodeType === Node.ELEMENT_NODE) {
-              walkDOMFragment(state, grandchild, schema);
-            }
-          }
+          walkDOMFragment(state, el, schema);
           state.closeMark(markType);
           continue;
         }
@@ -73,13 +89,7 @@ function walkDOMFragment(
         state.addText('\n');
       } else {
         // 未知内联元素（如 span）— 递归处理子节点
-        for (const grandchild of Array.from(el.childNodes)) {
-          if (grandchild.nodeType === Node.TEXT_NODE) {
-            state.addText(grandchild.textContent ?? '');
-          } else if (grandchild.nodeType === Node.ELEMENT_NODE) {
-            walkDOMFragment(state, grandchild, schema);
-          }
-        }
+        walkDOMFragment(state, el, schema);
       }
     }
   }

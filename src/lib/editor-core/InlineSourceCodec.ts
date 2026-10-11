@@ -626,8 +626,8 @@ export function isRetainedInlineToken(token: Token): boolean {
     ].includes(token.type) ||
     (token.type === 'text_special' && token.info === 'entity') ||
     (token.type === 'html_inline' &&
-      (/^<\/?a(?:\s|>)/i.test(token.content) ||
-        /^<br\s*\/>$/i.test(token.content) ||
+      (/^<\/?a(?:\s|\/?>)/i.test(token.content) ||
+        /^<br\s*\/?>$/i.test(token.content) ||
         /^<!--[\s\S]*-->$/.test(token.content)))
   );
 }
