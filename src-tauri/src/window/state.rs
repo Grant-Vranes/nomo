@@ -261,20 +261,10 @@ pub(crate) fn enter_markdown_mini_mode(window: &WebviewWindow, pinned: bool) -> 
         window
             .set_always_on_top(pinned)
             .map_err(|error| format!("设置 Markdown 小窗置顶失败：{error}"))?;
-        // Windows Shell 只会在可靠的可见性边界刷新 Alt+Tab，任务栏资格必须在隐藏状态下切换。
+        // Tauri 在 Windows 上通过 ITaskbarList 更新按钮，不需要隐藏/显示窗口。
         window
-            .hide()
-            .map_err(|error| format!("切换 Markdown 小窗任务栏状态前隐藏窗口失败：{error}"))?;
-        window.set_skip_taskbar(true).map_err(|error| {
-            let _ = window.show();
-            format!("从任务栏隐藏 Markdown 小窗失败：{error}")
-        })?;
-        window
-            .show()
-            .map_err(|error| format!("显示 Markdown 小窗失败：{error}"))?;
-        window
-            .set_focus()
-            .map_err(|error| format!("聚焦 Markdown 小窗失败：{error}"))?;
+            .set_skip_taskbar(true)
+            .map_err(|error| format!("从任务栏隐藏 Markdown 小窗失败：{error}"))?;
         Ok(())
     })();
 
@@ -424,19 +414,23 @@ fn restore_markdown_mini_geometry(window: &WebviewWindow) -> Result<(), String> 
         height = height.min(max_height);
     }
 
-    if let Some(monitor) = target_monitor.as_ref() {
-        // 先移动到目标屏幕完成 DPI 切换，再设置物理尺寸，避免 Windows 二次缩放。
-        let staging_position = saved_position
-            .map(|position| clamp_position_to_work_area(monitor, position, width, height))
-            .unwrap_or_else(|| centered_position_in_work_area(monitor, width, height));
-        window
-            .set_position(tauri::Position::Physical(staging_position))
-            .map_err(|error| format!("把 Markdown 小窗移动到目标屏幕失败：{error}"))?;
-    }
+    let position = target_monitor
+        .as_ref()
+        .map(|monitor| {
+            saved_position
+                .map(|position| clamp_position_to_work_area(monitor, position, width, height))
+                .unwrap_or_else(|| centered_position_in_work_area(monitor, width, height))
+        })
+        .map(Ok)
+        .unwrap_or_else(|| window.outer_position())
+        .map_err(|error| format!("读取 Markdown 小窗目标位置失败：{error}"))?;
 
-    window
-        .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
-        .map_err(|error| format!("恢复 Markdown 小窗尺寸失败：{error}"))?;
+    apply_window_geometry(
+        window,
+        position,
+        tauri::PhysicalSize { width, height },
+        target_scale,
+    )?;
 
     if let Some(monitor) = target_monitor.as_ref() {
         let restored_size = window
@@ -454,12 +448,45 @@ fn restore_markdown_mini_geometry(window: &WebviewWindow) -> Result<(), String> 
             .unwrap_or_else(|| {
                 centered_position_in_work_area(monitor, restored_size.width, restored_size.height)
             });
-        window
-            .set_position(tauri::Position::Physical(final_position))
-            .map_err(|error| format!("恢复 Markdown 小窗位置失败：{error}"))?;
+        // 只有系统尺寸约束实际改变了目标边界时才补定位。
+        if final_position != position {
+            window
+                .set_position(tauri::Position::Physical(final_position))
+                .map_err(|error| format!("恢复 Markdown 小窗位置失败：{error}"))?;
+        }
     }
 
     Ok(())
+}
+
+fn apply_window_geometry(
+    window: &WebviewWindow,
+    position: tauri::PhysicalPosition<i32>,
+    size: tauri::PhysicalSize<u32>,
+    _target_scale: f64,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let current_scale = window
+            .scale_factor()
+            .map_err(|error| format!("读取窗口缩放比例失败：{error}"))?;
+        if (current_scale - _target_scale).abs() > 0.001 {
+            // 跨 DPI 时先让 Tao 完成 WM_DPICHANGED，再提交最终物理边界。
+            window
+                .set_position(tauri::Position::Physical(position))
+                .map_err(|error| format!("把窗口移动到目标屏幕失败：{error}"))?;
+        }
+        super::os::set_window_geometry(window, position, size)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        window
+            .set_position(tauri::Position::Physical(position))
+            .map_err(|error| format!("恢复窗口位置失败：{error}"))?;
+        window
+            .set_size(tauri::Size::Physical(size))
+            .map_err(|error| format!("恢复窗口尺寸失败：{error}"))
+    }
 }
 
 fn restore_normal_window_geometry(
@@ -475,24 +502,35 @@ fn restore_normal_window_geometry(
     window
         .set_minimizable(true)
         .map_err(|error| format!("恢复主窗口最小化能力失败：{error}"))?;
+    if window.is_fullscreen().unwrap_or(false) {
+        window
+            .set_fullscreen(false)
+            .map_err(|error| format!("退出 Markdown 小窗全屏状态失败：{error}"))?;
+    }
+    if window.is_maximized().unwrap_or(false) {
+        window
+            .unmaximize()
+            .map_err(|error| format!("还原 Markdown 小窗最大化状态失败：{error}"))?;
+    }
+    let monitors = window.available_monitors().unwrap_or_default();
+    let target_scale = monitor_for_window(
+        state.normal_position.x,
+        state.normal_position.y,
+        state.normal_size.width,
+        state.normal_size.height,
+        &monitors,
+    )
+    .map(tauri::Monitor::scale_factor)
+    .unwrap_or_else(|| window.scale_factor().unwrap_or(1.0));
+    apply_window_geometry(window, state.normal_position, state.normal_size, target_scale)?;
+
+    // 先恢复最终边界再提高下限，避免小窗在原地先被撑大一次。
     window
         .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
             MIN_WINDOW_WIDTH as f64,
             MIN_WINDOW_HEIGHT as f64,
         ))))
         .map_err(|error| format!("恢复主窗口最小尺寸失败：{error}"))?;
-    window
-        .set_fullscreen(false)
-        .map_err(|error| format!("退出 Markdown 小窗全屏状态失败：{error}"))?;
-    window
-        .unmaximize()
-        .map_err(|error| format!("还原 Markdown 小窗最大化状态失败：{error}"))?;
-    window
-        .set_position(tauri::Position::Physical(state.normal_position))
-        .map_err(|error| format!("恢复主窗口位置失败：{error}"))?;
-    window
-        .set_size(tauri::Size::Physical(state.normal_size))
-        .map_err(|error| format!("恢复主窗口尺寸失败：{error}"))?;
 
     if state.was_maximized {
         window
@@ -504,20 +542,10 @@ fn restore_normal_window_geometry(
             .set_fullscreen(true)
             .map_err(|error| format!("恢复主窗口全屏状态失败：{error}"))?;
     }
-    // 先隐藏再恢复任务栏资格，随后 show 才会让 Windows Shell 重新登记 Alt+Tab 窗口。
+    // 只恢复任务栏按钮，保持窗口可见性和前台焦点不变。
     window
-        .hide()
-        .map_err(|error| format!("恢复主窗口任务栏状态前隐藏窗口失败：{error}"))?;
-    window.set_skip_taskbar(false).map_err(|error| {
-        let _ = window.show();
-        format!("恢复主窗口任务栏状态失败：{error}")
-    })?;
-    window
-        .show()
-        .map_err(|error| format!("显示主窗口失败：{error}"))?;
-    window
-        .set_focus()
-        .map_err(|error| format!("聚焦主窗口失败：{error}"))
+        .set_skip_taskbar(false)
+        .map_err(|error| format!("恢复主窗口任务栏状态失败：{error}"))
 }
 
 fn persist_markdown_mini_window_state(window: &tauri::Window) {

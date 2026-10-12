@@ -1,4 +1,4 @@
-export type TypographyGeometrySource = 'width' | 'font' | 'line-height' | 'zoom';
+export type TypographyGeometrySource = 'width' | 'font' | 'line-height' | 'zoom' | 'window-mode';
 
 export interface TypographyInteractionSnapshot {
   phase: 'idle' | 'preview' | 'settling';

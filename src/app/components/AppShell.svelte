@@ -63,6 +63,8 @@
   export let toolbarShortcut: string;
   export let markdownMiniShortcut: string;
   export let markdownMiniActive: boolean;
+  export let markdownMiniTransitioning = false;
+  export let appShellRoot: HTMLDivElement;
   export let markdownMiniPinned: boolean;
   export let markdownMiniExternalChanged: boolean;
   export let isResizing: boolean;
@@ -323,7 +325,8 @@
 <svelte:window on:contextmenu={suppressUnhandledContextMenu} />
 
 <div
-  inert={exitInProgress || workspaceInteractionDisabled}
+  bind:this={appShellRoot}
+  inert={exitInProgress || workspaceInteractionDisabled || markdownMiniTransitioning}
   class="app-layout"
   class:focus-mode={focusMode}
   class:markdown-mini-mode={markdownMiniActive}
@@ -399,7 +402,7 @@
   <main
     class="workspace"
     style:--sidebar-width={`${sidebarWidth}px`}
-    use:workspaceSidebarMotion={{ focusMode, isResizing, disabled: markdownMiniActive }}
+    use:workspaceSidebarMotion={{ focusMode, isResizing, disabled: markdownMiniActive || markdownMiniTransitioning }}
   >
     <ExplorerSidebar
       {interfaceLocale}
@@ -587,6 +590,7 @@
             {#key sourceDocumentId}
             <EditorWorkspace
               {interfaceLocale}
+              modeTransitionDisabled={markdownMiniTransitioning}
               bind:sourcePane
               bind:semanticPane
               bind:sourceEditor
@@ -644,7 +648,10 @@
             {/if}
 
             {#if markdownMiniActive && largeDocumentMode}
-              <MarkdownMiniLargePreview {markdown} {nativePath} {editorTheme} />
+              <MarkdownMiniLargePreview
+                {markdown} {nativePath} {editorTheme}
+                deferEnhancements={markdownMiniTransitioning}
+              />
             {/if}
 
             <LinkQuickEditor

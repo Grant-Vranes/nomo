@@ -1,7 +1,9 @@
+use windows_sys::Win32::Foundation::RECT;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    IsZoomed, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_NOTOPMOST, HWND_TOPMOST,
-    SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE, SW_SHOW,
+    GetClientRect, GetWindowRect, IsZoomed, SetForegroundWindow, SetWindowPos, ShowWindow,
+    HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SW_RESTORE, SW_SHOW,
 };
 
 pub(crate) fn window_decorations() -> bool {
@@ -25,6 +27,56 @@ pub(crate) fn setup_window<R: tauri::Runtime>(
             .map_err(|error| format!("启用 Windows 无边框窗口阴影失败：{error}"))?;
     }
 
+    Ok(())
+}
+
+/// 在已还原的窗口上一次更新位置和客户区尺寸，保持可见性、焦点与 Z 序。
+pub(crate) fn set_window_geometry(
+    window: &tauri::WebviewWindow,
+    position: tauri::PhysicalPosition<i32>,
+    size: tauri::PhysicalSize<u32>,
+) -> Result<(), String> {
+    let hwnd = window
+        .hwnd()
+        .map_err(|error| format!("读取 Windows 窗口句柄失败：{error}"))?
+        .0;
+    let mut outer = RECT::default();
+    let mut inner = RECT::default();
+    unsafe {
+        if GetWindowRect(hwnd, &mut outer) == 0 || GetClientRect(hwnd, &mut inner) == 0 {
+            return Err(format!(
+                "读取 Windows 窗口边界失败：{}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+
+    // 无边框窗口的系统阴影仍有隐藏边距，沿用 Tao 的客户区/外框差值算法。
+    let width_offset = (outer.right - outer.left - (inner.right - inner.left)).max(0);
+    let height_offset = (outer.bottom - outer.top - (inner.bottom - inner.top)).max(0);
+    let width = i32::try_from(size.width)
+        .map_err(|_| "窗口宽度超出 Windows 支持范围".to_string())?
+        .saturating_add(width_offset);
+    let height = i32::try_from(size.height)
+        .map_err(|_| "窗口高度超出 Windows 支持范围".to_string())?
+        .saturating_add(height_offset);
+    let updated = unsafe {
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            position.x,
+            position.y,
+            width,
+            height,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    };
+    if updated == 0 {
+        return Err(format!(
+            "更新 Windows 窗口边界失败：{}",
+            std::io::Error::last_os_error()
+        ));
+    }
     Ok(())
 }
 

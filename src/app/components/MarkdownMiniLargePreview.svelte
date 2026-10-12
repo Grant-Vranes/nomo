@@ -10,6 +10,11 @@
   import { subscribeTypographyInteraction } from '../../lib/typography/interaction';
   let typography: TypographyController | undefined;
   const layoutInteraction = subscribeTypographyInteraction((snapshot) => {
+    if (snapshot.phase === 'preview' && snapshot.geometrySource === 'window-mode') {
+      typography?.destroy();
+      typography = undefined;
+      return;
+    }
     // 选项同值不再广播后，仍保留小窗原有的几何失效与延迟重排策略。
     if (snapshot.phase !== 'idle') typography?.invalidate();
     if (snapshot.phase === 'settling')
@@ -19,15 +24,27 @@
   export let markdown: string;
   export let nativePath: string | null;
   export let editorTheme: EditorThemeOptions;
+  export let deferEnhancements = false;
 
   let scrollPane: HTMLElement;
   let staticContainer: HTMLDivElement;
   let staticHtml = '';
   let lazyObserver: IntersectionObserver | null = null;
   let renderGeneration = 0;
+  let previewReady = false;
+  let enhancementsStarted = false;
   const sourceByFigure = new WeakMap<HTMLElement, { language: string; source: string }>();
 
   $: schedulePreviewRender(markdown, nativePath, editorTheme);
+  $: if (deferEnhancements) {
+    enhancementsStarted = false;
+    lazyObserver?.disconnect();
+  }
+  $: if (previewReady && !deferEnhancements && !enhancementsStarted) {
+    enhancementsStarted = true;
+    setupLazyRendering();
+    typography = createDomTypography(staticContainer);
+  }
 
   onDestroy(() => {
     layoutInteraction.destroy();
@@ -43,6 +60,10 @@
   ) {
     const generation = ++renderGeneration;
     typography?.destroy();
+    typography = undefined;
+    lazyObserver?.disconnect();
+    previewReady = false;
+    enhancementsStarted = false;
     staticHtml = '';
     await tick();
     await waitForVisibleFrame();
@@ -52,8 +73,7 @@
     });
     await tick();
     if (generation !== renderGeneration) return;
-    setupLazyRendering();
-    typography = createDomTypography(staticContainer);
+    previewReady = true;
   }
 
   function waitForVisibleFrame() {

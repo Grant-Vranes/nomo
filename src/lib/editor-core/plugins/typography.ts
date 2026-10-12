@@ -272,6 +272,8 @@ function createViewController(view: EditorView) {
 
   const isPreviewing = () => interaction.phase === 'preview';
   const isZoomPreview = () => isPreviewing() && interaction.geometrySource === 'zoom';
+  const isLayoutDeferred = () =>
+    isZoomPreview() || (isPreviewing() && interaction.geometrySource === 'window-mode');
 
   const isComposing = () =>
     composing ||
@@ -374,9 +376,8 @@ function createViewController(view: EditorView) {
     }
   };
   const queueRunFrame = () => {
-    // Native reflow owns zoom frames; solving and decoration replacement resume
-    // at settlement so they cannot stretch a short animation into slow motion.
-    if (layoutFrame !== null || destroyed || isZoomPreview() || (isPreviewing() && !viewportOnly))
+    // 缩放与小窗切换先使用原生换行，精细排版在过渡结束后追补。
+    if (layoutFrame !== null || destroyed || isLayoutDeferred() || (isPreviewing() && !viewportOnly))
       return;
     if (typeof requestAnimationFrame !== 'function' || document.hidden) {
       timer = setTimeout(() => void run(), 0);
@@ -681,7 +682,7 @@ function createViewController(view: EditorView) {
     });
   };
   const run = async (): Promise<void> => {
-    if (destroyed || isZoomPreview() || (isPreviewing() && !viewportOnly) || isComposing() || dragging)
+    if (destroyed || isLayoutDeferred() || (isPreviewing() && !viewportOnly) || isComposing() || dragging)
       return;
     if (geometryAnchorFrame !== null || pendingGeometryAnchor) restoreGeometryAnchor();
     clearDisabledLayout();
@@ -745,7 +746,7 @@ function createViewController(view: EditorView) {
       // 宽度输入复用在途测量；缩放则先让出交互帧，停止后再追补。
       const stale = () =>
         destroyed ||
-        isZoomPreview() ||
+        isLayoutDeferred() ||
         revision !== token ||
         view.state.doc !== doc ||
         isComposing() ||

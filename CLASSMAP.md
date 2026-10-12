@@ -28,7 +28,7 @@
 | 工作区与选中标签联合轮廓 | `src/app/components/WorkspaceSurface.svelte` | `src/app/components/AppShell.svelte`, `src/app/components/DocumentTabs.svelte`, `src/app/actions/motion.ts`, `src/app/styles/app-chrome.css` | 修改连续外轮廓、主题描边、柔和投影或活动标签几何同步 |
 | Markdown 工具栏显示与响应式布局 | `src/app/components/EditorToolbar.svelte` | `src/app/components/AppShell.svelte`, `src/app/actions/motion.ts`, `src/app/styles/app-chrome.css`, `src/app/styles/app-responsive.css`, `src/app/services/settings.ts` | 修改工具栏收展、窄宽度隐藏优先级或内容宽度控件 |
 | 窗口状态持久化 | `src-tauri/src/window/state.rs` | `src-tauri/src/lib.rs`, `src-tauri/src/models.rs` | 窗口位置/尺寸/最大化状态恢复逻辑变更 |
-| Markdown 文档小窗 | `src/app/App.svelte` | `src/app/components/AppShell.svelte`, `src/app/components/AppTitleBar.svelte`, `src/app/components/MarkdownMiniLargePreview.svelte`, `src/app/styles/markdown-mini.css`, `src/app/services/desktopWindow.ts`, `src-tauri/src/window/state.rs` | 修改小窗进入/返回、置顶、只读降级、快捷键、工作区布局优先级或窗口几何恢复 |
+| Markdown 文档小窗 | `src/app/App.svelte` | `src/app/components/AppShell.svelte`, `src/app/components/AppTitleBar.svelte`, `src/app/components/MarkdownMiniLargePreview.svelte`, `src/app/styles/markdown-mini.css`, `src/app/services/markdownMiniTransition.ts`, `src/app/services/desktopWindow.ts`, `src-tauri/src/window/state.rs` | 修改小窗进入/返回、置顶、只读降级、快捷键、过渡就绪与阅读位置恢复或原生窗口几何切换 |
 | 全局滚动条显隐 | `src/app/services/scrollbarVisibility.ts` | `src/main.ts`, `src/app/styles/global.css`, `src/app/styles/app-layout.css`, `src/app/styles/editor-segmented.css` | 修改滚动时显示、边缘触发、延时隐藏或局部滚动容器覆盖 |
 | 外部打开路由 | `src-tauri/src/window/external_open.rs` | `src-tauri/src/lib.rs` | 单实例/启动参数/macOS open 事件 |
 | 跨窗口打开目标去重 | `src-tauri/src/window/open_targets.rs` | `src/app/services/openTargetRouting.ts`, `src/app/App.svelte`, `src/app/services/desktopWindow.ts`, `src-tauri/src/window/external_open.rs` | 修改文件/文件夹打开优先级、空窗口复用、窗口聚焦或目标预留 |
@@ -39,7 +39,7 @@
 |---|---|---|---|
 | 精细段落排版 | `src/lib/typography/knuthPlass.ts` | `types.ts`, `rules.ts`, `hyphenation.ts`, `measure.ts`, `renderPlan.ts`, `positions.ts`, `solver.ts`, `typography.worker.ts` | 修改 KP 间距质量评分、两端/左对齐选择、中文规则、英文 Liang 断词、可取消分批/有界同步测量、目标几何快照、文字测量 LRU 或位置映射 |
 | 精细排版编辑适配 | `src/lib/editor-core/plugins/typography.ts` | `nodeViews/TypographyBreakNodeView.ts`, `InlineSourceCodec.ts`, `ProseMirrorEditorCore.ts`, `src/lib/typography/options.ts`, `rules.ts`, `interaction.ts`, `src/app/styles/editor-document.css`, `src/app/services/settings.ts` | 修改输入与导航保护、字素光标移动、局部缓存、正文输入与符号显隐同帧排版、编辑态真实空格宽度和长空格串换行、超预算编辑降级与空闲追补、宽度持续 KP、缩放停止后追补与可见区更新、增量装饰提交、手势阅读锚点、DOM 绑定校验、视觉断点、软换行、KP 选区背景或设置开关 |
-| 排版交互生命周期 | `src/lib/typography/interaction.ts` | `src/app/actions/typographyRange.ts`, `src/app/services/settings.ts`, `src/app/services/editorSettingsController.ts`, `src/app/components/StatusBar.svelte`, `src/app/App.svelte` | 修改窗口内重叠交互 token、150 ms 静默收束、即时 CSS 与几何版本通知、阅读锚点回调、缩放滑块直接更新、滑块结束保护或跨窗口几何更新 |
+| 排版交互生命周期 | `src/lib/typography/interaction.ts` | `src/app/actions/typographyRange.ts`, `src/app/services/settings.ts`, `src/app/services/editorSettingsController.ts`, `src/app/services/markdownMiniTransition.ts`, `src/app/components/StatusBar.svelte`, `src/app/App.svelte` | 修改窗口内重叠交互 token、150 ms 静默收束、即时 CSS 与几何版本通知、阅读锚点回调、缩放滑块直接更新、小窗过渡排版暂停或跨窗口几何更新 |
 | 只读与离线排版 | `src/lib/typography/dom.ts` | `exportRuntime.ts`, `scripts/typography-runtime-plugin.ts`, `src/quicklook/preview-entry.ts`, `src/app/components/MarkdownMiniLargePreview.svelte` | 修改只读布局、离线运行时或打印就绪契约 |
 | 编辑器工厂与 API | `src/lib/editor-core/createEditorCore.ts` | `src/lib/editor-core/index.ts` | EditorCore 创建参数或对外接口变更 |
 | ProseMirror 核心实现 | `src/lib/editor-core/ProseMirrorEditorCore.ts` | `src/lib/editor-core/clipboardMarkdown.ts`, `markdown.ts`, `schema.ts`, plugins, nodeViews | EditorView 生命周期、事务、模式切换、命令执行、选区 Markdown 通知、剪贴板负载与右键目标事务 |
@@ -365,7 +365,7 @@
 - 统一路由菜单、最近记录、系统文件管理器和文件树打开请求，并串行协调空窗口复用与跨窗口去重
 - 订阅编辑器内容变化并同步 dirty/统计/大纲状态
 - 工作区恢复后发起一次启动更新检查，并按目标窗口协调通知卡片与安装确认
-- 协调当前文档在同一窗口内进入/返回 Markdown 小窗，并复用原编辑器、撤销栈和自动保存状态
+- 协调当前文档在同一窗口内进入/返回 Markdown 小窗，按最终尺寸恢复阅读位置并统一收尾过渡，复用原编辑器、撤销栈和自动保存状态
 - 统一持有全应用上下文菜单状态，并为各 UI 区域提供单一打开入口、剪贴板和路径定位动作
 - 快捷插入的图片/链接选择窗口与来源文档、选区及内容修订校验
 
@@ -406,7 +406,7 @@
 - Markdown 工具栏的收展区域和右侧展开柄
 - 装配工作区联合轮廓，并转发活动标签几何与主题更新键
 - 装配双文档 ComparisonWorkspace、成员运行时与焦点回调，并禁用组合的小窗 / 同文档双栏入口
-- 在 Markdown 小窗模式下隐藏常规 chrome，并在可编辑编辑器与大文档只读预览之间选择内容视图
+- 在 Markdown 小窗模式下隐藏常规 chrome，提供根元素引用和切换输入门禁，并在可编辑编辑器与大文档只读预览之间选择内容视图
 - 挂载全窗口右键菜单兜底策略，并把统一菜单入口下发给标题栏、文件树、标签栏和大纲
 
 **Does not own:**
@@ -439,6 +439,7 @@
 - 大文档小窗的安全只读 HTML 渲染
 - 延迟加载代码高亮与 Mermaid 渲染器，并在主题变化时刷新预览
 - 正文渲染完成前保持轻量加载状态
+- 原生窗口切换期间延后精细排版和高亮增强，过渡结束后恢复
 
 **Does not own:**
 - 不拥有普通文档编辑器
@@ -3718,6 +3719,22 @@
 
 ---
 
+### `src/app/services/markdownMiniTransition.ts`
+
+**Kind:** transition controller
+
+**Owns:** 小窗进入/返回共用的目标视口稳定等待、超时/销毁清理和精细排版暂停生命周期；切换期间保持窗口与正文可见。
+
+**Does not own:** 原生窗口 API、编辑器模式或文档状态、阅读锚点计算。
+
+**Called by:** `src/app/App.svelte`
+
+**Depends on:** `src/lib/typography/interaction.ts`
+
+**Confidence:** high
+
+---
+
 ### `src-tauri/src/window/state.rs`
 
 **Kind:** window state service
@@ -3726,6 +3743,7 @@
 - 普通窗口与 Markdown 小窗的位置、尺寸和最大化状态持久化
 - 进入小窗前的运行时窗口快照，以及返回普通模式时的几何恢复
 - 小窗最小尺寸、置顶、任务栏可见性与目标屏幕边界约束
+- 进入/返回时保持原生窗口可见，合并 Windows 同 DPI 下的位置与尺寸更新，并在跨 DPI 时先完成屏幕适配
 
 **Does not own:**
 - 不拥有前端小窗内容和标题栏 UI
@@ -3733,7 +3751,7 @@
 
 **Called by:** `src-tauri/src/lib.rs`, `src-tauri/src/window/commands.rs`
 
-**Depends on:** Tauri window and monitor APIs, `src-tauri/src/models.rs`, `src-tauri/src/config/mod.rs`
+**Depends on:** Tauri window and monitor APIs, `src-tauri/src/window/os/windows.rs`, `src-tauri/src/models.rs`, `src-tauri/src/config/mod.rs`
 
 **Change this when:**
 - 修改窗口几何保存/恢复、小窗定位、置顶或模式切换的原生行为
@@ -3751,6 +3769,7 @@
 **Owns:**
 - 校验 Windows 窗口是否已按平台配置创建为无装饰窗口，并在配置漂移时兜底关闭装饰、保留系统阴影。
 - 读取 Windows 应用主题，以及外部打开时将窗口带到前台。
+- 小窗切换时用一次 SetWindowPos 更新普通窗口的位置和客户区尺寸，保留系统阴影边距、焦点与 Z 序。
 
 **Does not own:**
 - 不拥有前端自绘按钮、标题栏布局或关闭业务。

@@ -26,6 +26,7 @@
 
   export let interfaceLocale: string;
   export let mode: EditorViewMode;
+  export let modeTransitionDisabled = false;
   export let splitViewLayout: SplitViewLayout = 'semantic-source';
   export let splitLeftPercent = 50;
   export let splitActivePane: SplitActivePane = 'semantic';
@@ -866,7 +867,7 @@
       activePane: splitActivePane,
       paused: splitResizePointerId !== null,
     }}
-    use:modePaneMotion={{ mode, disabled: largeDocumentMode }}
+    use:modePaneMotion={{ mode, disabled: largeDocumentMode || modeTransitionDisabled }}
   >
     <section
       id={`source-editor-pane-${sourceDocumentId}`}
