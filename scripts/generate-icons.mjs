@@ -64,6 +64,18 @@ function png(output, size) {
   return join(output, `${size}x${size}.png`);
 }
 
+function desktopIconSvg(svg, background, border) {
+  const plate = `<rect x="16" y="16" width="224" height="224" rx="48" fill="${background}"/>`;
+  if (!svg.includes(plate)) {
+    throw new Error('应用 Logo 底板结构已变化，请同步更新桌面图标的内侧描边。');
+  }
+  // 桌面图标派生描边，应用内引用的 SVG 和 PNG 保持母版造型。
+  return svg.replace(
+    plate,
+    `<rect x="16" y="16" width="224" height="224" rx="48" fill="${border}"/>\n  <rect x="24" y="24" width="208" height="208" rx="40" fill="${background}"/>`,
+  );
+}
+
 function macosSvg(svg) {
   // macOS 图标底板占 256 画布的 218px；ICNS 与运行时 Dock 共用相同边距。
   return svg.replace(
@@ -121,20 +133,22 @@ function generateTray() {
 }
 
 try {
-  const light = readFileSync(join(source, 'nomo-app-light.svg'), 'utf8');
-  const dark = light
+  const lightLogo = readFileSync(join(source, 'nomo-app-light.svg'), 'utf8');
+  const darkLogo = lightLogo
     .replace('Nomo 浅色图标', 'Nomo 深色图标')
     .replace('圆角白色底板、深色 N', '圆角深色底板、白色 N')
     .replaceAll('#fefefe', '#2b313b')
     .replaceAll('#252c36', '#f8f9fb')
     .replaceAll('#4d86fd', '#5b9bff')
     .replaceAll('#999ca3', '#b6bac3');
-  writeFileSync(join(source, 'nomo-app-dark.svg'), dark, 'utf8');
+  writeFileSync(join(source, 'nomo-app-dark.svg'), darkLogo, 'utf8');
+  const light = desktopIconSvg(lightLogo, '#fefefe', '#c8cdd4');
+  const dark = desktopIconSvg(darkLogo, '#2b313b', '#7b8594');
 
   if (!macosOnly) {
     const bundle = render(light, 'default-bundle');
     for (const entry of readdirSync(bundle, { withFileTypes: true })) {
-      if (entry.name === 'icon.icns') continue;
+      if (['icon.icns', 'android', 'ios'].includes(entry.name)) continue;
       cpSync(join(bundle, entry.name), join(icons, entry.name), { recursive: true });
     }
     const packageSizes = Object.values(packageLogos).flatMap((size) =>
@@ -142,8 +156,14 @@ try {
     );
     const lightPngs = render(light, 'light', [...new Set([...appSizes, ...targetSizes, ...packageSizes])]);
     const darkPngs = render(dark, 'dark', [...new Set([...appSizes, ...targetSizes])]);
-    for (const [theme, output] of [['light', lightPngs], ['dark', darkPngs]]) {
+    const lightLogoPngs = render(lightLogo, 'logo-light', appSizes);
+    const darkLogoPngs = render(darkLogo, 'logo-dark', appSizes);
+    for (const [theme, output] of [['light', lightLogoPngs], ['dark', darkLogoPngs]]) {
       for (const size of appSizes) copy(png(output, size), join(source, `nomo-app-${theme}-${size}.png`));
+    }
+    const mobileBundle = render(lightLogo, 'mobile-bundle');
+    for (const platform of ['android', 'ios']) {
+      cpSync(join(mobileBundle, platform), join(icons, platform), { recursive: true });
     }
     copy(png(lightPngs, 64), join(icons, '64x64.png'));
     copy(png(lightPngs, 512), join(icons, 'app-icon.png'));

@@ -6,6 +6,8 @@
 
 应用造型只修改 `source/nomo-app-light.svg`。深色 SVG 共用相同几何结构，配色与托盘造型在 `scripts/generate-icons.mjs` 中维护。PNG、ICO、ICNS 都是生成产物，不要直接编辑位图。
 
+应用内 Logo 的 SVG 和 `source/` PNG 保持原有造型。生成脚本仅为桌面、任务栏 / Dock 和系统文件关联资源派生描边：浅色使用 `#c8cdd4`，深色使用 `#7b8594`。描边沿底板内侧绘制，保持原有外轮廓、圆角和平台边距；256px 画布的 8px 描边在 32px 图标中为 1px。Android、iOS 和托盘继续使用原有造型及配色。
+
 ```bash
 pnpm icons:generate
 ```
@@ -52,7 +54,7 @@ pnpm run build:macos
 - `macos/`: 应用平台边距的 256/512/1024 PNG，以及外观目录使用的满幅 1024px 图层。
 - `tray/`: light/dark × active/inactive SVG、24px 预览和 48px 运行时 PNG。
 - `windows/`: MSIX 的目标尺寸、主题和缩放限定资源。
-- 上级目录的标准 PNG、ICO、ICNS 及既有 Android / iOS 图标也由同一母版生成。
+- 上级目录的标准桌面 PNG、ICO、ICNS 使用带描边的派生造型；Android / iOS 图标从原有 Logo 母版生成。
 
 ## 命名规则
 

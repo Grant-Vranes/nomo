@@ -263,7 +263,7 @@
 
 | Responsibility | Primary code | Related code | Change when |
 |---|---|---|---|
-| SVG 图标与平台资源生成 | `scripts/generate-icons.mjs` | `src-tauri/icons/nomo/source/nomo-app-light.svg`, `scripts/compile-macos-appicon.sh`, `src-tauri/src/window/tray.rs` | 修改应用 Logo、浅深色配色、平台边距、多尺寸位图或托盘图标；浅色 SVG 为造型母版 |
+| SVG 图标与平台资源生成 | `scripts/generate-icons.mjs` | `src-tauri/icons/nomo/source/nomo-app-light.svg`, `scripts/compile-macos-appicon.sh`, `src-tauri/src/window/tray.rs` | 修改应用 Logo、浅深色配色、平台边距、多尺寸位图或托盘图标；浅色 SVG 为造型母版，桌面与系统文件图标单独派生描边，应用内 Logo 和移动端保持母版造型 |
 | Windows Store MSIX 构建与校验 | `scripts/msix/Build-Msix.ps1` | `scripts/msix/Build-IconResources.ps1`, `.github/workflows/msix.yml`, `src-tauri/msix/`, `src-tauri/tauri.conf.json` | 修改 Store 包身份、版本映射、生产前端嵌入校验、图标 PRI 生成、Shell 扩展封装或上传产物 |
 
 ### UI 通用组件
