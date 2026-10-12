@@ -29,6 +29,7 @@ pnpm-debug.log*
 .cache/
 .temp/
 .tmp/
+/.tmp-*/
 
 # Editor and OS files
 .idea/
