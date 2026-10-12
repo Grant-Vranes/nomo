@@ -4148,5 +4148,4 @@
 - `src/lib/editor-core/markdown.ts` 和 `editorCommands.ts` 体积极大，未来拆分为子模块后需要更新条目。
 - `src-tauri/src/file_system.rs` 未来拆分后需要更新条目。
 - `src-tauri/src/config/mod.rs` 承担了原 SQLite 数据库的全部职责（最近打开、快照、设置），未来若拆分需更新条目。
-- `html/` 目录（`html/index.html`, `html/style.css`）作用不明确，未纳入本 map。
 - `src/app/i18n.ts` 和 `src/app/i18n.ja.ts` 未单独建条目（已在 Feature Index 本地化节覆盖）。
