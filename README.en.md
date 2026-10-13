@@ -29,7 +29,7 @@ Nomo is a local-first, Markdown-first desktop editor for macOS and Windows. Mark
 This README tracks the current `master` branch. For the exact capabilities and changes included in an installer, see its matching [GitHub Release](https://github.com/LIXianSenQwQ/nomo/releases).
 
 <p align="center">
-  <img src="./assets/demo_image.gif" alt="Nomo demo" width="1920">
+  <img src="./assets/nomo-editor-en.gif" alt="Nomo writing demo" width="800">
 </p>
 
 ## Download and Installation

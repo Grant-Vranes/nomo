@@ -29,7 +29,7 @@ Nomo 是一款本地优先、Markdown-first 的桌面编辑器，支持 macOS �
 本文描述当前 `master` 的功能；已发布安装包的具体能力与变更，请以对应的 [GitHub Release](https://github.com/LIXianSenQwQ/nomo/releases) 说明为准。
 
 <p align="center">
-  <img src="./assets/demo_image.gif" alt="Nomo 演示" width="1920">
+  <img src="./assets/nomo-editor-zh.gif" alt="Nomo 写作演示" width="800">
 </p>
 
 ## 下载与安装
