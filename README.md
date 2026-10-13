@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/128x128.png" alt="Nomo 图标" width="60">
+  <img src="./src-tauri/icons/128x128.png" alt="Nomo 图标" width="60">
 </p>
 
 <h1 align="center">Nomo</h1>
