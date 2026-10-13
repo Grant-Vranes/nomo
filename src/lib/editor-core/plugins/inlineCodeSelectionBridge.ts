@@ -5,18 +5,22 @@ import { analyzeInlineSource, isInlineSourceBlock } from '../InlineSourceCodec';
 
 const SELECTION_BRIDGE_CLASS = 'pm-inline-selection-bridge';
 const CODE_BRIDGE_CLASS = 'pm-inline-code-selection-bridge';
+const ATOM_BRIDGE_CLASS = 'pm-inline-atom-selection-bridge';
+const SELECTION_ATOM_TYPES = new Set(['math_inline', 'comment_inline', 'footnote_ref', 'image']);
 
 type CodeRange = {
   from: number;
   to: number;
 };
 const codeRangesByDoc = new WeakMap<ProseMirrorNode, CodeRange[]>();
+const atomRangesByDoc = new WeakMap<ProseMirrorNode, CodeRange[]>();
 
 /**
- * 行内代码选区桥接插件。
+ * 正文、行内代码与原子对象的选区背景桥接插件。
  *
  * 浏览器原生选区只绘制字形区域，行内 code 的 padding/border 会把选区切断。
  * 这里给真实选区加一层可控背景，并在选区碰到 code 时临时移除 code 胶囊外观。
+ * 原子对象使用外层背景包住自身外边距，避免选中时改变对象尺寸或正文位置。
  */
 export function inlineCodeSelectionBridgePlugin(): Plugin<DecorationSet> {
   return new Plugin({
@@ -60,19 +64,27 @@ function buildInlineCodeSelectionBridgeDecorations(
 
   const from = Math.min(selectionFrom, selectionTo);
   const to = Math.max(selectionFrom, selectionTo);
-  const decorations: Decoration[] = [
-    Decoration.inline(from, to, {
-      class: SELECTION_BRIDGE_CLASS,
-    }),
-  ];
+  const decorations: Decoration[] = [];
+  const atoms = atomRangesByDoc.get(doc) ?? [];
+  let textFrom = from;
+  for (let i = firstOverlappingRange(atoms, from); i < atoms.length && atoms[i].from < to; i++) {
+    const atom = atoms[i];
+    if (atom.from < from || atom.to > to) continue;
+    if (textFrom < atom.from)
+      decorations.push(Decoration.inline(textFrom, atom.from, { class: SELECTION_BRIDGE_CLASS }));
+    decorations.push(
+      Decoration.node(atom.from, atom.to, {
+        nodeName: 'span',
+        class: `${SELECTION_BRIDGE_CLASS} ${ATOM_BRIDGE_CLASS}`,
+      }),
+    );
+    textFrom = atom.to;
+  }
+  if (textFrom < to)
+    decorations.push(Decoration.inline(textFrom, to, { class: SELECTION_BRIDGE_CLASS }));
 
   const ranges = codeRangesByDoc.get(doc) ?? [];
-  let lo = 0, hi = ranges.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (ranges[mid].to <= from) lo = mid + 1; else hi = mid;
-  }
-  for (let i = lo; i < ranges.length && ranges[i].from < to; i++) {
+  for (let i = firstOverlappingRange(ranges, from); i < ranges.length && ranges[i].from < to; i++) {
     const range = ranges[i];
     const overlap = getSelectionOverlap(range, from, to);
     if (!overlap) continue;
@@ -88,9 +100,18 @@ function buildInlineCodeSelectionBridgeDecorations(
 
 function findCodeRanges(doc: ProseMirrorNode): CodeRange[] {
   const ranges: CodeRange[] = [];
+  const atoms: CodeRange[] = [];
 
   doc.descendants((node, pos) => {
     if (node.type.name === 'html_block' || node.type.spec.code) return false;
+    if (
+      node.isInline &&
+      SELECTION_ATOM_TYPES.has(node.type.name) &&
+      !(node.type.name === 'image' && node.attrs.align)
+    ) {
+      atoms.push({ from: pos, to: pos + node.nodeSize });
+      return false;
+    }
     if (isInlineSourceBlock(node)) {
       for (const span of analyzeInlineSource(node).spans) {
         if (span.type === 'code') ranges.push({ from: pos + 1 + span.from, to: pos + 1 + span.to });
@@ -110,7 +131,19 @@ function findCodeRanges(doc: ProseMirrorNode): CodeRange[] {
     return true;
   });
 
+  atomRangesByDoc.set(doc, atoms);
   return ranges.sort((a, b) => a.from - b.from);
+}
+
+function firstOverlappingRange(ranges: readonly CodeRange[], from: number): number {
+  let lo = 0;
+  let hi = ranges.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (ranges[mid].to <= from) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 function hasCodeMark(marks: readonly Mark[]): boolean {

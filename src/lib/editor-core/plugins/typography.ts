@@ -1450,15 +1450,10 @@ function renderDecorations(
       continue;
     const { from: start, to: end } = positions.get(binding)!;
     if (start < end) {
-      // Keep expanded text spacing inside the selection's painted box. Margins
-      // leave white seams between selected characters; negative compression and
-      // atomic objects retain their existing geometry.
-      const textGap = binding.atomic ? 0 : Math.max(0, style.right);
       const attributes: Record<string, string> = {
         class: 'kp-unit',
-        style: unitStyleCss(textGap > 0 ? { ...style, right: 0 } : style),
+        style: unitStyleCss(style, binding.atomic),
       };
-      if (textGap > 0) attributes.style += `padding-right:${textGap.toFixed(3)}px;`;
       if (binding.atomic) attributes.nodeName = 'span';
       decorations.push(Decoration.inline(start, end, attributes));
     }

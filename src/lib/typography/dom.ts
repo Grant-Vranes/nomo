@@ -18,6 +18,7 @@ export function createDomTypography(
   let running: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout>;
   let width = root.clientWidth;
+  const selectionPaint = createSelectionPaint(root);
   const restore = (paragraph: HTMLElement) => {
     const original = originals.get(paragraph);
     if (!original) return;
@@ -76,6 +77,7 @@ export function createDomTypography(
         paragraph.dataset.kpReason = 'measurement-failed';
       }
     }
+    selectionPaint.refresh();
     if (!destroyed && token === revision) {
       completed = token;
       root.dataset.kpState = 'complete';
@@ -139,9 +141,75 @@ export function createDomTypography(
       root.removeEventListener('load', invalidate, true);
       document.fonts?.removeEventListener('loadingdone', invalidate);
       root.removeEventListener('copy', copy);
+      selectionPaint.destroy();
       for (const paragraph of originals.keys()) restore(paragraph);
       originals.clear();
       delete root.dataset.kpState;
+    },
+  };
+}
+
+/** Native text selection does not reliably paint an inline span's padding. */
+function createSelectionPaint(root: HTMLElement) {
+  const document = root.ownerDocument;
+  const window = document.defaultView!;
+  const style = document.createElement('style');
+  style.textContent = `
+    [data-kp-selection] {
+      background: var(--md-editor-text-selection-bg, color-mix(in srgb, var(--md-editor-accent, Highlight) 70%, var(--md-editor-document-bg, Canvas) 30%));
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    [data-kp-selection]::selection { background: transparent; color: inherit; }
+    @media print { [data-kp-selection] { background: transparent !important; } }
+  `;
+  document.head.append(style);
+  let painted = new Set<HTMLElement>();
+  let frame: number | undefined;
+  const refresh = () => {
+    if (frame !== undefined) window.cancelAnimationFrame(frame);
+    frame = undefined;
+    const selection = document.getSelection();
+    const ranges: Range[] = [];
+    if (selection && !selection.isCollapsed) {
+      for (let i = 0; i < selection.rangeCount; i++) {
+        const range = selection.getRangeAt(i);
+        if (!range.collapsed && range.intersectsNode(root)) ranges.push(range);
+      }
+    }
+    const next = new Set<HTMLElement>();
+    if (ranges.length) {
+      for (const unit of root.querySelectorAll<HTMLElement>('.kp-unit')) {
+        const text = unit.firstChild;
+        if (unit.childNodes.length !== 1 || text?.nodeType !== Node.TEXT_NODE || !text.textContent)
+          continue;
+        if (
+          ranges.some(
+            (range) =>
+              range.intersectsNode(text) &&
+              !(range.startContainer === text && range.startOffset === text.textContent!.length) &&
+              !(range.endContainer === text && range.endOffset === 0),
+          )
+        ) {
+          next.add(unit);
+          if (!painted.has(unit)) unit.dataset.kpSelection = '';
+        }
+      }
+    }
+    for (const unit of painted) if (!next.has(unit)) delete unit.dataset.kpSelection;
+    painted = next;
+  };
+  const schedule = () => {
+    frame ??= window.requestAnimationFrame(refresh);
+  };
+  document.addEventListener('selectionchange', schedule);
+  return {
+    refresh,
+    destroy() {
+      document.removeEventListener('selectionchange', schedule);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      for (const unit of painted) delete unit.dataset.kpSelection;
+      style.remove();
     },
   };
 }
@@ -159,7 +227,7 @@ function renderParagraph(
     const span = document.createElement('span');
     span.className = 'kp-unit';
     const style = styles.get(binding.from);
-    if (style) span.style.cssText = unitStyleCss(style);
+    if (style) span.style.cssText = unitStyleCss(style, binding.atomic);
     if (binding.atomic) {
       let copy = binding.node.cloneNode(true) as HTMLElement;
       if (copy.dataset.nomoBreak === 'soft') {

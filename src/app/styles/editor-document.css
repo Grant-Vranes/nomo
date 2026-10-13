@@ -2417,6 +2417,13 @@
   color: inherit;
 }
 
+.prosemirror-host .ProseMirror input::selection,
+.prosemirror-host .ProseMirror textarea::selection {
+  /* Native inputs own their selection; ProseMirror decorations cannot paint it. */
+  background: var(--md-editor-selection-bg);
+  color: inherit;
+}
+
 .prosemirror-host .ProseMirror .code-card .code-content::selection,
 .prosemirror-host .ProseMirror .code-card .code-content code::selection,
 .prosemirror-host .ProseMirror .code-card .code-content code *::selection {
@@ -2430,6 +2437,30 @@
   line-height: inherit;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+}
+
+.prosemirror-host .ProseMirror .pm-inline-source-marker.pm-inline-selection-bridge,
+.prosemirror-host .ProseMirror .pm-inline-source-format.pm-inline-selection-bridge {
+  /* Selection must override the syntax and format backgrounds defined below. */
+  background: var(--md-editor-text-selection-bg);
+}
+
+.prosemirror-host .ProseMirror .pm-inline-atom-selection-bridge {
+  border-radius: 0;
+}
+
+.prosemirror-host .ProseMirror .pm-inline-atom-selection-bridge .comment-inline,
+.prosemirror-host .ProseMirror .pm-inline-atom-selection-bridge .footnote-ref {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+}
+
+.prosemirror-host .ProseMirror a:has(.pm-inline-atom-selection-bridge .image-node.is-badge) {
+  /* The link owns the badge's outer margin; extend paint without moving it. */
+  box-shadow:
+    4px 0 0 var(--md-editor-text-selection-bg),
+    -4px 0 0 var(--md-editor-text-selection-bg);
 }
 
 .prosemirror-host .ProseMirror code.inline-code:has(.pm-inline-code-selection-bridge),

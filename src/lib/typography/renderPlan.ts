@@ -48,8 +48,12 @@ export function createRenderPlan(measured: MeasuredParagraph, result: ParagraphL
   return { styles: Array.from(styles.values()), breaks };
 }
 
-export function unitStyleCss(style: UnitStyle): string {
-  return `margin-left:${style.left.toFixed(3)}px;margin-right:${style.right.toFixed(3)}px;line-height:${style.height.toFixed(3)}px;`;
+export function unitStyleCss(style: UnitStyle, atomic = false): string {
+  // Positive text spacing belongs to the painted box. Compression and atomic
+  // objects keep their margins so both rendering adapters retain the same geometry.
+  const textGap = atomic ? 0 : Math.max(0, style.right);
+  const css = `margin-left:${style.left.toFixed(3)}px;margin-right:${(style.right - textGap).toFixed(3)}px;line-height:${style.height.toFixed(3)}px;`;
+  return textGap > 0 ? `${css}padding-right:${textGap.toFixed(3)}px;` : css;
 }
 
 export const PARAGRAPH_CSS =
