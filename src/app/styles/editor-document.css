@@ -164,6 +164,10 @@
   background: var(--md-editor-document-bg);
 }
 
+.document-layout.blank-document {
+  cursor: text;
+}
+
 .source-pane > .document-layout {
   box-sizing: border-box;
   height: 100%;

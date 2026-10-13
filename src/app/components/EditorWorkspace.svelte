@@ -121,7 +121,29 @@
     destroy: (binding: MarkdownWorkspaceRuntimeBinding) => void;
   } | null = null;
 
+  $: blankDocumentEditable = !readonlyDocumentMode && markdown === '';
   $: publishRuntime(sourceDocumentId, editorCore, editorHost, sourceEditor, sourcePane, semanticPane, mode);
+
+  function handleBlankDocumentPointerDown(event: PointerEvent, pane: SplitActivePane) {
+    if (!blankDocumentEditable || event.button !== 0 || !event.isPrimary ||
+      event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+    // 只接管纸面背景和空宿主；正文、控件及滚动条继续使用各自的原生定位。
+    if (event.target !== event.currentTarget && !(pane === 'semantic' && event.target === editorHost)) return;
+    if (pane === 'source') {
+      if (registeredSourceDocumentId !== sourceDocumentId || !registeredSourceContent?.isConnected || sourceEditor.getMarkdown() !== '') return;
+    } else {
+      if (!editorHost?.querySelector('.ProseMirror[contenteditable="true"]') || editorCore.getMarkdown() !== '') return;
+    }
+    event.preventDefault();
+    if (mode === 'split') setSplitActivePane(pane);
+    if (pane === 'source') {
+      sourceEditor.setSelection(0);
+      sourceEditor.focus({ preventScroll: true });
+    } else {
+      editorCore.restoreSelectionSnapshot({ anchor: 1, head: 1 });
+      editorCore.focus();
+    }
+  }
 
   function publishRuntime(documentId: string, core: EditorCore, host: HTMLDivElement,
     source: MarkdownSourceEditorHandle, sourceScrollPane: HTMLElement, semanticScrollPane: HTMLElement,
@@ -881,7 +903,12 @@
       on:pointerdown={() => mode === 'split' && setSplitActivePane('source')}
       on:focusin={() => mode === 'split' && setSplitActivePane('source')}
     >
-      <div class="document-layout">
+      <!-- svelte-ignore a11y_no_static_element_interactions (Keyboard focus stays on the editor; the paper only forwards pointer focus.) -->
+      <div
+        class="document-layout"
+        class:blank-document={blankDocumentEditable}
+        on:pointerdown={(event) => handleBlankDocumentPointerDown(event, 'source')}
+      >
         <MarkdownSourceEditor
           bind:sourceEditor
           {markdown}
@@ -954,7 +981,12 @@
       on:pointerdown={() => mode === 'split' && setSplitActivePane('semantic')}
       on:focusin={() => mode === 'split' && setSplitActivePane('semantic')}
     >
-      <div class="document-layout">
+      <!-- svelte-ignore a11y_no_static_element_interactions (Keyboard focus stays on the editor; the paper only forwards pointer focus.) -->
+      <div
+        class="document-layout"
+        class:blank-document={blankDocumentEditable}
+        on:pointerdown={(event) => handleBlankDocumentPointerDown(event, 'semantic')}
+      >
         {#if frontMatter}
           <FrontMatterCard
             {frontMatter}

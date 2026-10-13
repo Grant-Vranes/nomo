@@ -402,6 +402,7 @@
     sourcePane: HTMLElement;
   let segmentedWorkspace: SegmentedTextEditorWorkspaceComponent | null = null;
   let mountedEditorHost: HTMLDivElement | null = null;
+  let pendingNewDocumentFocusId = '';
   let pendingSourceScrollTop: number | null = null;
   let splitSemanticRefreshTimer: number | null = null;
   let splitSemanticRefreshGeneration = 0;
@@ -1742,6 +1743,7 @@
 
   // 加载指定 Tab 的状态并更新编辑器
   function loadTabState(tab: Tab) {
+    if (pendingNewDocumentFocusId !== tab.id) pendingNewDocumentFocusId = '';
     reconcileWorkspaceItems(tabs, tab.id);
     clearSplitSemanticRefreshTimer();
     splitSemanticRefreshGeneration += 1;
@@ -3887,6 +3889,20 @@
     runtime.transferSelection = undefined;
     requestAnimationFrame(() => {
       if (runtime.disposed || runtime.host !== binding.host || !binding.host.isConnected || activeTabId !== binding.documentId) return;
+      // 新建只在对应文档挂载后聚焦一次；已经开始输入或主动进入正文时保留现有光标。
+      if (pendingNewDocumentFocusId === binding.documentId) {
+        pendingNewDocumentFocusId = '';
+        if (!readonlyDocumentMode && runtime.editor.getMarkdown() === '' && binding.sourceEditor.getMarkdown() === '' &&
+          !binding.host.contains(document.activeElement) && !binding.sourceEditor.getContentElement().contains(document.activeElement)) {
+          if (getActiveEditorMode() === 'source') {
+            binding.sourceEditor.setSelection(0);
+            binding.sourceEditor.focus({ preventScroll: true });
+          } else {
+            runtime.editor.restoreSelectionSnapshot({ anchor: 1, head: 1 });
+            runtime.editor.focus();
+          }
+        }
+      }
       if (!restoreScroll) return;
       const anchor = runtime.readingAnchor;
       if (runtime.mode !== 'source') {
@@ -5341,6 +5357,7 @@
         segmentedDocumentPort,
       );
       createMarkdownFile();
+      pendingNewDocumentFocusId = activeTabId;
     } catch (error) {
       statusMessage = error instanceof Error ? error.message : t.saveFileFailed();
     }
