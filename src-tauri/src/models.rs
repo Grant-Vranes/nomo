@@ -191,6 +191,7 @@ pub(crate) struct ExportResult {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ReadFileInput {
     pub(crate) path: String,
+    pub(crate) max_bytes: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]

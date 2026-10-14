@@ -40,10 +40,16 @@ function createHandlers(): AppCommandHandlers & { commands: EditorCommand[] } {
     getDefaultDiagramType: vi.fn(() => 'flowchart'),
     exportHtml: vi.fn(),
     exportPdf: vi.fn(),
+    exportWord: vi.fn(),
   };
 }
 
 describe('appCommands', () => {
+  it('通过桌面菜单触发 Word 导出', () => {
+    const handlers = createHandlers();
+    executeDesktopCommand('export-word', handlers);
+    expect(handlers.exportWord).toHaveBeenCalledOnce();
+  });
   it('通过桌面菜单命令新建窗口', () => {
     const handlers = createHandlers();
 

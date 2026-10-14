@@ -224,6 +224,8 @@
   export let startResize: (event: MouseEvent) => void;
   export let exportHtml: () => void;
   export let exportPdf: () => void;
+  export let exportWord: () => void;
+  export let wordExportBusy = false;
   export let softwareUpdateState: SoftwareUpdateSnapshot;
   export let openSoftwareUpdate: () => void;
   export let switchTab: (tabId: string) => void;
@@ -393,6 +395,8 @@
       {openSettings}
       {exportHtml}
       {exportPdf}
+      {exportWord}
+      {wordExportBusy}
       {softwareUpdateState}
       {openSoftwareUpdate}
       {openContextMenu}

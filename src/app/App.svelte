@@ -3110,6 +3110,7 @@
     },
     exportHtml: () => handleExport('html'),
     exportPdf: () => handleExport('pdf'),
+    exportWord: () => handleExport('docx'),
   };
 
   async function updateWindowTitle() {
@@ -6749,6 +6750,7 @@
   });
 
   onDestroy(() => {
+    wordExportAbort?.abort();
     markdownMiniTransitionController?.dispose();
     installedReleaseNotesCheckReady = false;
     if (desktopEnabled) {
@@ -7248,7 +7250,42 @@
     showToast(t.featureComingSoon({ featureName }));
   }
 
-  async function handleExport(format: 'html' | 'pdf') {
+  let wordExportBusy = false;
+  let wordExportAbort: AbortController | undefined;
+
+  async function handleWordExport() {
+    if (wordExportBusy) return;
+    const tab = tabs.find((candidate) => candidate.id === activeTabId);
+    if (!isMarkdownTab(tab)) return;
+    const runtime = getDocumentRuntime(tab);
+    const abort = new AbortController();
+    wordExportBusy = true;
+    wordExportAbort = abort;
+    try {
+      const { captureWordSnapshot } = await import('./services/word/snapshot');
+      const snapshot = await captureWordSnapshot(tab, runtime, {
+        signal: abort.signal, isAvailable: () => tabs.some((candidate) => candidate.id === tab.id), flush: flushDocumentRuntime,
+      });
+      if (!snapshot) return;
+      if (!snapshot.documentPath && !snapshot.markdown.trim()) { showToast(t.noOpenDocumentForExport(), 2000); return; }
+      const { exportWord } = await import('./services/wordExportService');
+      const result = await exportWord(snapshot, { signal: abort.signal, onGenerating: () => showToast(t.wordExportGenerating(), 120_000) });
+      if (abort.signal.aborted) return;
+      if (result.cancelled) return;
+      if (!result.success) { showToast(result.error ?? t.exportFailed(), 5000); return; }
+      const message = t.exportWordSuccess({ path: result.filePath! });
+      const count = result.warnings?.length ?? 0;
+      const detail = result.warnings?.slice(0, 3).join('；') ?? '';
+      showToast(count ? `${message}；${t.wordExportWarnings({ count })} ${detail}` : message, count ? 10000 : 2500);
+    } catch (error) {
+      if (!abort.signal.aborted) showToast(`${t.exportFailed()}: ${error instanceof Error ? error.message : String(error)}`, 5000);
+    } finally {
+      if (wordExportAbort === abort) { wordExportAbort = undefined; wordExportBusy = false; }
+    }
+  }
+
+  async function handleExport(format: 'html' | 'pdf' | 'docx') {
+    if (format === 'docx') { await handleWordExport(); return; }
     if (isSegmentedTextTab(tabs.find((tab) => tab.id === activeTabId))) {
       // TXT/JSON 不进入 Markdown HTML/PDF 导出链路。
       return;
@@ -8026,6 +8063,8 @@
   onZoomChange={handleZoomChange}
   exportHtml={() => handleExport('html')}
   exportPdf={() => handleExport('pdf')}
+  exportWord={() => handleExport('docx')}
+  {wordExportBusy}
   on:createNode={handleCreateNode}
   on:renameNode={handleRenameNode}
   on:refreshFolder={handleRefreshFolder}

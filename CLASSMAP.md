@@ -45,7 +45,7 @@
 | ProseMirror 核心实现 | `src/lib/editor-core/ProseMirrorEditorCore.ts` | `src/lib/editor-core/clipboardMarkdown.ts`, `markdown.ts`, `schema.ts`, plugins, nodeViews | EditorView 生命周期、事务、模式切换、命令执行、选区 Markdown 通知、剪贴板负载与右键目标事务 |
 | 剪贴板 Markdown 判定 | `src/lib/editor-core/clipboardMarkdown.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts`, `markdown.ts` | 修改纯文本/Markdown 等价判定、粘贴 Slice 或纯文本事务标记 |
 | Schema 定义 | `src/lib/editor-core/schema.ts` | `src/lib/editor-core/callout/calloutSchema.ts` | 新增/修改节点或 mark 类型 |
-| Markdown 解析与序列化 | `src/lib/editor-core/markdown.ts` | `markdownTokenizer.ts`, `markdownSerialization.ts`, `src/lib/editor-core/callout/`, `html/` | Markdown 与 ProseMirror doc 互转规则变更；纯 tokenizer 与序列化可供 Worker 复用 |
+| Markdown 解析与序列化 | `src/lib/editor-core/markdown.ts` | `markdownTokenizer.ts`, `markdownSerialization.ts`, `src/lib/editor-core/callout/`, `html/` | Markdown 与 ProseMirror doc 互转规则变更；Word 可选解析临时放行图片来源，默认编辑与链接校验保持不变；纯 tokenizer 与序列化可供 Worker 复用 |
 | Markdown 源码行到语义块导航 | `src/lib/editor-core/markdown.ts`, `src/lib/editor-core/ProseMirrorEditorCore.ts` | `src/app/App.svelte` | 诊断、大纲等功能需要从源码行定位到最近的语义顶层块 |
 | 双栏内容滚动跟随 | `src/app/services/markdownScrollSync.ts`, `src/app/services/markdownScrollSyncWorkspace.ts` | `src/app/components/EditorWorkspace.svelte`, `src/app/components/MarkdownSourceEditor.svelte`, `src/lib/editor-core/ProseMirrorEditorCore.ts`, `src/lib/editor-core/scrollSyncMapping.ts` | 修改30%参考线插值、滚动主栏接管、光标安全区、内容修订门控或几何失效处理 |
 | 双栏旧等高兼容接口 | `src/app/services/markdownBlockAlignment.ts` | `src/lib/editor-core/plugins/blockAlignment.ts`, `src/lib/editor-core/blockAlignment.test.ts` | 维护旧补偿接口与测试；当前双栏运行路径不调用这些接口 |
@@ -218,6 +218,8 @@
 | Responsibility | Primary code | Related code | Change when |
 |---|---|---|---|
 | HTML/PDF 导出 | `src/app/services/exportService.ts` | `src/lib/desktop/tauriStorage.ts`, `src/app/styles/export-document.css` | 导出格式、图片内嵌策略、HTML 模板变更 |
+| Word 导出 | `src/app/services/wordExportService.ts` | `src/app/services/word/`, `src/app/App.svelte`, `src/lib/desktop/tauriStorage.ts`, `src-tauri/src/export.rs` | Markdown 快照、DOCX 内容、资源预算、Worker 打包与二进制原子保存 |
+| 导出图片路径解析 | `src/app/services/exportImagePath.ts` | `exportService.ts`, `word/resources.ts` | HTML/PDF/Word 共用本地图片绝对路径与相对路径解析 |
 
 ### 本地化
 
@@ -1268,6 +1270,22 @@
 - 修改后端文件写入逻辑
 
 **Related tests:** `src/app/services/exportService.test.ts`
+
+**Confidence:** high
+
+---
+
+### `src/app/services/wordExportService.ts` / `src/app/services/word/`
+
+**Kind:** export service / task-scoped worker
+
+**Owns:** Word 保存对话框、导出结果与警告；`snapshot.ts` 固定文档并等待输入提交，`model.ts` 复用 Markdown 解析及行内投影，`resources.ts` 处理图片与公式/图表 PNG，`document.ts` 生成 OOXML，`wordExport.worker.ts` 在独立 Worker 中打包。任务内媒体最多 128 MiB，Canvas 最多 1600 万像素，结束清理 Worker 与临时 DOM。
+
+**Does not own:** 编辑器视图、撤销历史、HTML/PDF 样式或原生文件写入。
+
+**Called by:** `src/app/App.svelte` 的 `docx` 导出分支；菜单命令为 `export-word`。
+
+**Related tests:** `word/document.test.ts`, `word/resources.test.ts`, `word/snapshot.test.ts`, `wordExportService.test.ts`；原生写入覆盖 `export.rs` 的 `word_export_tests`。
 
 **Confidence:** high
 

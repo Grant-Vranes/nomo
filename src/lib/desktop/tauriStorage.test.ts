@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteWorkspaceDraft,
+  exportWordFile,
+  readFileAsBase64,
   installSampleDocument,
   openMarkdownWithDialog,
   parseNativeError,
@@ -26,6 +28,20 @@ beforeEach(() => {
 });
 
 describe('document dialogs', () => {
+  it('Word 使用原始二进制和编码后的中文路径，不扩展为 JSON 数组', async () => {
+    const bytes = new Uint8Array([80, 75, 3, 4]);
+    const path = 'D:\\中文 空格\\100%.docx';
+    invokeMock.mockResolvedValue({ file_path: path, bytes_written: bytes.length });
+    await exportWordFile(path, bytes);
+    expect(invokeMock).toHaveBeenCalledWith('export_docx', bytes, { headers: { 'x-nomo-export-path': encodeURIComponent(path) } });
+  });
+
+  it('只有 Word 资源读取指定字节预算，旧导出调用保持契约', async () => {
+    await readFileAsBase64('a.png', 100);
+    expect(invokeMock).toHaveBeenLastCalledWith('read_file_as_base64', { input: { path: 'a.png', max_bytes: 100 } });
+    await readFileAsBase64('a.png');
+    expect(invokeMock).toHaveBeenLastCalledWith('read_file_as_base64', { input: { path: 'a.png' } });
+  });
   it('keeps the legacy Markdown reader isolated from segmented document extensions', async () => {
     openDialogMock.mockResolvedValue(null);
 

@@ -769,7 +769,14 @@ export function collectMarkdownImageSrcs(markdown: string): Set<string> | null {
 }
 
 /** 返回实际解析结果；失败明确返回 null，不能用字面回退结果执行删除。 */
-export function tryParseMarkdown(markdown: string): ProseMirrorNode | null {
+export function tryParseMarkdown(markdown: string, options: { exportImageSources?: boolean } = {}): ProseMirrorNode | null {
+  const validateLink = markdownIt.validateLink;
+  if (options.exportImageSources) {
+    // Word 需要读取临时/内嵌图片。只在本次同步解析期间接受这些图片来源；
+    // 超链接仍由 createLinkAttrs 独立过滤，默认编辑解析及序列化策略不变。
+    markdownIt.validateLink = (href) => validateLink(href) ||
+      /^(?:data:image\/(?:png|jpe?g|gif|webp|svg\+xml);|blob:|asset:|file:)/i.test(href);
+  }
   resetHtmlInlineStack();
   try {
     const { frontMatterPrefix, body } = splitMarkdownDocument(markdown);
@@ -778,6 +785,7 @@ export function tryParseMarkdown(markdown: string): ProseMirrorNode | null {
   } catch {
     return null;
   } finally {
+    markdownIt.validateLink = validateLink;
     resetHtmlInlineStack();
   }
 }

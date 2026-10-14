@@ -202,6 +202,12 @@ fn build_file_menu<R: Runtime>(app: &AppHandle<R>) -> Result<tauri::menu::Submen
             tr(locale, "menu_export_pdf"),
             None,
         )?)
+        .item(&menu_item(
+            app,
+            "export-word",
+            tr(locale, "menu_export_word"),
+            None,
+        )?)
         .build()
         .map_err(|e| e.to_string())?;
 

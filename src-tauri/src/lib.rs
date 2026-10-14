@@ -306,6 +306,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             crate::file_clipboard::copy_file_to_clipboard,
             crate::export::export_html,
+            crate::export::export_docx,
             crate::export::export_pdf_from_html,
             crate::export::read_file_as_base64,
             crate::file_system::read_markdown_file,

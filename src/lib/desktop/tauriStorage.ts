@@ -507,10 +507,17 @@ export async function exportPdfFromHtml(input: ExportPdfInput): Promise<ExportRe
   return invoke<ExportResultPayload>('export_pdf_from_html', { input });
 }
 
-export async function readFileAsBase64(path: string): Promise<Base64FileResultPayload> {
+export async function exportWordFile(filePath: string, bytes: Uint8Array): Promise<ExportResultPayload> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<ExportResultPayload>('export_docx', bytes, {
+    headers: { 'x-nomo-export-path': encodeURIComponent(filePath) },
+  });
+}
+
+export async function readFileAsBase64(path: string, maxBytes?: number): Promise<Base64FileResultPayload> {
   logInfo('tauriStorage', '读取文件为 base64', { path });
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<Base64FileResultPayload>('read_file_as_base64', { input: { path } });
+  return invoke<Base64FileResultPayload>('read_file_as_base64', { input: { path, ...(maxBytes === undefined ? {} : { max_bytes: maxBytes }) } });
 }
 
 export async function readCurrentWindowState(): Promise<WindowState> {

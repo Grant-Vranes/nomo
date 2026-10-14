@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -15,6 +16,116 @@ const PDF_EXPORT_TIMEOUT: Duration = Duration::from_secs(30);
 const PDF_EXPORT_WINDOW_PREFIX: &str = "pdf-export-";
 static PDF_EXPORT_LOCK: Mutex<()> = Mutex::const_new(());
 static PDF_EXPORT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+/// Word 包来自按需 Worker；二进制正文避免 JSON 数组及 Base64 放大。
+#[tauri::command]
+pub(crate) async fn export_docx(request: tauri::ipc::Request<'_>) -> Result<ExportResult, String> {
+    let encoded = request.headers().get("x-nomo-export-path")
+        .and_then(|value| value.to_str().ok()).ok_or("缺少 Word 导出路径")?;
+    let path = decode_word_export_path(encoded)?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Word 导出需要二进制数据".into());
+    };
+    // 阻塞 IO 不占用主线程；复制只跨越这一次异步任务边界。
+    let bytes = bytes.clone();
+    tauri::async_runtime::spawn_blocking(move || save_word_document(&path, &bytes))
+        .await.map_err(|error| format!("Word 保存任务失败：{error}"))?
+}
+
+fn decode_word_export_path(encoded: &str) -> Result<String, String> {
+    let mut bytes = Vec::with_capacity(encoded.len());
+    let mut source = encoded.as_bytes().iter().copied();
+    while let Some(byte) = source.next() {
+        if byte == b'%' {
+            let high = source.next().and_then(|value| (value as char).to_digit(16));
+            let low = source.next().and_then(|value| (value as char).to_digit(16));
+            match (high, low) {
+                (Some(high), Some(low)) => bytes.push((high * 16 + low) as u8),
+                _ => return Err("Word 导出路径编码无效".into()),
+            }
+        } else { bytes.push(byte); }
+    }
+    let path = String::from_utf8(bytes).map_err(|_| "Word 导出路径不是 UTF-8")?;
+    if path.is_empty() || path.chars().any(char::is_control) {
+        return Err("Word 导出路径无效".into());
+    }
+    Ok(path)
+}
+
+fn save_word_document(file_path: &str, bytes: &[u8]) -> Result<ExportResult, String> {
+    let path = Path::new(file_path);
+    if !path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("docx")) {
+        return Err("Word 导出文件必须使用 .docx 扩展名".into());
+    }
+    if bytes.len() < 22 || !bytes.starts_with(b"PK\x03\x04") {
+        return Err("Word 导出数据无效".into());
+    }
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|error| format!("创建导出目录失败：{error}"))?;
+    }
+    crate::file_system::write_file_atomically(path, bytes)?;
+    Ok(ExportResult { file_path: file_path.into(), bytes_written: bytes.len(), warnings: Vec::new() })
+}
+
+#[cfg(test)]
+mod word_export_tests {
+    use super::*;
+
+    struct WordTestDirectory(PathBuf);
+    impl WordTestDirectory {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("nomo-word-export-{}-{}", std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for WordTestDirectory {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    }
+    fn zip_bytes() -> Vec<u8> {
+        let mut bytes = b"PK\x03\x04".to_vec();
+        bytes.extend_from_slice(&[0; 30]);
+        bytes
+    }
+
+    #[test]
+    fn word_path_decodes_utf8_once_and_rejects_invalid_encoding() {
+        assert_eq!(decode_word_export_path("D%3A%2F%E4%B8%AD%E6%96%87%20%2520.docx").unwrap(), "D:/中文 %20.docx");
+        for path in ["%", "%GG", "%ff", "%00", ""] {
+            assert!(decode_word_export_path(path).is_err());
+        }
+    }
+
+    #[test]
+    fn word_atomic_save_replaces_file_and_rejects_invalid_package() {
+        let directory = WordTestDirectory::new();
+        let path = directory.0.join("中文 文件.docx");
+        std::fs::write(&path, b"original").unwrap();
+        assert!(save_word_document(path.to_str().unwrap(), b"bad").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        let bytes = zip_bytes();
+        let result = save_word_document(path.to_str().unwrap(), &bytes).unwrap();
+        assert_eq!(result.bytes_written, bytes.len());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 1);
+        assert!(save_word_document(directory.0.join("bad.md").to_str().unwrap(), &bytes).is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn word_locked_target_preserves_original_and_cleans_temp_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = WordTestDirectory::new();
+        let path = directory.0.join("locked.docx");
+        std::fs::write(&path, b"original").unwrap();
+        let lock = std::fs::OpenOptions::new().read(true).share_mode(0).open(&path).unwrap();
+        assert!(save_word_document(path.to_str().unwrap(), &zip_bytes()).is_err());
+        drop(lock);
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+}
 
 #[tauri::command]
 pub(crate) async fn export_html(input: ExportHtmlInput) -> Result<ExportResult, String> {
@@ -52,7 +163,19 @@ pub(crate) async fn read_file_as_base64(input: ReadFileInput) -> Result<Base64Fi
         return Err(format!("路径不是文件：{}", input.path));
     }
 
-    let bytes = std::fs::read(path).map_err(|error| format!("读取文件失败：{error}"))?;
+    let bytes = if let Some(limit) = input.max_bytes {
+        let file = std::fs::File::open(path).map_err(|error| format!("读取文件失败：{error}"))?;
+        if file.metadata().map_err(|error| error.to_string())?.len() > limit as u64 {
+            return Err("[WORD_MEDIA_BUDGET] 图片超过导出预算".into());
+        }
+        let mut bytes = Vec::new();
+        file.take((limit as u64).saturating_add(1)).read_to_end(&mut bytes)
+            .map_err(|error| format!("读取文件失败：{error}"))?;
+        if bytes.len() > limit { return Err("[WORD_MEDIA_BUDGET] 图片超过导出预算".into()); }
+        bytes
+    } else {
+        std::fs::read(path).map_err(|error| format!("读取文件失败：{error}"))?
+    };
     let mime_type = mime_type_from_path(path);
     let base64 = encode_base64(&bytes);
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanEditorArtifacts, createExportHtmlDocument, inlineLocalImages } from './exportService';
+import { cleanEditorArtifacts, createExportHtmlDocument, inlineLocalImages, resolveImagePath } from './exportService';
 
 // 模拟 tauriStorage 的 readFileAsBase64，避免在单元测试中调用 Tauri。
 vi.mock('../../lib/desktop/tauriStorage', () => ({
@@ -16,6 +16,12 @@ afterEach(() => {
 });
 
 describe('exportService', () => {
+  it('未保存文档也能读取 Windows、UNC 和 Unix 绝对图片路径', async () => {
+    for (const path of ['D:/图片/a.png', 'D:\\图片\\a.png', '\\\\server\\share\\a.png', '/Users/nomo/a.png']) {
+      expect(await resolveImagePath(path, null)).toEqual({ absolutePath: path });
+    }
+    expect((await resolveImagePath('./a.png', null)).warning).toBeTruthy();
+  });
   it('removes KP decorations while retaining source breaks and inline formulas', () => {
     const clean = cleanEditorArtifacts('<p data-kp-layout="ready" data-kp-original-style="" style="white-space:pre"><span class="kp-unit" style="margin-right:3px">hello</span><span data-kp-owned="break"><br></span><span class="kp-unit" data-nomo-break="soft" data-kp-unit-original-style="" contenteditable="false"> </span><span class="kp-unit">world</span><span class="math-inline kp-unit" data-kp-unit-original-style="" contenteditable="false"><span class="katex">x</span></span></p>');
     const doc = new DOMParser().parseFromString(clean, 'text/html');

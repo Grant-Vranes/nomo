@@ -76,6 +76,8 @@
   export let openSettings: () => void;
   export let exportHtml: () => void;
   export let exportPdf: () => void;
+  export let exportWord: () => void;
+  export let wordExportBusy = false;
   export let softwareUpdateState: SoftwareUpdateSnapshot;
   export let openSoftwareUpdate: () => void;
   export let openContextMenu: (request: ContextMenuRequest) => void = () => undefined;
@@ -574,8 +576,22 @@
                   >{t.saveAs()} <span class="shortcut">Ctrl + Shift + S</span></button
                 >
                 <div class="divider"></div>
-                <button on:click={() => finish(exportHtml, 'file')}>{t.exportHtml()}</button>
-                <button on:click={() => finish(exportPdf, 'file')}>{t.exportPdf()}</button>
+                <div class="nested-trigger">
+                  <span>{t.export()}</span>
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"
+                    ><path
+                      d="M3 1l4 4-4 4"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    /></svg
+                  >
+                  <div class="dropdown-menu nested" use:keepDropdownInViewport>
+                    <button on:click={() => finish(exportHtml, 'file')}>{t.exportHtml()}</button>
+                    <button on:click={() => finish(exportPdf, 'file')}>{t.exportPdf()}</button>
+                    <button disabled={wordExportBusy} on:click={() => finish(exportWord, 'file')}>{t.exportWord()}</button>
+                  </div>
+                </div>
                 <div class="divider"></div>
                 <button on:click={() => finish(closeCurrentFile, 'file')}
                   >{t.closeCurrentFile()} <span class="shortcut">Ctrl + W</span></button
