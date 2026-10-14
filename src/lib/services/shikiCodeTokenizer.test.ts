@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { createShikiCodeTokenizer } from './shikiCodeTokenizer';
 
 describe('createShikiCodeTokenizer', () => {
+  it('does not retain a result exceeding the estimated byte budget', async () => {
+    const tokenizer = createShikiCodeTokenizer({ cacheBytes: 200 });
+    const small = { code: 'x', language: 'text', theme: 'github-light' };
+    const first = await tokenizer.tokenize(small);
+    const large = { ...small, code: 'large '.repeat(200) };
+    const before = await tokenizer.tokenize(large);
+    const after = await tokenizer.tokenize(large);
+    expect(after.tokens).not.toBe(before.tokens);
+    expect((await tokenizer.tokenize(small)).tokens).toBe(first.tokens);
+  });
+
   it('tokenizes known languages and falls back for unknown languages', async () => {
     const tokenizer = createShikiCodeTokenizer();
 

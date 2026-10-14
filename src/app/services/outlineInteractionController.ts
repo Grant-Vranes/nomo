@@ -35,7 +35,7 @@ interface OutlineInteractionOptions {
   setSuppressOutlineScrollUntil(value: number): void;
   getSemanticPane(): HTMLElement;
   getSourcePane(): HTMLElement;
-  getSourceEditor(): MarkdownSourceEditorHandle;
+  getSourceEditor(): MarkdownSourceEditorHandle | undefined;
   getEditor(): EditorCore;
   getReadonly(): boolean;
   setStatusMessage(value: string): void;
@@ -99,6 +99,7 @@ export function createOutlineInteractionController(options: OutlineInteractionOp
       }
 
       const sourceEditor = options.getSourceEditor();
+      if (!sourceEditor) return;
       const sourcePane = options.getSourcePane();
       const selection = getSourceHeadingSelection(options.getMarkdown(), item);
       const restoreScrollTop = sourcePane?.scrollTop ?? 0;
@@ -128,7 +129,9 @@ export function createOutlineInteractionController(options: OutlineInteractionOp
     }
 
     if (options.getMode() === 'source') {
-      options.getSourceEditor().setMarkdown(result.markdown, { addToHistory: true });
+      const sourceEditor = options.getSourceEditor();
+      if (!sourceEditor) return false;
+      sourceEditor.setMarkdown(result.markdown, { addToHistory: true });
       const generation = ++outlineMoveGeneration;
       options.setStatusMessage(
         t.outlineSectionMoved({ title: previousOutline[request.sourceIndex].title }),

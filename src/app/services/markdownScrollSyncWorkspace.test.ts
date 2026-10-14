@@ -1,4 +1,5 @@
 import { EditorView } from '@codemirror/view';
+import { gsap } from 'gsap';
 import { cleanup, render } from '@testing-library/svelte/pure';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEditorCore } from '../../lib/editor-core/createEditorCore';
@@ -131,6 +132,9 @@ describe('workspace scroll synchronization content gate', () => {
 });
 
 function fixture(markdown: string) {
+  // 同步队列断言不包含 GSAP 导入时启动的全局 ticker；本场景没有动画。
+  gsap.ticker.sleep();
+  vi.spyOn(gsap.ticker, 'wake').mockImplementation(() => undefined);
   const frames = new Map<number, FrameRequestCallback>();
   let frameId = 0;
   vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {

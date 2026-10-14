@@ -43,13 +43,14 @@
   let mountedHost: HTMLDivElement | undefined;
   let imageContextMenuHost: HTMLDivElement | undefined;
   let host: HTMLDivElement;
-  let sourceEditor: MarkdownSourceEditorHandle;
+  let sourceEditor: MarkdownSourceEditorHandle | undefined;
   let sourcePane: HTMLElement;
   let semanticPane: HTMLElement;
   let activeOutlineId = runtime.activeOutlineId ?? '';
   let collapsedOutlineIds = runtime.collapsedOutlineIds ?? new Set<string>();
   let destroyed = false;
   let restoreGeneration = 0;
+  let pendingLayoutRestore: { anchor: OutlineScrollAnchor | null; anchorMode: EditorMode } | null = null;
   let appliedMode: EditorMode | undefined;
   let appliedReadonly: boolean | undefined;
   let readyHost: HTMLDivElement | undefined;
@@ -72,7 +73,7 @@
     getEditor: () => runtime.editor,
     getReadonly: () => tab.readonlyDocumentMode,
     setStatusMessage: (value) => setStatusMessage(value),
-    isActive: () => !destroyed && !runtime.disposed && runtime.outlineInteraction === outlineController && Boolean(host && sourceEditor),
+    isActive: () => !destroyed && !runtime.disposed && runtime.outlineInteraction === outlineController && Boolean(host && (mode === 'semantic' || sourceEditor)),
   });
   runtime.outlineInteraction = outlineController;
 
@@ -80,7 +81,7 @@
   $: readonlyMode = tab.readonlyDocumentMode;
   $: visibleOutlineIds = new Set(runtime.outline.map((item) => item.id));
   $: updateCoreOptions(mode, readonlyMode);
-  $: synchronizeBindings(host, sourceEditor, sourcePane, semanticPane, focused);
+  $: synchronizeBindings(host, sourceEditor, sourcePane, semanticPane, focused, mode);
   $: if (frontMatterEditRequest !== lastEditRequest) {
     lastEditRequest = frontMatterEditRequest;
     if (focused) frontMatterEditing = true;
@@ -114,12 +115,13 @@
     appliedReadonly = readonly;
     runtime.mode = nextMode;
     runtime.editor.updateOptions({ mode: nextMode, readonly });
-    if (mountedHost && previousMode && previousMode !== nextMode) void restoreLayout(++restoreGeneration, anchor, previousMode);
+    if (mountedHost && previousMode && previousMode !== nextMode) scheduleLayoutRestore(anchor, previousMode);
   }
 
-  function synchronizeBindings(nextHost: HTMLDivElement, nextSource: MarkdownSourceEditorHandle,
-    nextSourcePane: HTMLElement, nextSemanticPane: HTMLElement, isFocused: boolean) {
+  function synchronizeBindings(nextHost: HTMLDivElement, nextSource: MarkdownSourceEditorHandle | undefined,
+    nextSourcePane: HTMLElement, nextSemanticPane: HTMLElement, isFocused: boolean, visibleMode: EditorMode) {
     if (destroyed || runtime.disposed) return;
+    const sourceMounted = nextSource && runtime.sourceEditor !== nextSource;
     if (runtime.sourceEditor !== nextSource) runtime.sourceEditor = nextSource;
     if (runtime.sourcePane !== nextSourcePane) runtime.sourcePane = nextSourcePane;
     if (runtime.semanticPane !== nextSemanticPane) runtime.semanticPane = nextSemanticPane;
@@ -130,9 +132,13 @@
       runtime.editor.mount(nextHost);
       const selection = runtime.transferSelection?.semantic;
       if (selection) runtime.editor.restoreSelectionSnapshot(selection);
-      void restoreLayout(++restoreGeneration, runtime.readingAnchor ?? null, runtime.readingAnchorMode ?? mode);
+      scheduleLayoutRestore(runtime.readingAnchor ?? null, runtime.readingAnchorMode ?? mode);
+    } else if (sourceMounted && visibleMode === 'source') {
+      // 首次源码挂载延续模式切换捕获的位置，不能被空的持久阅读锚点覆盖。
+      if (pendingLayoutRestore) void restoreLayout(++restoreGeneration);
+      else scheduleLayoutRestore(runtime.readingAnchor ?? null, runtime.readingAnchorMode ?? mode);
     }
-    if (nextHost && nextSource && nextSemanticPane &&
+    if (nextHost && (visibleMode === 'semantic' || nextSource) && nextSemanticPane &&
       (readyHost !== nextHost || readySourceEditor !== nextSource || readyFocused !== isFocused)) {
       readyHost = nextHost;
       readySourceEditor = nextSource;
@@ -156,9 +162,17 @@
     openContextMenu(detail);
   }
 
-  async function restoreLayout(generation: number, anchor: OutlineScrollAnchor | null, anchorMode: EditorMode) {
+  function scheduleLayoutRestore(anchor: OutlineScrollAnchor | null, anchorMode: EditorMode) {
+    pendingLayoutRestore = { anchor, anchorMode };
+    void restoreLayout(++restoreGeneration);
+  }
+
+  async function restoreLayout(generation: number) {
     await tick();
     if (destroyed || runtime.disposed || runtime.host !== host || generation !== restoreGeneration) return;
+    if (mode === 'source' && !sourceEditor) return;
+    if (!pendingLayoutRestore) return;
+    const { anchor, anchorMode } = pendingLayoutRestore;
     const transfer = runtime.transferSelection;
     if (transfer?.source && sourceEditor) sourceEditor.setSelection(transfer.source.anchor, transfer.source.head);
     if (mode === 'source') await sourceEditor?.requestMeasure();
@@ -171,9 +185,10 @@
       if (anchor) restoreSourceReadingPosition(runtime.outline, sourcePane, sourceEditor, anchor, { anchorMode, behavior: 'instant' });
       else sourcePane.scrollTop = runtime.sourceScrollTop;
     }
-    runtime.transferSelection = undefined;
+    runtime.transferSelection = transfer?.source && !sourceEditor ? { source: transfer.source } : undefined;
     runtime.readingAnchor = null;
     runtime.readingAnchorMode = undefined;
+    pendingLayoutRestore = null;
     rememberScroll();
     onReady(runtime);
   }

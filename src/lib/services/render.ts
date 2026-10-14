@@ -113,6 +113,7 @@ export interface MathRenderer {
 
 export interface DiagramRenderOptions {
   theme: MermaidThemeDefinition;
+  signal?: AbortSignal;
 }
 
 export interface DiagramRenderResult {

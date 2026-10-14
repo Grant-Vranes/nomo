@@ -17,7 +17,7 @@
   } from '@codemirror/view';
   import { onDestroy, onMount } from 'svelte';
   import type { BlockAlignmentAnchor } from '../services/markdownBlockAlignment';
-  import { getSourceTextChanges, type MarkdownSourceEditorHandle, type MarkdownSourceRuntimeState, type MarkdownSourceSelectionSnapshot } from './markdownSourceEditor';
+  import { detachSourceEditorState, getSourceEditorTheme, getSourceTextChanges, type MarkdownSourceEditorHandle, type MarkdownSourceRuntimeState, type MarkdownSourceSelectionSnapshot } from './markdownSourceEditor';
 
   export let markdown: string;
   export let documentId = '';
@@ -33,7 +33,7 @@
   export let onScroll: () => void = () => undefined;
   export let onReady: (handle: MarkdownSourceEditorHandle) => void = () => undefined;
   export let onLayoutChange: () => void = () => undefined;
-  export let sourceEditor: MarkdownSourceEditorHandle;
+  export let sourceEditor: MarkdownSourceEditorHandle | undefined = undefined;
 
   interface SourceSpacerSpec {
     key: string;
@@ -144,26 +144,7 @@
               notifySelectionChange(update.state);
             }
           }),
-          EditorView.theme({
-            '&': { height: '100%', backgroundColor: 'transparent' },
-            '&.cm-focused': { outline: 'none' },
-            '.cm-scroller': {
-              overflow: 'auto',
-              fontFamily: 'var(--md-editor-font-mono)',
-              fontSize: '14px',
-              lineHeight: '1.75',
-            },
-            '.cm-content': {
-              minHeight: 'var(--md-editor-content-min-height, 0px)',
-              padding: '0',
-              caretColor: 'var(--md-editor-fg)',
-            },
-            '.cm-line': { padding: '0' },
-            '.cm-cursor': { borderLeftColor: 'var(--md-editor-fg)' },
-            '.cm-selectionBackground': {
-              backgroundColor: 'color-mix(in srgb, var(--md-editor-accent) 22%, transparent)',
-            },
-          }),
+          getSourceEditorTheme(),
     ];
   }
 
@@ -231,7 +212,7 @@
   }
 
   $: if (view) {
-    sourceEditor.setMarkdown(markdown, { addToHistory: false });
+    sourceEditor?.setMarkdown(markdown, { addToHistory: false });
   }
 
   $: if (view) {
@@ -501,7 +482,7 @@
     const editorView = getView();
     return {
       documentId: mountedDocumentId,
-      state: editorView.state,
+      state: detachSourceEditorState(editorView.state),
       scrollTop: editorView.scrollDOM.scrollTop,
       scrollLeft: editorView.scrollDOM.scrollLeft,
       contentRevision,

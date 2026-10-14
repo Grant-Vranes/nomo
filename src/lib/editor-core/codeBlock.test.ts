@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Node as ProseMirrorNode } from 'prosemirror-model';
 import { EditorState, TextSelection, type Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
@@ -58,6 +58,34 @@ function mountCodeBlock(code: string) {
     },
   };
 }
+
+it('defers offscreen highlighting but completes it for an export snapshot', async () => {
+  const disconnect = vi.fn();
+  let notify: IntersectionObserverCallback;
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(callback: IntersectionObserverCallback) { notify = callback; }
+    observe() {}
+    disconnect = disconnect;
+  });
+  const tokenize = vi.fn(async () => ({ tokens: [{ tokens: [{ content: 'const a = 1;', color: '#123456' }] }] }));
+  setCodeBlockTokenizer({ tokenize });
+  const block = mountCodeBlock('const a = 1;');
+  try {
+    await Promise.resolve();
+    expect(tokenize).not.toHaveBeenCalled();
+    expect(block.card.textContent).toContain('const a = 1;');
+    const exportReady = CodeBlockNodeView.flushHighlights(block.target);
+    // 导出强制补齐不应被稍后到达的屏幕外通知取消。
+    notify!([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver);
+    await exportReady;
+    expect(tokenize).toHaveBeenCalledTimes(1);
+    expect(block.card.querySelector('code')?.innerHTML).toContain('#123456');
+  } finally {
+    block.destroy();
+    vi.unstubAllGlobals();
+  }
+  expect(disconnect).toHaveBeenCalledTimes(1);
+});
 
 describe('code_block markdown 解析', () => {
   it('解析带语言的 fenced code block', () => {

@@ -12,8 +12,8 @@ export interface MarkdownWorkspaceRuntimeBinding {
   documentId: string;
   editorCore: EditorCore;
   host: HTMLDivElement;
-  sourceEditor: MarkdownSourceEditorHandle;
-  sourcePane: HTMLElement;
+  sourceEditor?: MarkdownSourceEditorHandle;
+  sourcePane?: HTMLElement;
   semanticPane: HTMLElement;
   mode: EditorViewMode;
   sourceRuntimeState?: MarkdownSourceRuntimeState;

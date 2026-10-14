@@ -160,6 +160,7 @@
 | 代码高亮 | `src/lib/services/shikiCodeTokenizer.ts` | `src/lib/editor-core/nodeViews/CodeBlockNodeView.ts` | Shiki 代码 token 化 |
 | 公式渲染 | `src/lib/services/katexMathRenderer.ts` | `src/lib/editor-core/nodeViews/MathBlockNodeView.ts`, `MathInlineNodeView.ts` | KaTeX 公式渲染 |
 | 图表渲染 | `src/lib/services/mermaidDiagramRenderer.ts` | `src/lib/editor-core/nodeViews/MermaidBlockNodeView.ts` | Mermaid 图表渲染 |
+| 增强渲染调度与可见性 | `src/lib/services/renderTaskQueue.ts`, `src/lib/editor-core/nodeViews/renderVisibility.ts` | 代码块与 Mermaid NodeView、图表渲染器 | 有界并发、排队取消、视口及后台暂停、结果提交阅读锚点；导出主动补齐 |
 | 图表查看与缩放 | `src/lib/services/mermaidDiagramView.ts` | `src/lib/editor-core/nodeViews/MermaidBlockNodeView.ts`, `src/quicklook/preview.ts`, `src/app/services/exportService.ts` | 可读适配、全图/原始尺寸、全屏交互、导出尺寸还原 |
 | 图片加载器 | `src/app/services/desktopImageLoader.ts` | `src/lib/editor-core/nodeViews/ImageNodeView.ts` | 本地/asset/远程图片解析 |
 
@@ -693,6 +694,7 @@
 
 **Owns:**
 - Markdown 源码的单一 CodeMirror 6 `EditorView`、输入同步、只读态和 IME 生命周期
+- 首次进入源码或双栏时由工作区挂载；缓存快照只保留文档、选区与历史，重挂载时绑定当前 UI，静态主题按需复用以避免 CSS 规则累积
 - 源码选区、聚焦、范围显示、undo/redo、行/offset 与滚动 DOM 的 handle
 - 统一逻辑行比较，重复更新不发事务；通过 `markdownSourceEditor.ts#getSourceTextChanges` 按行和字符细分多处差异，一次事务保留中间未改动文本的选区与视口锚点
 - 当前内容的测量就绪修订，等待 CodeMirror 视口锚点调整后通知双栏跟随
@@ -1598,7 +1600,7 @@
 **Kind:** service
 
 **Owns：**
-- 调用 Shiki 对代码进行 token 化并缓存
+- 调用 Shiki 对代码进行 token 化；结果缓存同时限制条数和估算字节，超预算单条结果不保留
 - 为代码块 NodeView 和装饰插件提供高亮数据
 
 **Does not own：**
@@ -1656,7 +1658,7 @@
 **Owns：**
 - 调用 Mermaid 渲染图表
 - 为 Mermaid NodeView 提供 SVG
-- 按当前主题传入 Mermaid `theme` 与 `themeVariables`
+- 按当前主题传入 Mermaid `theme` 与 `themeVariables`；初始化和渲染串行调度，允许取消过期的排队任务
 - 首次加载 Mermaid 时注册本地 `logos` 图标包，按需加载品牌图标供主编辑器与 Quick Look 离线复用
 
 **Does not own：**
@@ -2296,7 +2298,7 @@
 
 **Kind:** runtime contract
 
-**Owns:** 按文档 ID 保存 EditorCore、CodeMirror 状态、DOM 挂载引用、交互 / 图片处理器、大纲、光标和阅读位置的运行时契约。
+**Owns:** 按文档 ID 保存 EditorCore、脱离 UI 的 CodeMirror 状态、DOM 挂载引用、交互 / 图片处理器、大纲、光标和阅读位置的运行时契约；语义工作区可先就绪，源码句柄与滚动容器在首次使用后补齐。
 
 **Does not own:** 实际创建、挂起、销毁或归属变更（由 `App.svelte` 协调）；不写入持久化配置。
 

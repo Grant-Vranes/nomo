@@ -1,11 +1,14 @@
 import type { DiagramRenderer } from './render';
 import type { MermaidThemeDefinition } from '../theme/types';
+import { createRenderTaskQueue } from './renderTaskQueue';
 
 type MermaidApi = typeof import('mermaid').default;
 
 let mermaidPromise: Promise<MermaidApi> | null = null;
 let initializedThemeKey: string | null = null;
 let renderSequence = 0;
+// Mermaid 的主题配置是全局状态；初始化与渲染必须在同一串行任务内。
+const renderTask = createRenderTaskQueue(1);
 
 export function createMermaidDiagramRenderer(): DiagramRenderer {
   return {
@@ -13,9 +16,11 @@ export function createMermaidDiagramRenderer(): DiagramRenderer {
       renderSequence += 1;
       const id = `nomo-${hashText(code)}-${renderSequence}`;
       try {
-        const mermaid = await loadMermaid(options.theme);
-        const result = await mermaid.render(id, code);
-        return { svg: result.svg };
+        return await renderTask(async () => {
+          const mermaid = await loadMermaid(options.theme);
+          const result = await mermaid.render(id, code);
+          return { svg: result.svg };
+        }, options.signal);
       } catch (error) {
         return {
           svg: '',

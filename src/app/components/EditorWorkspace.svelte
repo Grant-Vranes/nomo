@@ -48,7 +48,7 @@
   export let activeOutlineId: string;
   export let collapsedOutlineIds: Set<string>;
   export let visibleOutlineIds: Set<string>;
-  export let sourceEditor: MarkdownSourceEditorHandle;
+  export let sourceEditor: MarkdownSourceEditorHandle | undefined = undefined;
   export let sourcePane: HTMLElement;
   export let semanticPane: HTMLElement;
   export let editorHost: HTMLDivElement;
@@ -113,6 +113,8 @@
   let hasExpandableOutline = false;
   let hasCollapsedExpandableOutline = false;
   let runtimeLifetimeEnded = false;
+  // 当前挂载首次使用源码后复用视图；纯写作标签不创建第二套编辑器。
+  let sourceInitialized = mode !== 'semantic';
   let registeredSourceHandle: MarkdownSourceEditorHandle | null = null;
   let registeredSourceContent: HTMLElement | null = null;
   let registeredSourceDocumentId = '';
@@ -122,6 +124,7 @@
   } | null = null;
 
   $: blankDocumentEditable = !readonlyDocumentMode && markdown === '';
+  $: if (mode !== 'semantic') sourceInitialized = true;
   $: publishRuntime(sourceDocumentId, editorCore, editorHost, sourceEditor, sourcePane, semanticPane, mode);
 
   function handleBlankDocumentPointerDown(event: PointerEvent, pane: SplitActivePane) {
@@ -130,15 +133,15 @@
     // 只接管纸面背景和空宿主；正文、控件及滚动条继续使用各自的原生定位。
     if (event.target !== event.currentTarget && !(pane === 'semantic' && event.target === editorHost)) return;
     if (pane === 'source') {
-      if (registeredSourceDocumentId !== sourceDocumentId || !registeredSourceContent?.isConnected || sourceEditor.getMarkdown() !== '') return;
+      if (!sourceEditor || registeredSourceDocumentId !== sourceDocumentId || !registeredSourceContent?.isConnected || sourceEditor.getMarkdown() !== '') return;
     } else {
       if (!editorHost?.querySelector('.ProseMirror[contenteditable="true"]') || editorCore.getMarkdown() !== '') return;
     }
     event.preventDefault();
     if (mode === 'split') setSplitActivePane(pane);
     if (pane === 'source') {
-      sourceEditor.setSelection(0);
-      sourceEditor.focus({ preventScroll: true });
+      sourceEditor?.setSelection(0);
+      sourceEditor?.focus({ preventScroll: true });
     } else {
       editorCore.restoreSelectionSnapshot({ anchor: 1, head: 1 });
       editorCore.focus();
@@ -146,21 +149,27 @@
   }
 
   function publishRuntime(documentId: string, core: EditorCore, host: HTMLDivElement,
-    source: MarkdownSourceEditorHandle, sourceScrollPane: HTMLElement, semanticScrollPane: HTMLElement,
+    source: MarkdownSourceEditorHandle | undefined, sourceScrollPane: HTMLElement, semanticScrollPane: HTMLElement,
     visibleMode: EditorViewMode) {
-    if (runtimeLifetimeEnded || !host?.isConnected || !semanticScrollPane?.isConnected ||
-      !sourceScrollPane?.isConnected || source !== registeredSourceHandle ||
-      registeredSourceDocumentId !== documentId || !registeredSourceContent?.isConnected) return;
+    if (runtimeLifetimeEnded || !host?.isConnected || !semanticScrollPane?.isConnected) return;
+    const sourceReady = source && source === registeredSourceHandle && sourceScrollPane?.isConnected &&
+      registeredSourceDocumentId === documentId && registeredSourceContent?.isConnected;
+    if ((visibleMode !== 'semantic' || source) && !sourceReady) return;
     const previous = ownedRuntime?.binding;
     if (previous?.documentId === documentId && previous.editorCore === core && previous.host === host &&
-      previous.sourceEditor === source && previous.sourcePane === sourceScrollPane && previous.semanticPane === semanticScrollPane) {
+      previous.semanticPane === semanticScrollPane) {
+      const sourceChanged = previous.sourceEditor !== source || previous.sourcePane !== sourceScrollPane;
+      previous.sourceEditor = source;
+      previous.sourcePane = sourceScrollPane;
       previous.mode = visibleMode;
+      // 源码迟到只补齐绑定，不销毁已就绪的语义工作区。
+      if (sourceChanged) onRuntimeReady(previous);
       return;
     }
     releaseRuntime();
     const binding = {
       documentId, editorCore: core, host, sourceEditor: source, sourcePane: sourceScrollPane,
-      semanticPane: semanticScrollPane, mode: visibleMode, sourceRuntimeState: source.getRuntimeState?.(),
+      semanticPane: semanticScrollPane, mode: visibleMode, sourceRuntimeState: source?.getRuntimeState?.(),
     };
     ownedRuntime = { binding, destroy: onRuntimeDestroy };
     onRuntimeReady(binding);
@@ -171,7 +180,7 @@
     if (!owner) return;
     ownedRuntime = null;
     if (captureSourceState && owner.binding.sourceEditor === registeredSourceHandle && registeredSourceContent?.isConnected) {
-      owner.binding.sourceRuntimeState = owner.binding.sourceEditor.getRuntimeState?.() ?? owner.binding.sourceRuntimeState;
+      owner.binding.sourceRuntimeState = owner.binding.sourceEditor?.getRuntimeState?.() ?? owner.binding.sourceRuntimeState;
     }
     owner.destroy(owner.binding);
   }
@@ -776,6 +785,10 @@
     runtimeLifetimeEnded = true;
     // 子组件销毁回调已通过 onRuntimeStateChange 提交最后状态，旧 handle 不再可用。
     releaseRuntime(false);
+    // Svelte 的绑定依赖可能比 DOM 挂载活得更久；注册表不能继续持有旧 CM DOM/闭包。
+    registeredSourceHandle = null;
+    registeredSourceContent = null;
+    registeredSourceDocumentId = '';
     outlineDragPreview?.remove();
     clearOutlineExpandTimer();
     if (outlineAutoScrollFrame) cancelAnimationFrame(outlineAutoScrollFrame);
@@ -909,6 +922,7 @@
         class:blank-document={blankDocumentEditable}
         on:pointerdown={(event) => handleBlankDocumentPointerDown(event, 'source')}
       >
+        {#if sourceInitialized}
         <MarkdownSourceEditor
           bind:sourceEditor
           {markdown}
@@ -930,6 +944,7 @@
             onSourceScroll?.();
           }}
         />
+        {/if}
       </div>
     </section>
 

@@ -15,6 +15,36 @@ afterEach(() => {
 });
 
 describe('MarkdownSourceEditor', () => {
+  it('caches history and selection without retaining view callbacks across remounts', () => {
+    let handle!: MarkdownSourceEditorHandle;
+    const oldChange = vi.fn();
+    const first = render(MarkdownSourceEditor, { props: {
+      markdown: 'first', documentId: 'retained', onMarkdownChange: oldChange,
+      onReady: (value) => { handle = value; },
+    } });
+    const view = EditorView.findFromDOM(first.container.querySelector('.cm-editor')!)!;
+    view.dispatch({ changes: { from: 5, insert: ' edit' }, selection: { anchor: 8 } });
+    const saved = handle.getRuntimeState!();
+    expect(saved.state.facet(EditorView.updateListener)).toEqual([]);
+    const countStyleRules = () => [...document.styleSheets].reduce((count, sheet) => count + sheet.cssRules.length, 0);
+    const mountedStyleRules = countStyleRules();
+    first.unmount();
+    oldChange.mockClear();
+    const newChange = vi.fn();
+    render(MarkdownSourceEditor, { props: {
+      markdown: 'first edit', documentId: 'retained', runtimeState: saved,
+      onMarkdownChange: newChange, onReady: (value) => { handle = value; },
+    } });
+    expect(countStyleRules()).toBe(mountedStyleRules);
+    expect(handle.getSelection().from).toBe(8);
+    expect(handle.undo()).toBe(true);
+    expect(handle.getMarkdown()).toBe('first');
+    expect(handle.redo()).toBe(true);
+    expect(handle.getMarkdown()).toBe('first edit');
+    expect(newChange).toHaveBeenCalled();
+    expect(oldChange).not.toHaveBeenCalled();
+  });
+
   it('reports only ranges and revisions without slicing text for snapshot subscribers', () => {
     let handle!: MarkdownSourceEditorHandle;
     const onSelectionSnapshotChange = vi.fn();

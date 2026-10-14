@@ -5,6 +5,7 @@ import { onInterfaceLocaleChanged, t } from '../../../app/i18n';
 import { getDiagramRenderer } from '../renderers';
 import type { MermaidThemeDefinition } from '../../theme/types';
 import { registerActiveEdit, unregisterActiveEdit } from './activeEditRegistry';
+import { observeRenderVisibility, preserveRenderScrollAnchor } from './renderVisibility';
 import {
   bindMermaidFullscreen,
   bindMermaidViewport,
@@ -54,8 +55,9 @@ export class MermaidBlockNodeView {
   private previewToolbar: HTMLElement | null = null;
   private destroyed = false;
   private unsubscribeLocale: () => void = () => undefined;
-  private themeObserver: IntersectionObserver | null = null;
-  private themeVisible = true;
+  private stopObserving: () => void = () => undefined;
+  private renderAbort: AbortController | null = null;
+  private themeVisible = typeof IntersectionObserver !== 'function';
   private themeDirty = false;
 
   constructor(node: ProseMirrorNode, view: EditorView, getPos: () => number) {
@@ -69,19 +71,15 @@ export class MermaidBlockNodeView {
     this.dom.contentEditable = 'false';
     this.dom.setAttribute('data-code', node.attrs.code as string);
 
-    // 切主题不能重排整篇文档的 SVG；提前 200px 更新将进入视口的图表。
-    // 未提供 IntersectionObserver 的宿主保持即时更新，不让节点永久等待。
-    if (typeof IntersectionObserver === 'function') {
-      this.themeObserver = new IntersectionObserver(
-        ([entry]) => {
-          if (!entry) return;
-          this.themeVisible = entry.isIntersecting;
-          if (this.themeVisible) void this.applyPendingTheme();
-        },
-        { rootMargin: '200px' },
-      );
-      this.themeObserver.observe(this.dom);
-    }
+    this.stopObserving = observeRenderVisibility(this.dom, (visible) => {
+      this.themeVisible = visible;
+      if (visible) void this.applyPendingTheme();
+      else if (!this.editing && this.pendingRender) {
+        this.renderId++;
+        this.clearPendingRender();
+        this.themeDirty = true;
+      }
+    });
 
     this.dom.addEventListener('click', (event) => {
       if (
@@ -115,6 +113,7 @@ export class MermaidBlockNodeView {
       // 立即作废旧请求，即便节点在屏幕外也不能让旧异步结果覆盖新主题。
       instance.renderId += 1;
       instance.previewRenderId += 1;
+      instance.clearPendingRender();
       instance.renderedCode = null;
       instance.themeDirty = true;
       if (instance.themeVisible) void instance.applyPendingTheme();
@@ -136,21 +135,24 @@ export class MermaidBlockNodeView {
         this.clearPreviewDebounce();
         void this.updatePreview();
       }
-      const render = this.applyPendingTheme();
+      const render = this.applyPendingTheme(true);
       if (!render) return;
       await render;
     }
   }
 
   /** 只读取最新主题；连续切换时屏幕外节点不积累中间主题的渲染任务。 */
-  private applyPendingTheme(): Promise<void> | null {
+  private applyPendingTheme(force = false): Promise<void> | null {
     if (this.destroyed) return null;
     if (!this.themeDirty) return this.pendingRender;
+    if (!force && !this.themeVisible && !this.editing) return this.pendingRender;
     this.themeDirty = false;
-    return this.editing ? this.updatePreview() : this.renderMermaid();
+    return this.editing ? this.updatePreview() : this.renderMermaid(force);
   }
 
   private clearPendingRender(): void {
+    this.renderAbort?.abort();
+    this.renderAbort = null;
     const cancel = this.cancelPendingRender;
     this.pendingRender = null;
     this.cancelPendingRender = null;
@@ -159,7 +161,6 @@ export class MermaidBlockNodeView {
 
   /** 旧请求失效时解除等待；底层渲染结果仍由 renderId 检查，不能覆盖新内容。 */
   private trackPendingRender(render: Promise<void>): Promise<void> {
-    this.clearPendingRender();
     const cancelled = new Promise<void>((resolve) => {
       this.cancelPendingRender = resolve;
     });
@@ -260,7 +261,8 @@ export class MermaidBlockNodeView {
 
   destroy(): void {
     this.destroyed = true;
-    this.themeObserver?.disconnect();
+    this.stopObserving();
+    this.clearPendingRender();
     this.themeDirty = false;
     this.renderId += 1;
     this.previewRenderId += 1;
@@ -270,7 +272,7 @@ export class MermaidBlockNodeView {
     MermaidBlockNodeView.instances.delete(this);
   }
 
-  private renderMermaid(): Promise<void> {
+  private renderMermaid(force = false): Promise<void> {
     if (this.destroyed || this.editing) return Promise.resolve();
     this.clearPendingRender();
     const id = ++this.renderId;
@@ -278,10 +280,19 @@ export class MermaidBlockNodeView {
     this.dom.setAttribute('data-code', code);
 
     if (!code.trim()) {
+      this.dom.style.removeProperty('min-height');
       this.renderEmptyDiagram();
       this.renderedCode = code;
       return Promise.resolve();
     }
+
+    if (!force && !this.themeVisible) {
+      this.themeDirty = true;
+      // 首次渲染先保留块高度；已有图表在新结果就绪前继续显示。
+      if (!this.dom.hasChildNodes()) this.dom.style.minHeight = '160px';
+      return Promise.resolve();
+    }
+    this.themeDirty = false;
 
     const renderer = getDiagramRenderer();
     if (!renderer) {
@@ -291,15 +302,17 @@ export class MermaidBlockNodeView {
       return Promise.resolve();
     }
 
+    const controller = new AbortController();
+    this.renderAbort = controller;
     return this.trackPendingRender((async () => {
       try {
-        const result = await renderer.renderMermaid(code, { theme: this.getTheme() });
-        if (this.destroyed || this.view.isDestroyed || this.editing || id !== this.renderId) return;
-        if (result.error) {
-          this.renderError(result.error, code);
-        } else {
-          this.renderDisplayDiagram(normalizeMermaidSvgSize(result.svg));
-        }
+        const result = await renderer.renderMermaid(code, { theme: this.getTheme(), signal: controller.signal });
+        if (this.destroyed || this.view.isDestroyed || this.editing || id !== this.renderId || controller.signal.aborted) return;
+        preserveRenderScrollAnchor(this.dom, () => {
+          this.dom.style.removeProperty('min-height');
+          if (result.error) this.renderError(result.error, code);
+          else this.renderDisplayDiagram(normalizeMermaidSvgSize(result.svg));
+        });
         this.renderedCode = code;
       } catch (error) {
         if (this.destroyed || this.view.isDestroyed || this.editing || id !== this.renderId) return;
@@ -529,12 +542,14 @@ export class MermaidBlockNodeView {
       return Promise.resolve();
     }
 
+    const controller = new AbortController();
+    this.renderAbort = controller;
     return this.trackPendingRender((async () => {
       try {
-        const result = await renderer.renderMermaid(code, { theme: this.getTheme() });
+        const result = await renderer.renderMermaid(code, { theme: this.getTheme(), signal: controller.signal });
         if (
           this.destroyed || this.view.isDestroyed || !this.editing ||
-          !this.previewEl || id !== this.previewRenderId
+          !this.previewEl || id !== this.previewRenderId || controller.signal.aborted
         ) return;
         if (result.error) {
           this.setPreviewContent(result.error, { error: true, renderId: id });

@@ -8,6 +8,10 @@ import { escapeHtml } from '../utils/html';
 import { onInterfaceLocaleChanged, t } from '../../../app/i18n';
 import type { EditorThemeOptions } from '../../theme/types';
 import { registerActiveEdit, unregisterActiveEdit } from './activeEditRegistry';
+import { createRenderTaskQueue } from '../../services/renderTaskQueue';
+import { observeRenderVisibility } from './renderVisibility';
+
+const highlightTask = createRenderTaskQueue(2);
 
 /**
  * code_block 节点的 NodeView —— 展示态 / 编辑态
@@ -311,6 +315,12 @@ export class CodeBlockNodeView {
   private viewport = { top: 0, left: 0 };
   private editFrame = 0;
   private destroyed = false;
+  private renderVisible = typeof IntersectionObserver !== 'function';
+  private displayHighlightDirty = true;
+  private stopObserving: () => void = () => undefined;
+  private highlightAbort: AbortController | null = null;
+  private pendingHighlight: Promise<void> | null = null;
+  private forcedHighlightRequests = 0;
 
   // 展示态相关
   private language: string;
@@ -447,7 +457,15 @@ export class CodeBlockNodeView {
       this.updateLocalizedChrome();
     });
 
-    // 初始渲染展示态
+    this.stopObserving = observeRenderVisibility(this.dom, (visible) => {
+      this.renderVisible = visible;
+      if (visible && this.displayHighlightDirty && !this.editing && !this.forcedHighlightRequests) this.renderDisplay();
+      if (!visible && !this.editing && this.highlightAbort && !this.forcedHighlightRequests) {
+        this.highlightAbort?.abort();
+        this.displayHighlightDirty = true;
+      }
+    });
+    // 先展示完整纯文本以稳定几何，增强高亮按可见范围调度。
     this.renderDisplay();
   }
 
@@ -465,6 +483,26 @@ export class CodeBlockNodeView {
         );
       }
     }
+  }
+
+  /** 导出不能截取尚未增强的屏幕外代码块。 */
+  static async flushHighlights(root: HTMLElement): Promise<void> {
+    await Promise.all([...this.instances].filter((instance) => root.contains(instance.dom)).map(async (instance) => {
+      if (!instance.editing) {
+        instance.forcedHighlightRequests++;
+        try {
+          while (!instance.destroyed && !instance.editing) {
+            const nextRenderId = instance.renderId + 1;
+            await instance.renderHighlightFor(instance.node.textContent, instance.language, instance.codeDisplay, DISPLAY_HIGHLIGHT_MAX_CHARS, true);
+            if (instance.renderId === nextRenderId) break;
+          }
+        } finally {
+          instance.forcedHighlightRequests--;
+        }
+      } else {
+        await instance.pendingHighlight;
+      }
+    }));
   }
 
   // ---- NodeView 接口 ----
@@ -541,6 +579,8 @@ export class CodeBlockNodeView {
 
   destroy(): void {
     this.destroyed = true;
+    this.stopObserving();
+    this.highlightAbort?.abort();
     this.renderId++;
     if (this.editFrame) cancelAnimationFrame(this.editFrame);
     CodeBlockNodeView.instances.delete(this);
@@ -556,7 +596,7 @@ export class CodeBlockNodeView {
   private renderDisplay(): void {
     const code = this.node.textContent;
     this.updateLineNumbers(countLines(this.textarea?.value ?? code));
-    this.renderHighlightFor(code, this.language, this.codeDisplay, DISPLAY_HIGHLIGHT_MAX_CHARS);
+    this.pendingHighlight = this.renderHighlightFor(code, this.language, this.codeDisplay, DISPLAY_HIGHLIGHT_MAX_CHARS);
   }
 
   private captureViewport(): void {
@@ -630,8 +670,10 @@ export class CodeBlockNodeView {
     language: string,
     container: HTMLElement,
     richHighlightMaxChars = DISPLAY_HIGHLIGHT_MAX_CHARS,
+    force = false,
   ): Promise<void> {
     const id = ++this.renderId;
+    this.highlightAbort?.abort();
     const codeEl = container.querySelector('code') ?? container;
     const isDisplay = container === this.codeDisplay;
     // WebView2 的 IME 会在不可编辑 PRE 的文本换行之后错算正文位置，
@@ -646,6 +688,10 @@ export class CodeBlockNodeView {
       if (container === this.codeDisplay && !this.editing) this.restoreViewport();
     };
     if ((isDisplay ? getRenderedCodeText(codeEl) : codeEl.textContent) !== code) setContent(null);
+    if (isDisplay) {
+      this.displayHighlightDirty = true;
+      if (!force && !this.renderVisible) return;
+    }
     if (code.length > richHighlightMaxChars) {
       return;
     }
@@ -655,17 +701,24 @@ export class CodeBlockNodeView {
       // 无 tokenizer 时降级为纯文本
       return;
     }
+    const controller = new AbortController();
+    this.highlightAbort = controller;
     try {
-      const result = await codeTokenizer.tokenize({
+      const input = {
         code,
         language: getHighlightLanguage(language),
         theme: CodeBlockNodeView.currentTheme.shikiTheme,
-      });
+      };
+      const result = await highlightTask(() => codeTokenizer.tokenize(input), controller.signal);
       if (id !== this.renderId) return; // 放弃过期渲染
+      if (controller.signal.aborted) return;
       setContent(tokensToHtml(result.tokens, isDisplay ? '<br>' : '\n'));
+      if (isDisplay) this.displayHighlightDirty = false;
     } catch {
-      if (id !== this.renderId) return;
+      if (id !== this.renderId || controller.signal.aborted) return;
       setContent(null);
+    } finally {
+      if (this.highlightAbort === controller) this.highlightAbort = null;
     }
   }
 

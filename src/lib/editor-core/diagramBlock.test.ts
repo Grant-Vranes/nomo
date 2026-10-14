@@ -462,6 +462,7 @@ describe('Mermaid theme refresh', () => {
   it('coalesces offscreen changes and renders the latest theme before entering the viewport', async () => {
     const diagram = setupDiagram();
     await Promise.resolve();
+    expect(diagram.render).not.toHaveBeenCalled();
     diagram.render.mockClear();
     diagram.visible(false);
     MermaidBlockNodeView.updateTheme({ theme: 'dark' });

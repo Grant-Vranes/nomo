@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createMermaidDiagramRenderer } from './mermaidDiagramRenderer';
 
 const mermaidMock = vi.hoisted(() => ({
+  registerIconPacks: vi.fn(),
   initialize: vi.fn(),
   render: vi.fn(async (_id: string, code: string) => ({ svg: `<svg>${code}</svg>` })),
 }));

@@ -397,7 +397,7 @@
   let pendingOpenChoiceResolver: ((result: OpenTargetChoiceResult) => void) | null = null;
   let editorHost: HTMLDivElement,
     fileInput: HTMLInputElement,
-    sourceEditor: MarkdownSourceEditorHandle,
+    sourceEditor: MarkdownSourceEditorHandle | undefined,
     semanticPane: HTMLElement,
     sourcePane: HTMLElement;
   let segmentedWorkspace: SegmentedTextEditorWorkspaceComponent | null = null;
@@ -3885,16 +3885,16 @@
     }
     const selection = runtime.transferSelection;
     if (selection?.semantic) runtime.editor.restoreSelectionSnapshot(selection.semantic);
-    if (selection?.source) binding.sourceEditor.setSelection(selection.source.anchor, selection.source.head);
-    runtime.transferSelection = undefined;
+    if (selection?.source && binding.sourceEditor) binding.sourceEditor.setSelection(selection.source.anchor, selection.source.head);
+    runtime.transferSelection = selection?.source && !binding.sourceEditor ? { source: selection.source } : undefined;
     requestAnimationFrame(() => {
       if (runtime.disposed || runtime.host !== binding.host || !binding.host.isConnected || activeTabId !== binding.documentId) return;
       // 新建只在对应文档挂载后聚焦一次；已经开始输入或主动进入正文时保留现有光标。
       if (pendingNewDocumentFocusId === binding.documentId) {
         pendingNewDocumentFocusId = '';
-        if (!readonlyDocumentMode && runtime.editor.getMarkdown() === '' && binding.sourceEditor.getMarkdown() === '' &&
-          !binding.host.contains(document.activeElement) && !binding.sourceEditor.getContentElement().contains(document.activeElement)) {
-          if (getActiveEditorMode() === 'source') {
+        if (!readonlyDocumentMode && runtime.editor.getMarkdown() === '' && (!binding.sourceEditor || binding.sourceEditor.getMarkdown() === '') &&
+          !binding.host.contains(document.activeElement) && !binding.sourceEditor?.getContentElement().contains(document.activeElement)) {
+          if (getActiveEditorMode() === 'source' && binding.sourceEditor) {
             binding.sourceEditor.setSelection(0);
             binding.sourceEditor.focus({ preventScroll: true });
           } else {
@@ -3909,7 +3909,7 @@
         binding.semanticPane.scrollTop = runtime.semanticScrollTop;
         if (anchor) restoreSemanticReadingPosition(runtime.outline, binding.semanticPane, anchor, { anchorMode: runtime.readingAnchorMode, behavior: 'instant' });
       }
-      if (runtime.mode !== 'semantic') {
+      if (runtime.mode !== 'semantic' && binding.sourcePane && binding.sourceEditor) {
         binding.sourcePane.scrollTop = runtime.sourceScrollTop;
         if (anchor) restoreSourceReadingPosition(runtime.outline, binding.sourcePane, binding.sourceEditor, anchor, { anchorMode: runtime.readingAnchorMode, behavior: 'instant' });
       }
@@ -3921,7 +3921,7 @@
     if (!runtime || runtime.disposed || runtime.editor !== binding.editorCore || runtime.host !== binding.host || runtime.sourceEditor !== binding.sourceEditor) return;
     runtime.sourceState = binding.sourceRuntimeState ?? runtime.sourceState;
     if (binding.mode !== 'source') runtime.semanticScrollTop = binding.semanticPane.scrollTop;
-    if (binding.mode !== 'semantic') runtime.sourceScrollTop = binding.sourcePane.scrollTop;
+    if (binding.mode !== 'semantic' && binding.sourcePane) runtime.sourceScrollTop = binding.sourcePane.scrollTop;
     // 源码子组件已保存状态并销毁，先解除引用，刷新时不能再调用旧 handle。
     if (runtime.host === binding.host) runtime.host = undefined;
     if (runtime.sourceEditor === binding.sourceEditor) runtime.sourceEditor = undefined;
@@ -7263,14 +7263,16 @@
     editor.commitPendingEdits();
     editor.refreshSemanticView();
     if (editorHost) {
-      // 导出快照先等待当前宿主的图表和图片资源完成更新。
-      const [{ MermaidBlockNodeView }, { ImageNodeView }] = await Promise.all([
+      // 导出快照先等待当前宿主的图表、图片及屏幕外代码高亮完成更新。
+      const [{ MermaidBlockNodeView }, { ImageNodeView }, { CodeBlockNodeView }] = await Promise.all([
         import('../lib/editor-core/nodeViews/MermaidBlockNodeView'),
         import('../lib/editor-core/nodeViews/ImageNodeView'),
+        import('../lib/editor-core/nodeViews/CodeBlockNodeView'),
       ]);
       await Promise.all([
         MermaidBlockNodeView.flushThemeUpdates(editorHost),
         ImageNodeView.flushUpdates(editorHost),
+        CodeBlockNodeView.flushHighlights(editorHost),
       ]);
     }
     const renderedHtml = editor.getExportHtml?.() ?? editorHost?.innerHTML ?? '';

@@ -72,7 +72,7 @@
   export let fileInput: HTMLInputElement;
   export let sourcePane: HTMLElement;
   export let semanticPane: HTMLElement;
-  export let sourceEditor: MarkdownSourceEditorHandle;
+  export let sourceEditor: MarkdownSourceEditorHandle | undefined;
   export let editorHost: HTMLDivElement;
   export let editorCore: EditorCore;
   export let theme: 'light' | 'dark';

@@ -2,7 +2,36 @@ import type {
   BlockAlignmentAnchor,
   BlockNaturalGeometry,
 } from '../services/markdownBlockAlignment';
-import type { EditorState } from '@codemirror/state';
+import { history } from '@codemirror/commands';
+import { EditorState, StateEffect, Transaction } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
+
+let sourceEditorTheme: ReturnType<typeof EditorView.theme> | undefined;
+
+/** style-mod 在文档级保留已挂载规则；同一静态主题只创建一次，首次使用源码时再初始化。 */
+export function getSourceEditorTheme() {
+  return sourceEditorTheme ??= EditorView.theme({
+    '&': { height: '100%', backgroundColor: 'transparent' },
+    '&.cm-focused': { outline: 'none' },
+    '.cm-scroller': {
+      overflow: 'auto', fontFamily: 'var(--md-editor-font-mono)', fontSize: '14px', lineHeight: '1.75',
+    },
+    '.cm-content': {
+      minHeight: 'var(--md-editor-content-min-height, 0px)', padding: '0', caretColor: 'var(--md-editor-fg)',
+    },
+    '.cm-line': { padding: '0' },
+    '.cm-cursor': { borderLeftColor: 'var(--md-editor-fg)' },
+    '.cm-selectionBackground': { backgroundColor: 'color-mix(in srgb, var(--md-editor-accent) 22%, transparent)' },
+  });
+}
+
+/** 只保留文档、选区与撤销字段，不能把组件回调、布局 widget 或视图插件带入标签缓存。 */
+export function detachSourceEditorState(state: EditorState): EditorState {
+  return state.update({
+    effects: StateEffect.reconfigure.of(history()),
+    annotations: Transaction.addToHistory.of(false),
+  }).state;
+}
 
 /** 仅在本窗口按文档缓存，不序列化到工作区或跨窗口移交。 */
 export interface MarkdownSourceRuntimeState {

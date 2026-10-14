@@ -15,6 +15,33 @@ afterEach(() => {
 });
 
 describe('EditorWorkspace outline drag', () => {
+  it('publishes a semantic workspace before creating source, then reuses source until unmount', async () => {
+    const ready = vi.fn();
+    const destroy = vi.fn();
+    const rendered = render(EditorWorkspace, { props: createProps('hello', {
+      mode: 'semantic', sourceDocumentId: 'lazy', onRuntimeReady: ready, onRuntimeDestroy: destroy,
+    }) });
+    await tick();
+    expect(rendered.container.querySelector('.cm-editor')).toBeNull();
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(ready.mock.lastCall?.[0].sourceEditor).toBeUndefined();
+    // rerender 会重放初始 props；保留组件已经回写的 DOM 绑定。
+    const host = rendered.container.querySelector<HTMLDivElement>('.prosemirror-host')!;
+    const semanticPane = rendered.container.querySelector<HTMLElement>('.semantic-pane')!;
+    await rendered.rerender({ mode: 'split', editorHost: host, semanticPane });
+    await tick();
+    const source = rendered.container.querySelector('.cm-editor');
+    expect(source).not.toBeNull();
+    expect(ready.mock.lastCall?.[0].sourceEditor).toBeDefined();
+    expect(destroy).not.toHaveBeenCalled();
+    const binding = ready.mock.lastCall![0];
+    await rendered.rerender({ mode: 'semantic', editorHost: host, semanticPane, sourceEditor: binding.sourceEditor, sourcePane: binding.sourcePane });
+    expect(rendered.container.querySelector('.cm-editor')).toBe(source);
+    rendered.unmount();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(destroy.mock.lastCall?.[0].sourceRuntimeState.state.doc.toString()).toBe('hello');
+  });
+
   it('keeps a short press as a click and starts whole-row dragging only after 5px', async () => {
     const jumpToOutlineItem = vi.fn();
     const moveOutlineSection = vi.fn(() => true);
