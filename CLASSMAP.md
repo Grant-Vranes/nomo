@@ -83,6 +83,7 @@
 | 六类行内原文与投影 | `src/lib/editor-core/InlineSourceCodec.ts`, `inlineSourceCommands.ts` | `markdownTokenizer.ts`, `markdown.ts`, `markdownSerialization.ts`, `schema.ts`, `ProseMirrorEditorCore.ts` | 原文/格式与位置映射、代码字面粘贴和清除、外层格式组合、HTML 导入与输出语义 |
 | 六类行内显隐与组字 | `src/lib/editor-core/plugins/inlineSourceEditing.ts` | `src/app/styles/editor-document.css`, `plugins/typography.ts` | 光标/选区所在格式局部展开、单击与实际拖选区分、拖选保持、IME 冻结、真实符号装饰与空模板追踪 |
 | 当前标题层级角标 | `src/lib/editor-core/plugins/headingLevelIndicator.ts` | `src/app/styles/editor-document.css` | H1-H6 当前标题角标的定位、显隐或 GSAP 动效 |
+| 正文外侧整段选择 | `src/lib/editor-core/plugins/paragraphSelectionGutter.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts`, `src/app/styles/editor-document.css`, `src/app/i18n.ts`, `src/app/i18n.ja.ts` | 顶层普通段落与标题左侧的悬停短竖线、真实整段选区、缩放命中和浮层生命周期；不接管列表、表格、代码块或正文拖选 |
 | 表格控件 | `src/lib/editor-core/plugins/tableControls.ts` | `src/lib/editor-core/plugins/tableControlDom.ts`, `tableCommands.ts`, `markdownSerialization.ts` | 表格行列控制 UI、共用行增删事务内的列对齐与首行表头归一化、单元格内容保存 |
 | 表格自动列宽与局部滚动 | `src/lib/table-layout/widths.ts`, `src/lib/table-layout/dom.ts` | `src/lib/editor-core/nodeViews/TableNodeView.ts`, `src/lib/table-layout/export.ts`, `src/lib/table-layout/table-layout.css`, `plugins/tableControls.ts`, `plugins/typography.ts` | 语义内容度量、合并格约束、按需列宽、视图级调度与缓存、精细排版失效、HTML/PDF 目标宽度重排；自动宽度不写入 Markdown |
 | 不可编辑 HTML 回退展示 | `src/lib/editor-core/plugins/tableHtml.ts` | `html/htmlClassifier.ts`, `utils/html.ts` | 原始 HTML widget 展示；Markdown 表格由统一 parser 与 schema 渲染 |
@@ -3293,6 +3294,26 @@
 - 修改窄窗口安全留白规则
 
 **Related tests:** —
+
+**Confidence:** high
+
+---
+
+### `src/lib/editor-core/plugins/paragraphSelectionGutter.ts`
+
+**Kind:** plugin / view overlay
+
+**Owns:** 正文外侧的单个复用选择入口、顶层普通段落与标题的悬停命中、真实文本选区、缩放定位和监听器／Observer／帧任务释放。
+
+**Does not own:** 正文布局、Markdown 内容、选区背景绘制、列表／表格／代码块选择、触摸或正文拖选。
+
+**Called by:** `src/lib/editor-core/ProseMirrorEditorCore.ts`（插件注册）
+
+**Depends on:** `prosemirror-state`, `prosemirror-view`, `activeEditRegistry.ts`, `inlineSourceEditing.ts`, `src/app/i18n.ts`；外观位于 `src/app/styles/editor-document.css`。
+
+**Change this when:** 修改整段选择入口的触发范围、选择语义、定位或生命周期。
+
+**Related tests:** `src/lib/editor-core/plugins/paragraphSelectionGutter.test.ts`
 
 **Confidence:** high
 

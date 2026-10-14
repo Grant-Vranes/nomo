@@ -45,6 +45,8 @@ const generatedMessages = { ...messages.m } as unknown as MessageBag;
 const EXTRA_TRANSLATIONS: Partial<Record<EffectiveInterfaceLocale, TranslationTable>> = {
   'zh-CN': {
     close: '关闭',
+    selectWholeParagraph: '选中整段',
+    selectWholeHeading: '选中标题',
     segmentedEditor: '分段文本编辑器',
     indexingProgress: '正在建立行索引 {percent}%',
     indexReady: '行索引已完成',
@@ -709,6 +711,8 @@ const EXTRA_TRANSLATIONS: Partial<Record<EffectiveInterfaceLocale, TranslationTa
   },
   'zh-TW': {
     close: '關閉',
+    selectWholeParagraph: '選取整段',
+    selectWholeHeading: '選取標題',
     segmentedEditor: '分段文字編輯器',
     indexingProgress: '正在建立行索引 {percent}%',
     indexReady: '行索引已完成',
@@ -1372,6 +1376,8 @@ const EXTRA_TRANSLATIONS: Partial<Record<EffectiveInterfaceLocale, TranslationTa
   'ja-JP': JA_JP_EXTRA_TRANSLATIONS,
   'en-US': {
     close: 'Close',
+    selectWholeParagraph: 'Select paragraph',
+    selectWholeHeading: 'Select heading',
     segmentedEditor: 'Segmented text editor',
     indexingProgress: 'Building line index {percent}%',
     indexReady: 'Line index ready',

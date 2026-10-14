@@ -10,6 +10,7 @@ tags:
   - example
 ---
 <!-- markdownlint-disable-next-line MD025 -->
+
 # Nomo Markdown 全元素实例
 
 这份文档用于在 Nomo 中验收 **Markdown-first** 的编辑体验：同一份 `.md` 文本既能在语义编辑中直接操作标题、列表、表格、代码、公式和图表，也能在源码模式中保持可读、可迁移、可手工维护。
@@ -114,11 +115,11 @@ HTML 行内标签示例：<strong>strong</strong>、<em>em</em>、<u>u</u>、<s>
 | 保存形式 | 普通段落用空行分隔；行内 mark 保存为 Markdown 或安全 HTML，例如 `**加粗**`、`*斜体*`、`~~删除线~~`、`<u>下划线</u>`、`<mark>高亮</mark>`、<code>&#96;行内代码&#96;</code>、`$x$`、`[文本](地址 "标题")` |
 | 插入 / 转换 | 直接输入正文；格式菜单或工具栏切换支持的行内样式；行内公式当前从源码输入 `$...$` |
 | 编辑交互 | 选区上切换 mark；空光标点击格式按钮会进入待定行内格式，继续输入自动带格式；清除样式只移除行内表现，不改变标题、列表、引用、表格等块级结构 |
-| 常用快捷键 | 段落 <kbd>Ctrl</kbd> + <kbd>0</kbd>；加粗 <kbd>Ctrl</kbd> + <kbd>B</kbd>；斜体 <kbd>Ctrl</kbd> + <kbd>I</kbd>；删除线 <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>5</kbd>；下划线 <kbd>Ctrl</kbd> + <kbd>U</kbd>；链接 <kbd>Ctrl</kbd> + <kbd>K</kbd>；行内代码 <kbd>Ctrl</kbd> + <kbd>&#96;</kbd>；清除样式 <kbd>Ctrl</kbd> + <kbd>&#92;</kbd> |
+| 常用快捷键 | 段落 <kbd>Ctrl</kbd> + <kbd>0</kbd>；加粗 <kbd>Ctrl</kbd> + <kbd>B</kbd>；斜体 <kbd>Ctrl</kbd> + <kbd>I</kbd>；删除线 <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>5</kbd>；下划线 <kbd>Ctrl</kbd> + <kbd>U</kbd>；链接 <kbd>Ctrl</kbd> + <kbd>K</kbd>；行内代码 <kbd>Ctrl</kbd> + <kbd>\`</kbd>；清除样式 <kbd>Ctrl</kbd> + <kbd>\\</kbd> |
 
 ## 链接导航节点
 
-[跳转到本文“图片节点”](#图片节点)用于验收文内锚点。相对文档链接可写成 `[回到标题节点](./sample.md#标题节点)`；它用于演示同目录文档导航，另存为并改名后请把 `sample.md` 换成实际文件名。`http` / `https` 链接交给系统浏览器，`mailto` 链接交给系统邮件应用。
+[跳转到本文“图片节点”](#%E5%9B%BE%E7%89%87%E8%8A%82%E7%82%B9)用于验收文内锚点。相对文档链接可写成 `[回到标题节点](./sample.md#标题节点)`；它用于演示同目录文档导航，另存为并改名后请把 `sample.md` 换成实际文件名。`http` / `https` 链接交给系统浏览器，`mailto` 链接交给系统邮件应用。
 
 下面只展示本地文档和附件的写法，不实际打开不存在的样例文件：
 
@@ -369,9 +370,7 @@ Mermaid 图表适合技术文档中的流程、时序、状态、类关系、甘
 
 ## HTML 与注释节点
 
-<section class="demo-html-block" id="editable-html-demo">
-  <strong>可编辑 HTML 块：</strong>当前支持 section / div 作为块级根标签，并允许部分安全内联标签。
-</section>
+<section class="demo-html-block" id="editable-html-demo">&#10;  <strong>可编辑 HTML 块：</strong>当前支持 section / div 作为块级根标签，并允许部分安全内联标签。&#10;</section>
 
 <!-- 块级注释：语义编辑中应显示为低调注释卡片，保存时仍保留 Markdown 注释语义。 -->
 
@@ -425,7 +424,7 @@ Markdown 注释和 HTML 块源码外形相近，但语义不同：Markdown 注�
 ### 五分钟上手验收
 
 1. 使用 <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd> 另存本文，并保留 `assets/128x128.png`。
-2. 点击正文 TOC 或[本文图片节点](#图片节点)，再用右侧大纲定位、展开和收起标题。
+2. 点击正文 TOC 或[本文图片节点](#%E5%9B%BE%E7%89%87%E8%8A%82%E7%82%B9)，再用右侧大纲定位、展开和收起标题。
 3. 按 <kbd>Ctrl</kbd> + <kbd>F</kbd> 搜索固定短语 `Nomo 功能验收定位词`，切换全词、大小写和循环选项。
 4. 在已另存的副本中，把一个大纲章节拖到另一标题之前、内部或之后，再按 <kbd>Ctrl</kbd> + <kbd>Z</kbd> 撤销；<kbd>Ctrl</kbd> + <kbd>Y</kbd> 可重做。
 5. 按 <kbd>Ctrl</kbd> + <kbd>E</kbd> 在语义编辑和源码模式间切换，确认仍是同一份 Markdown。
@@ -503,7 +502,7 @@ Markdown 小窗复用当前文档、撤销历史、脏状态和自动保存，�
 ### 剪贴板图片与右键菜单
 
 | 能力 | 怎么体验 | 说明 |
-| :--- | :--- | :--- |
+| :--- | ---: | :--- |
 | 文本剪贴板 | 选中文本后复制 / 剪切，再从网页或其他编辑器粘贴 | 可携带纯文本与安全富文本；平台能力不足时降级为纯文本 |
 | 图片粘贴 / 拖放 | 把图片粘贴或拖到语义编辑区，或在空白处右键“插入 → 图像” | 本地复制策略要求先保存 Markdown；可一次导入多张图片 |
 | 图片目录 | 在“设置 → 图片”选择当前目录、统一 `assets` 或“文档名.assets” | 自动生成相对路径并处理重名；中文路径可正常解析 |
@@ -516,7 +515,7 @@ Markdown 小窗复用当前文档、撤销历史、脏状态和自动保存，�
 ### 格式检查导出与平台
 
 | 能力 | 入口 | 说明 |
-| :--- | :--- | :--- |
+| :--- | :---: | :--- |
 | Markdown 格式检查 Beta | “设置 → 编辑器”启用，状态栏打开详情 | 默认关闭；宽松 / 默认规则；只报告不修改；大文档跳过；详情最多展示前 200 条，可跳到源码位置并手动重试 |
 | HTML 导出 | 文件菜单或 <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>E</kbd> | 生成单文件 HTML，并尽量内嵌可访问的本地图片；无法内嵌时保留原链接并提示 |
 | PDF 导出 | 文件菜单或 <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd> | Windows / macOS 可用；当前固定 A4 纵向、四边 20 mm；尝试按标题写入书签，失败时仍保留已导出的 PDF 并提示 |

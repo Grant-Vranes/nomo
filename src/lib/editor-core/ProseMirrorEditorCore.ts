@@ -57,6 +57,7 @@ import { codeHighlightPlugin } from './plugins/codeHighlight';
 import { codeHighlightDecorationPlugin } from './plugins/codeHighlightDecorationPlugin';
 import { inlineCodeSelectionBridgePlugin } from './plugins/inlineCodeSelectionBridge';
 import { headingLevelIndicatorPlugin } from './plugins/headingLevelIndicator';
+import { paragraphSelectionGutterPlugin } from './plugins/paragraphSelectionGutter';
 import { codeBlockNavigationPlugin } from './plugins/codeBlockNavigation';
 import { displayMathInputPlugin } from './plugins/displayMathInput';
 import { mathInlineInputPlugin } from './plugins/mathInlineInput';
@@ -1519,6 +1520,7 @@ export class ProseMirrorEditorCore implements EditorCore {
         codeHighlightDecorationPlugin({ enabled: false }),
         inlineCodeSelectionBridgePlugin(),
         headingLevelIndicatorPlugin(),
+        paragraphSelectionGutterPlugin(),
         searchHighlightPlugin(),
         // mathBlockPlugin(),  // 已被 math_block 语义节点 + displayMathInputPlugin 取代
         displayMathInputPlugin(),

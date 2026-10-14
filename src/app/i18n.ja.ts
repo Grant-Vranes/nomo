@@ -1,5 +1,7 @@
 export const JA_JP_EXTRA_TRANSLATIONS = {
   close: '閉じる',
+  selectWholeParagraph: '段落を選択',
+  selectWholeHeading: '見出しを選択',
   segmentedEditor: '分割テキストエディター',
   indexingProgress: '行インデックスを作成中 {percent}%',
   indexReady: '行インデックスの作成が完了しました',
