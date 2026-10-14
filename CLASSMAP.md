@@ -40,7 +40,7 @@
 | 精细段落排版 | `src/lib/typography/knuthPlass.ts` | `types.ts`, `rules.ts`, `hyphenation.ts`, `measure.ts`, `renderPlan.ts`, `positions.ts`, `solver.ts`, `typography.worker.ts` | 修改 KP 间距质量评分、两端/左对齐选择、中文规则、英文 Liang 断词、可取消分批/有界同步测量、目标几何快照、文字测量 LRU 或位置映射 |
 | 精细排版编辑适配 | `src/lib/editor-core/plugins/typography.ts` | `nodeViews/TypographyBreakNodeView.ts`, `InlineSourceCodec.ts`, `ProseMirrorEditorCore.ts`, `src/lib/typography/options.ts`, `rules.ts`, `interaction.ts`, `src/app/styles/editor-document.css`, `src/app/services/settings.ts` | 修改输入与导航保护、字素光标移动、局部缓存、正文输入与符号显隐同帧排版、编辑态真实空格宽度和长空格串换行、超预算编辑降级与空闲追补、宽度持续 KP、缩放停止后追补与可见区更新、增量装饰提交、手势阅读锚点、DOM 绑定校验、视觉断点、软换行、KP 选区背景或设置开关 |
 | 排版交互生命周期 | `src/lib/typography/interaction.ts` | `src/app/actions/typographyRange.ts`, `src/app/services/settings.ts`, `src/app/services/editorSettingsController.ts`, `src/app/services/markdownMiniTransition.ts`, `src/app/components/StatusBar.svelte`, `src/app/App.svelte` | 修改窗口内重叠交互 token、150 ms 静默收束、即时 CSS 与几何版本通知、阅读锚点回调、缩放滑块直接更新、小窗过渡排版暂停或跨窗口几何更新 |
-| 只读与离线排版 | `src/lib/typography/dom.ts` | `renderPlan.ts`, `exportRuntime.ts`, `scripts/typography-runtime-plugin.ts`, `src/quicklook/preview-entry.ts`, `src/app/components/MarkdownMiniLargePreview.svelte` | 修改只读布局、字距与原生选区背景桥接、离线运行时或打印就绪契约 |
+| 只读与离线排版 | `src/lib/typography/dom.ts` | `renderPlan.ts`, `selectionPaint.ts`, `exportRuntime.ts`, `scripts/typography-runtime-plugin.ts`, `src/quicklook/preview-entry.ts`, `src/app/components/MarkdownMiniLargePreview.svelte` | 修改只读布局、字距与连续选区背景、离线运行时或打印就绪契约 |
 | 编辑器工厂与 API | `src/lib/editor-core/createEditorCore.ts` | `src/lib/editor-core/index.ts` | EditorCore 创建参数或对外接口变更 |
 | ProseMirror 核心实现 | `src/lib/editor-core/ProseMirrorEditorCore.ts` | `src/lib/editor-core/clipboardMarkdown.ts`, `markdown.ts`, `schema.ts`, plugins, nodeViews | EditorView 生命周期、事务、模式切换、命令执行、选区 Markdown 通知、剪贴板负载与右键目标事务 |
 | 剪贴板 Markdown 判定 | `src/lib/editor-core/clipboardMarkdown.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts`, `markdown.ts` | 修改纯文本/Markdown 等价判定、粘贴 Slice 或纯文本事务标记 |
@@ -94,7 +94,8 @@
 | 编辑器上下文菜单插件 | `src/lib/editor-core/plugins/contextMenu.ts` | `src/app/App.svelte`, `src/app/components/ContextMenu.svelte` | 语义编辑区目标命中、选区定位与右键菜单事件分发 |
 | 快捷插入菜单 | `src/lib/editor-core/plugins/quickInsert.ts` | `src/lib/editor-core/quickInsert.ts`, `editorCommands.ts`, `src/app/styles/editor-quick-insert.css` | 行首/空格后触发、类别/样式键盘导航、浮层定位与生命周期，无搜索 |
 | 行内代码语法高亮装饰 | `src/lib/editor-core/plugins/codeHighlightDecorationPlugin.ts` | `InlineSourceCodec.ts`, `plugins/inlineCodeSelectionBridge.ts` | 派生代码范围的 token 着色与选区背景 |
-| 正文与行内对象选区背景 | `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | `src/app/styles/editor-document.css`, `plugins/typography.ts` | 修改正文/行内代码选区背景、原子对象及其外边距背景包裹或原生输入框选区边界 |
+| 正文与行内对象选区背景 | `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | `src/lib/typography/selectionPaint.ts`, `src/app/styles/editor-document.css`, `plugins/typography.ts` | 修改正文/行内代码选区背景、原子对象及其外边距背景包裹或原生输入框选区边界 |
+| 连续行选区绘制 | `src/lib/typography/selectionPaint.ts` | `dom.ts`, `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | 合并可见行矩形、按光标行框绘制并保持首帧高度、小数像素对齐及共享 CSSOM 样式释放；不写入正文 DOM 或导出快照 |
 | 旧语义块间距装饰（兼容） | `src/lib/editor-core/plugins/blockAlignment.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts` | 维护不入文档、不入 history 的旧 spacer 接口，双栏不再启用 |
 
 ### 文件系统与文档操作

@@ -2,6 +2,7 @@ import { Plugin } from 'prosemirror-state';
 import type { Mark, Node as ProseMirrorNode } from 'prosemirror-model';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import { analyzeInlineSource, isInlineSourceBlock } from '../InlineSourceCodec';
+import { createLineSelectionPaint } from '../../typography/selectionPaint';
 
 const SELECTION_BRIDGE_CLASS = 'pm-inline-selection-bridge';
 const CODE_BRIDGE_CLASS = 'pm-inline-code-selection-bridge';
@@ -49,6 +50,10 @@ export function inlineCodeSelectionBridgePlugin(): Plugin<DecorationSet> {
       decorations(state) {
         return this.getState(state);
       },
+    },
+    view(view) {
+      const paint = createLineSelectionPaint(view.dom);
+      return { update: paint.schedule, destroy: paint.destroy };
     },
   });
 }

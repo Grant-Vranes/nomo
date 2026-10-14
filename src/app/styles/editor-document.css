@@ -2399,12 +2399,8 @@
 }
 
 .prosemirror-host .ProseMirror {
-  --md-editor-text-selection-bg: color-mix(in srgb, var(--md-editor-accent) 70%, transparent);
-}
-
-.prosemirror-host .ProseMirror [data-kp-layout='ready'] {
-  /* KP compression can overlap inline backgrounds. Preblend the selection
-     against the document so repeated painting does not create darker seams. */
+  /* Row painting and native selection fallback share one opaque color, so
+     fractional KP spacing and overlapping font runs cannot darken the seams. */
   --md-editor-text-selection-bg: color-mix(
     in srgb,
     var(--md-editor-accent) 70%,
@@ -2413,7 +2409,7 @@
 }
 
 .prosemirror-host .ProseMirror ::selection {
-  background: transparent;
+  background: var(--md-editor-text-selection-bg);
   color: inherit;
 }
 
@@ -2515,7 +2511,7 @@
   .inline-code-token::selection,
 .prosemirror-host .ProseMirror .pm-inline-source-code.pm-inline-code-selection-bridge::selection,
 .prosemirror-host .ProseMirror .pm-inline-source-code .pm-inline-code-selection-bridge::selection {
-  background: transparent;
+  background: var(--md-editor-text-selection-bg);
   color: inherit;
 }
 
