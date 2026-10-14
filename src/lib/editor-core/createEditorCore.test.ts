@@ -3,6 +3,7 @@ import { setTypographyOptions } from '../typography/options';
 import { DEFAULT_TYPOGRAPHY } from '../typography/types';
 import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model';
 import { AllSelection, TextSelection } from 'prosemirror-state';
+import { closeHistory } from 'prosemirror-history';
 import type { EditorView } from 'prosemirror-view';
 import { reorderOutlineSection } from '../outline/outlineReorder';
 import { extractOutline } from '../outline/outlineService';
@@ -949,6 +950,91 @@ describe('createEditorCore', () => {
     view.dispatch(view.state.tr.insertText('下一项'));
 
     expect(editor.getMarkdown()).toBe('- [ ] 待办事项\n- [ ] 下一项');
+  });
+
+  it.each(['- [ ]', '- [x]', '1. [ ]'])('exits an empty task item on Enter: %s', (markdown) => {
+    const editor = createEditorCore({ markdown, target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const paragraph = findNodeByText(view.state.doc, 'paragraph', markdown.endsWith('[x]') ? '[x]' : '[ ]');
+    view.dispatch(view.state.tr.setSelection(
+      TextSelection.create(view.state.doc, paragraph.pos + paragraph.node.nodeSize - 1),
+    ));
+    view.dispatch(view.state.tr.insertText(' \t '));
+    view.dispatch(closeHistory(view.state.tr));
+    const before = view.state.doc;
+
+    expect(pressEditorKey(view, 'Enter')).toBe(true);
+    expect(view.state.selection.$from.depth).toBe(1);
+    expect(view.state.selection.$from.parent.textContent).toBe('');
+    expect(editor.getMarkdown()).toBe('');
+    expect(editor.execute({ type: 'undo' })).toBe(true);
+    expect(view.state.doc.eq(before)).toBe(true);
+    expect(editor.execute({ type: 'redo' })).toBe(true);
+    expect(editor.getMarkdown()).toBe('');
+    editor.destroy();
+  });
+
+  it('keeps surrounding tasks when exiting an empty task in the middle of a list', () => {
+    const editor = createEditorCore({
+      markdown: '- [ ] 前一项\n- [ ]\n- [x] 后一项',
+      target: document.createElement('div'),
+    });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const paragraph = findNodeByText(view.state.doc, 'paragraph', '[ ]');
+    view.dispatch(view.state.tr.setSelection(
+      TextSelection.create(view.state.doc, paragraph.pos + paragraph.node.nodeSize - 1),
+    ));
+
+    expect(pressEditorKey(view, 'Enter')).toBe(true);
+    expect(view.state.selection.$from.depth).toBe(1);
+    expect(view.state.selection.$from.parent.textContent).toBe('');
+    expect(getTopLevelNodeNames(view.state.doc).slice(0, 3)).toEqual(['bullet_list', 'paragraph', 'bullet_list']);
+    expect(editor.getMarkdown()).toContain('- [ ] 前一项');
+    expect(editor.getMarkdown()).toContain('- [x] 后一项');
+    editor.destroy();
+  });
+
+  it('exits exactly one level when Enter is pressed in a nested empty task', () => {
+    const editor = createEditorCore({
+      markdown: '- [ ] 外层\n  - [ ] 中层\n    - [ ]',
+      target: document.createElement('div'),
+    });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const paragraph = findNodeByText(view.state.doc, 'paragraph', '[ ]');
+    view.dispatch(view.state.tr.setSelection(
+      TextSelection.create(view.state.doc, paragraph.pos + paragraph.node.nodeSize - 1),
+    ));
+    const before = view.state.doc;
+    const depth = view.state.selection.$from.depth;
+
+    expect(pressEditorKey(view, 'Enter')).toBe(true);
+    expect(view.state.selection.$from.depth).toBe(depth - 2);
+    expect(view.state.selection.$from.parent.textContent).toBe('');
+    expect(editor.getMarkdown()).toContain('[ ] 外层');
+    expect(editor.getMarkdown()).toContain('[ ] 中层');
+    expect(editor.execute({ type: 'undo' })).toBe(true);
+    expect(view.state.doc.eq(before)).toBe(true);
+    editor.destroy();
+  });
+
+  it.each(['image', 'math_inline'])('continues a task containing only an inline %s', (typeName) => {
+    const editor = createEditorCore({ markdown: '- [x]', target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const paragraph = findNodeByText(view.state.doc, 'paragraph', '[x]');
+    const cursor = paragraph.pos + paragraph.node.nodeSize - 1;
+    const node = view.state.schema.nodes[typeName].create(
+      typeName === 'image' ? { src: 'https://example.com/task.png', alt: '' } : { tex: 'x' },
+    );
+    const tr = view.state.tr.insert(cursor, node);
+    tr.setSelection(TextSelection.create(tr.doc, cursor + node.nodeSize));
+    view.dispatch(tr);
+
+    expect(pressEditorKey(view, 'Enter')).toBe(true);
+    const list = view.state.doc.firstChild!;
+    expect(list.childCount).toBe(2);
+    expect(list.firstChild!.firstChild!.lastChild!.eq(node)).toBe(true);
+    expect(list.child(1).firstChild!.textContent).toBe('[ ] ');
+    editor.destroy();
   });
 
   it('deletes the task item with Backspace at the start of a task item', () => {

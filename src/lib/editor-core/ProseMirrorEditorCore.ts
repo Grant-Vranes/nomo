@@ -2027,8 +2027,24 @@ function splitTaskListItem(itemType: typeof schema.nodes.list_item) {
     }
 
     const visibleText = taskItem.itemNode.textContent.slice(taskItem.markerLength).trim();
-    if (!visibleText) {
-      return false;
+    if (!visibleText && taskItem.itemNode.childCount === 1) {
+      const paragraph = taskItem.itemNode.firstChild!;
+      let textOnly = true;
+      paragraph.forEach((node) => {
+        if (!node.isText) textOnly = false;
+      });
+      if (textOnly) {
+        // 隐藏的任务标记仍是正文；先清空，再退出当前列表层级，保持一次撤销。
+        const tr = state.tr.delete(
+          taskItem.markerRange.from,
+          taskItem.markerRange.from + paragraph.content.size,
+        );
+        if (!appendCommandTransaction(state, tr, liftListItem(itemType))) {
+          return false;
+        }
+        if (dispatch) dispatch(tr.scrollIntoView());
+        return true;
+      }
     }
 
     let capturedTr: Transaction | null = null;
