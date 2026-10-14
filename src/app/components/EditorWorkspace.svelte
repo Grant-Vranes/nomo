@@ -127,25 +127,33 @@
   $: if (mode !== 'semantic') sourceInitialized = true;
   $: publishRuntime(sourceDocumentId, editorCore, editorHost, sourceEditor, sourcePane, semanticPane, mode);
 
-  function handleBlankDocumentPointerDown(event: PointerEvent, pane: SplitActivePane) {
-    if (!blankDocumentEditable || event.button !== 0 || !event.isPrimary ||
+  function handlePaperPointerDown(event: PointerEvent) {
+    if (event.defaultPrevented || readonlyDocumentMode || event.button !== 0 || !event.isPrimary || event.pointerType !== 'mouse' ||
       event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
-    // 只接管纸面背景和空宿主；正文、控件及滚动条继续使用各自的原生定位。
-    if (event.target !== event.currentTarget && !(pane === 'semantic' && event.target === editorHost)) return;
-    if (pane === 'source') {
-      if (!sourceEditor || registeredSourceDocumentId !== sourceDocumentId || !registeredSourceContent?.isConnected || sourceEditor.getMarkdown() !== '') return;
-    } else {
-      if (!editorHost?.querySelector('.ProseMirror[contenteditable="true"]') || editorCore.getMarkdown() !== '') return;
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const semanticRoot = editorHost?.querySelector('.ProseMirror');
+    const semantic = mode !== 'source' && (target === semanticPane || target === editorHost ||
+      target === editorHost?.parentElement || target === semanticRoot);
+    const source = mode !== 'semantic' && (target === sourcePaneContainer || target === sourcePane ||
+      target === sourcePaneContainer?.querySelector('.document-layout') ||
+      target === sourcePaneContainer?.querySelector('.source-editor'));
+    if (!semantic && !source) return;
+    // 由 editor-grid 冒泡接管，晚于段落侧栏整选。正文、节点控件和滚动条保留原行为。
+    const scroll = semantic ? semanticPane : sourcePane;
+    if (scroll && target === scroll && scroll.offsetWidth && scroll.offsetHeight) {
+      const rect = scroll.getBoundingClientRect();
+      const x = (event.clientX - rect.left) * scroll.offsetWidth / rect.width - scroll.clientLeft;
+      const y = (event.clientY - rect.top) * scroll.offsetHeight / rect.height - scroll.clientTop;
+      if (x < 0 || y < 0 || x >= scroll.clientWidth || y >= scroll.clientHeight) return;
     }
+    if (semantic && !semanticRoot) return;
+    if (source && (!sourceEditor || registeredSourceDocumentId !== sourceDocumentId || !registeredSourceContent?.isConnected)) return;
+    const coordinates = { left: event.clientX, top: event.clientY };
+    const placed = semantic ? editorCore.placeCaretAtCoordinates(coordinates) : sourceEditor!.placeCaretAtCoordinates(coordinates);
+    if (!placed) return;
     event.preventDefault();
-    if (mode === 'split') setSplitActivePane(pane);
-    if (pane === 'source') {
-      sourceEditor?.setSelection(0);
-      sourceEditor?.focus({ preventScroll: true });
-    } else {
-      editorCore.restoreSelectionSnapshot({ anchor: 1, head: 1 });
-      editorCore.focus();
-    }
+    if (mode === 'split') setSplitActivePane(semantic ? 'semantic' : 'source');
   }
 
   function publishRuntime(documentId: string, core: EditorCore, host: HTMLDivElement,
@@ -915,9 +923,11 @@
 />
 
 {#key interfaceLocale}
+  <!-- svelte-ignore a11y_no_static_element_interactions (Paper clicks forward focus to the editor; keyboard handling stays there.) -->
   <div
     bind:this={editorGrid}
     class="editor-grid"
+    on:pointerdown={handlePaperPointerDown}
     class:source-only={mode === 'source'}
     class:split-view={mode === 'split'}
     class:split-semantic-source={mode === 'split' && splitViewLayout === 'semantic-source'}
@@ -953,7 +963,6 @@
       <div
         class="document-layout"
         class:blank-document={blankDocumentEditable}
-        on:pointerdown={(event) => handleBlankDocumentPointerDown(event, 'source')}
       >
         {#if sourceInitialized}
         <MarkdownSourceEditor
@@ -1033,7 +1042,6 @@
       <div
         class="document-layout"
         class:blank-document={blankDocumentEditable}
-        on:pointerdown={(event) => handleBlankDocumentPointerDown(event, 'semantic')}
       >
         {#if frontMatter}
           <FrontMatterCard

@@ -319,6 +319,7 @@ function createSourceEditorStub(
   if (!textarea) return undefined;
   return {
     getMarkdown: () => textarea.value,
+    placeCaretAtCoordinates: () => false,
     setMarkdown: (value) => {
       textarea.value = value;
     },

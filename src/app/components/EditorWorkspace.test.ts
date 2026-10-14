@@ -178,6 +178,78 @@ describe('EditorWorkspace outline drag', () => {
   });
 });
 
+describe('EditorWorkspace paper clicks', () => {
+  async function workspace(markdown = '第一段\n\n第二段', overrides: Partial<Props> = {}) {
+    const place = vi.fn(() => true);
+    const ready = vi.fn();
+    const rendered = render(EditorWorkspace, { props: createProps(markdown, {
+      mode: 'split', sourceDocumentId: 'paper', onRuntimeReady: ready,
+      editorCore: { subscribe: () => () => undefined, placeCaretAtCoordinates: place } as unknown as EditorCore,
+      ...overrides,
+    }) });
+    await tick();
+    const pane = rendered.container.querySelector<HTMLElement>('.semantic-pane')!;
+    const host = pane.querySelector<HTMLElement>('.prosemirror-host')!;
+    const root = document.createElement('div');
+    root.className = 'ProseMirror';
+    root.innerHTML = '<p>第一段</p><p>第二段</p>';
+    host.append(root);
+    return { ...rendered, pane, host, root, place, source: ready.mock.lastCall![0].sourceEditor as MarkdownSourceEditorHandle };
+  }
+
+  it.each(['', '第一段\n\n第二段'])('forwards all paper backgrounds for empty and populated documents: %s', async (markdown) => {
+    const { pane, host, root, place } = await workspace(markdown);
+    for (const target of [pane, host.parentElement!, host, root]) {
+      await dispatchPointer(target, 'pointerdown', { clientX: 800, clientY: 500 });
+      expect(place).toHaveBeenLastCalledWith({ left: 800, top: 500 });
+    }
+    expect(place).toHaveBeenCalledTimes(4);
+  });
+
+  it('lets paragraph gutter selection finish before paper handling and leaves body or control clicks alone', async () => {
+    const { pane, host, root, place } = await workspace();
+    pane.addEventListener('pointerdown', (event) => event.preventDefault(), { once: true });
+    await dispatchPointer(host.parentElement!, 'pointerdown', { clientX: 80, clientY: 100 });
+    const input = document.createElement('textarea');
+    const button = document.createElement('button');
+    host.append(input, button);
+    for (const target of [root.firstElementChild!, input, button])
+      await dispatchPointer(target, 'pointerdown', { clientX: 120, clientY: 100 });
+    expect(place).not.toHaveBeenCalled();
+  });
+
+  it('routes source paper clicks only to its registered source editor', async () => {
+    const { container, source, place } = await workspace();
+    const sourcePlace = vi.spyOn(source, 'placeCaretAtCoordinates').mockReturnValue(true);
+    await dispatchPointer(container.querySelector('.source-pane .document-layout')!, 'pointerdown', { clientX: 80, clientY: 500 });
+    expect(sourcePlace).toHaveBeenCalledWith({ left: 80, top: 500 });
+    expect(place).not.toHaveBeenCalled();
+  });
+
+  it('ignores modified clicks, secondary buttons, touch and actual scrollbar areas', async () => {
+    const { pane, place } = await workspace();
+    for (const init of [{ shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { button: 2 }]) {
+      const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, ...init });
+      Object.defineProperties(event, { isPrimary: { value: true }, pointerType: { value: 'mouse' } });
+      pane.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    const touch = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
+    Object.defineProperties(touch, { isPrimary: { value: true }, pointerType: { value: 'touch' } });
+    pane.dispatchEvent(touch);
+    vi.spyOn(pane, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 500, 400));
+    Object.defineProperties(pane, { offsetWidth: { value: 500 }, offsetHeight: { value: 400 }, clientWidth: { value: 480 }, clientHeight: { value: 400 } });
+    await dispatchPointer(pane, 'pointerdown', { clientX: 490, clientY: 100 });
+    expect(place).not.toHaveBeenCalled();
+  });
+
+  it('keeps readonly paper non-editable', async () => {
+    const { pane, place } = await workspace('只读内容', { readonlyDocumentMode: true });
+    await dispatchPointer(pane, 'pointerdown', { clientX: 80, clientY: 500 });
+    expect(place).not.toHaveBeenCalled();
+  });
+});
+
 function createProps(markdown: string, overrides: Partial<Props> = {}): Props {
   const outline = extractOutline(markdown);
   const noop = () => undefined;

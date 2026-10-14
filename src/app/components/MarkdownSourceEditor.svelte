@@ -286,6 +286,17 @@
           },
         });
       },
+      placeCaretAtCoordinates({ left, top }) {
+        if (!view || !view.dom.isConnected || readonlyDocumentMode || view.composing ||
+          !Number.isFinite(left) || !Number.isFinite(top)) return false;
+        const bounds = view.contentDOM.getBoundingClientRect();
+        const position = top < bounds.top ? 0 : top >= bounds.bottom ? view.state.doc.length
+          : view.posAtCoords({ x: left, y: top }, false);
+        if (position === null) return false;
+        view.focus();
+        view.dispatch({ selection: { anchor: position }, annotations: Transaction.addToHistory.of(false) });
+        return true;
+      },
       getSelectedMarkdown() {
         const editorView = getView();
         const selection = editorView.state.selection.main;

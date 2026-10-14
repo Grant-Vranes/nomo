@@ -6,6 +6,7 @@ import { projectInlineSource } from './InlineSourceCodec';
 import { setTypographyOptions } from '../typography/options';
 import { DEFAULT_TYPOGRAPHY } from '../typography/types';
 import { schema } from './schema';
+import { parseMarkdown } from './markdown';
 
 beforeEach(() => setTypographyOptions({ ...DEFAULT_TYPOGRAPHY, enabled: false }));
 afterEach(() => {
@@ -88,17 +89,28 @@ describe('inline source editor integration', () => {
     destroy();
   });
 
-  it('cleans only untouched generated empty pairs on flush and when leaving', () => {
+  it('serializes empty pairs safely and cleans only untouched generated templates on flush', () => {
     const { editor, view, destroy } = setup('');
     editor.execute({ type: 'toggleBold' });
     expect(view.state.doc.textContent).toBe('****');
-    expect(editor.getMarkdown()).toBe('****');
+    const templateDoc = view.state.doc;
+    // 裸露的 **** 会被 Markdown 解析为分隔线；转义只属于输出，不应改写编辑中的模板。
+    const markdown = editor.getMarkdown();
+    expect(markdown).toBe('\\****');
+    const reopened = projectInlineSource(parseMarkdown(markdown));
+    expect(reopened.childCount).toBe(1);
+    expect(reopened.firstChild?.type.name).toBe('paragraph');
+    expect(reopened.textContent).toBe('****');
+    expect(view.state.doc).toBe(templateDoc);
+    expect(view.state.selection).toMatchObject({ anchor: 3, head: 3 });
     expect(editor.flushMarkdown()).toBe('');
+    expect(view.state.doc.textContent).toBe('');
     editor.execute({ type: 'toggleItalic' });
     view.dispatch(view.state.tr.insertText('x'));
     view.dispatch(view.state.tr.delete(2, 3));
     // An edited-then-emptied pair is user content, never an untouched template.
     expect(editor.flushMarkdown()).toBe('**');
+    expect(view.state.doc.textContent).toBe('**');
     destroy();
   });
 

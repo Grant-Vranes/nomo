@@ -3,8 +3,12 @@ import type { EditorView } from 'prosemirror-view';
 import { schema } from '../schema';
 import { CommentInlineNodeView } from './CommentInlineNodeView';
 
+const nodeViews: CommentInlineNodeView[] = [];
+
 describe('CommentInlineNodeView', () => {
   afterEach(() => {
+    for (const nodeView of nodeViews.splice(0)) nodeView.destroy();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -39,8 +43,7 @@ describe('CommentInlineNodeView', () => {
       callback(0);
       return 1;
     });
-    const rectSpy = vi
-      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function getBoundingClientRectMock(this: HTMLElement) {
         const width = this.classList.contains('comment-inline-measure') ? 58 : 0;
         return {
@@ -57,24 +60,37 @@ describe('CommentInlineNodeView', () => {
       });
 
     const nodeView = createNodeView('短内容');
-    (nodeView as unknown as { enterEdit(): void }).enterEdit();
+    nodeView.dom.click();
 
-    const input = nodeView.dom.querySelector<HTMLInputElement>('.comment-inline-input');
+    const input = nodeView.dom.querySelector<HTMLTextAreaElement>('textarea.comment-inline-input');
     if (!input) throw new Error('Expected inline comment input to exist');
-    (nodeView as unknown as { updateInputWidth(): void }).updateInputWidth();
 
+    expect(input.value).toBe('短内容');
     expect(input.style.width).toBe('64px');
-    rectSpy.mockRestore();
+    expect(document.querySelector('.comment-inline-measure')).toBeNull();
+  });
+
+  it('keeps inline comments in display mode when the editor is readonly', () => {
+    const nodeView = createNodeView('只读注释', false);
+
+    nodeView.dom.click();
+
+    expect(nodeView.dom.querySelector('.comment-inline-input')).toBeNull();
+    expect(nodeView.dom.classList.contains('is-editing')).toBe(false);
+    expect(nodeView.dom.textContent).toBe('只读注释');
   });
 });
 
-function createNodeView(content: string): CommentInlineNodeView {
+function createNodeView(content: string, editable = true): CommentInlineNodeView {
   const node = schema.nodes.comment_inline.create({ content });
   const view = {
+    editable,
     state: { tr: null },
     dispatch: vi.fn(),
     focus: vi.fn(),
   } as unknown as EditorView;
 
-  return new CommentInlineNodeView(node, view, () => 0);
+  const nodeView = new CommentInlineNodeView(node, view, () => 0);
+  nodeViews.push(nodeView);
+  return nodeView;
 }

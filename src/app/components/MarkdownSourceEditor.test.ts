@@ -15,6 +15,47 @@ afterEach(() => {
 });
 
 describe('MarkdownSourceEditor', () => {
+  it('places a collapsed caret from viewport coordinates, reports empty selection and keeps undo history', () => {
+    let handle!: MarkdownSourceEditorHandle;
+    const onSelectionSnapshotChange = vi.fn();
+    const { container } = render(MarkdownSourceEditor, { props: {
+      markdown: '第一行 hello\n第二行 world', documentId: 'coordinates', onSelectionSnapshotChange,
+      onReady: (value) => { handle = value; },
+    } });
+    const view = EditorView.findFromDOM(container.querySelector('.cm-editor')!)!;
+    vi.spyOn(view.contentDOM, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 50, 400, 100));
+    const hit = vi.spyOn(view, 'posAtCoords').mockReturnValue(4);
+    handle.setSelection(1, 16);
+    expect(handle.placeCaretAtCoordinates({ left: 650, top: 70 })).toBe(true);
+    expect(hit).toHaveBeenCalledWith({ x: 650, y: 70 }, false);
+    expect(handle.getSelection()).toEqual({ from: 4, to: 4, anchor: 4, head: 4 });
+    expect(onSelectionSnapshotChange).toHaveBeenLastCalledWith({ documentId: 'coordinates', from: 4, to: 4, contentRevision: 0 });
+    expect(handle.undo()).toBe(false);
+    expect(view.hasFocus).toBe(true);
+    handle.placeCaretAtCoordinates({ left: 120, top: 10 });
+    expect(handle.getSelection().head).toBe(0);
+    handle.placeCaretAtCoordinates({ left: 120, top: 200 });
+    expect(handle.getSelection().head).toBe(view.state.doc.length);
+    view.dispatch({ changes: { from: view.state.doc.length, insert: '输入' } });
+    expect(handle.undo()).toBe(true);
+    expect(handle.getMarkdown()).toBe('第一行 hello\n第二行 world');
+  });
+
+  it('does not place a caret in readonly, composing or destroyed source views', async () => {
+    let handle!: MarkdownSourceEditorHandle;
+    const rendered = render(MarkdownSourceEditor, { props: {
+      markdown: '正文', readonlyDocumentMode: true, onReady: (value) => { handle = value; },
+    } });
+    const view = EditorView.findFromDOM(rendered.container.querySelector('.cm-editor')!)!;
+    expect(handle.placeCaretAtCoordinates({ left: 100, top: 100 })).toBe(false);
+    expect(view.contentDOM.getAttribute('contenteditable')).toBe('false');
+    await rendered.rerender({ readonlyDocumentMode: false });
+    vi.spyOn(view, 'composing', 'get').mockReturnValue(true);
+    expect(handle.placeCaretAtCoordinates({ left: 100, top: 100 })).toBe(false);
+    rendered.unmount();
+    expect(handle.placeCaretAtCoordinates({ left: 100, top: 100 })).toBe(false);
+  });
+
   it('caches history and selection without retaining view callbacks across remounts', () => {
     let handle!: MarkdownSourceEditorHandle;
     const oldChange = vi.fn();
@@ -65,10 +106,24 @@ describe('MarkdownSourceEditor', () => {
     view.dispatch({ changes: { from: 0, insert: '新' } });
     expect(onSelectionSnapshotChange.mock.lastCall?.[0].contentRevision).toBe(1);
   });
-  it.each(['README.md', 'sample.md'])(
-    'preserves unchanged viewport anchors through the first semantic edit of %s',
-    (file) => {
-      const markdown = readFileSync(resolve(process.cwd(), file), 'utf8');
+  it.each([
+    {
+      name: 'a generated long document',
+      markdown: Array.from(
+        { length: 80 },
+        (_, index) =>
+          `### Section ${index + 1}\n\nParagraph ${index + 1} keeps a unique viewport anchor while surrounding Markdown is normalized.\n\n* Item ${index + 1}`,
+      ).join('\n\n'),
+      expectedStableLines: 79,
+    },
+    ...['README.md', 'sample.md'].map((file) => ({
+      name: file,
+      markdown: readFileSync(resolve(process.cwd(), file), 'utf8'),
+      expectedStableLines: undefined,
+    })),
+  ])(
+    'preserves unchanged viewport anchors through the first semantic edit of $name',
+    ({ markdown, expectedStableLines }) => {
       let handle!: MarkdownSourceEditorHandle;
       const onMarkdownChange = vi.fn();
       const rendered = render(MarkdownSourceEditor, {
@@ -104,7 +159,9 @@ describe('MarkdownSourceEditor', () => {
             next.includes(line) &&
             next.indexOf(line) === next.lastIndexOf(line),
         );
-      expect(stableLines.length).toBeGreaterThan(30);
+      // 大量锚点由固定夹具保证，README/sample 的实际内容不承担行数契约。
+      expect(stableLines.length).toBeGreaterThan(0);
+      if (expectedStableLines !== undefined) expect(stableLines).toHaveLength(expectedStableLines);
       const selected = stableLines[Math.floor(stableLines.length / 2)];
       handle.setSelection(original.indexOf(selected) + 3, original.indexOf(selected) + 8);
       const updates: ViewUpdate[] = [];

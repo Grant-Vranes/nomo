@@ -260,6 +260,8 @@ export interface EditorCore {
   restoreSnapshot(snapshot: EditorSnapshot): void;
   /** 只恢复光标/选区，保持正文、撤销历史与保存基线。 */
   restoreSelectionSnapshot(selection: EditorSelectionSnapshot): void;
+  /** 按视口 CSS 坐标折叠选区；不改变正文或撤销历史，未挂载/只读/组字时返回 false。 */
+  placeCaretAtCoordinates(coordinates: { left: number; top: number }): boolean;
   focus(): void;
   blur(): void;
   getActiveLink(): EditorLinkSnapshot | null;

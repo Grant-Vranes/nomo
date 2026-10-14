@@ -173,6 +173,8 @@ export interface MarkdownSourceEditorHandle {
   replaceRange?(from: number, to: number, text: string, expectedRevision?: number): boolean;
   getSelectionStatsSnapshot?(): MarkdownSourceSelectionSnapshot;
   setSelection(from: number, to?: number): void;
+  /** 按视口 CSS 坐标定位，不创建视图或写入撤销历史。 */
+  placeCaretAtCoordinates(coordinates: { left: number; top: number }): boolean;
   getSelectedMarkdown(): string;
   focus(options?: FocusOptions): void;
   revealRange(from: number, to?: number): void;

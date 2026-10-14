@@ -119,6 +119,7 @@ function createSourceEditorStub(
 ): MarkdownSourceEditorHandle {
   return {
     getMarkdown: () => textarea.value,
+    placeCaretAtCoordinates: () => false,
     setMarkdown: (value) => {
       textarea.value = value;
       onChange(value);

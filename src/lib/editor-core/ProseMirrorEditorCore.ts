@@ -777,6 +777,47 @@ export class ProseMirrorEditorCore implements EditorCore {
     else this.suspendedState = nextState;
   }
 
+  placeCaretAtCoordinates({ left, top }: { left: number; top: number }): boolean {
+    const view = this.view;
+    if (!view || !view.dom.isConnected || !this.isEditable() || view.composing ||
+      isInlineSourceComposing(view) || isActiveEditComposing(view) ||
+      !Number.isFinite(left) || !Number.isFinite(top)) return false;
+
+    // 节点输入的提交和 blur 都可能改变文档或恢复旧光标，必须先完成再定位。
+    commitActiveEdit(view, true);
+    view.focus();
+    const bounds = view.dom.getBoundingClientRect();
+    // 编辑面有 min-height 和文末滚动留白，边界应取实际内容而非宿主高度。
+    const contentTop = view.dom.firstElementChild?.getBoundingClientRect().top ?? bounds.top;
+    const contentBottom = view.dom.lastElementChild?.getBoundingClientRect().bottom ?? bounds.bottom;
+    const doc = view.state.doc;
+    const bias = top >= contentBottom || left >= bounds.right ? -1 : 1;
+    let position = top < contentTop ? 0 : top >= contentBottom ? doc.content.size : null;
+    if (position === null) {
+      position = view.posAtCoords({
+        left: Math.max(bounds.left + 1, Math.min(bounds.right - 1, left)),
+        top,
+      })?.pos ?? null;
+    }
+    if (position === null) {
+      // 块间空白或不可编辑对象可能无法命中；只二分查找邻近块，不扫描全文。
+      const children = view.dom.children;
+      let lo = 0, hi = children.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (children[mid].getBoundingClientRect().bottom < top) lo = mid + 1;
+        else hi = mid;
+      }
+      const block = children[Math.min(lo, children.length - 1)];
+      position = block ? view.posAtDOM(block, bias < 0 ? block.childNodes.length : 0, bias) : 0;
+    }
+    const resolved = doc.resolve(Math.max(0, Math.min(doc.content.size, position)));
+    const selection = Selection.findFrom(resolved, bias, true) ?? Selection.findFrom(resolved, -bias, true);
+    if (!selection) return false;
+    view.dispatch(view.state.tr.setSelection(selection).setMeta('addToHistory', false));
+    return true;
+  }
+
   focus(): void {
     this.view?.focus();
   }

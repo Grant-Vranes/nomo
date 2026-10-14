@@ -98,8 +98,8 @@
 | Emoji 搜索与联网缓存 | `src/app/services/emojiCatalog.ts`, `src-tauri/src/emoji_catalog.rs` | `src/lib/emoji/catalog.ts`, `src/app/i18n.emoji.ts` | 固定版本元数据、双语搜索索引、三源错峰获取、SHA-256 校验、4 MiB 原子缓存与共享加载 |
 | Emoji 选择器与插入目标 | `src/app/components/EmojiPicker.svelte`, `src/app/services/emojiInsertion.ts` | `src/app/App.svelte`, `EditorToolbar.svelte`, `src/app/styles/editor-emoji.css` | 九类分类/虚拟网格、键盘选择、双栏/组合标签目标、修订校验与纯文本插入 |
 | 行内代码语法高亮装饰 | `src/lib/editor-core/plugins/codeHighlightDecorationPlugin.ts` | `InlineSourceCodec.ts`, `plugins/inlineCodeSelectionBridge.ts` | 派生代码范围的 token 着色与选区背景 |
-| 正文与行内对象选区背景 | `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | `src/lib/typography/selectionPaint.ts`, `src/app/styles/editor-document.css`, `plugins/typography.ts` | 修改正文/行内代码选区背景、原子对象及其外边距背景包裹或原生输入框选区边界 |
-| 连续行选区绘制 | `src/lib/typography/selectionPaint.ts` | `dom.ts`, `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | 合并可见行矩形、按光标行框绘制并保持首帧高度、小数像素对齐及共享 CSSOM 样式释放；不写入正文 DOM 或导出快照 |
+| 正文与行内对象选区背景 | `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | `src/lib/typography/selectionPaint.ts`, `src/app/styles/editor-document.css`, `plugins/typography.ts` | 修改正文/行内代码选区背景、原子对象及其外边距背景包裹；桥接样式与行绘制共享浏览器选区有效性，保留工具栏所需的模型选区 |
+| 连续行选区绘制 | `src/lib/typography/selectionPaint.ts` | `dom.ts`, `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | 合并可见行矩形、保持首帧行高与像素对齐；选区折叠、转移或原生输入聚焦时同步清理本编辑区补色，释放监听与共享 CSSOM；不改正文内容或导出快照 |
 | 旧语义块间距装饰（兼容） | `src/lib/editor-core/plugins/blockAlignment.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts` | 维护不入文档、不入 history 的旧 spacer 接口，双栏不再启用 |
 
 ### 文件系统与文档操作
@@ -662,7 +662,7 @@
 
 **Owns:**
 - 编辑工作区 UI：CodeMirror 源码编辑器、ProseMirror 挂载点
-- 空白可编辑文档的纸面留白点击进入第一行，正文与已有内容保留原生光标定位
+- 可编辑纸面左右、上下和文末留白点击折叠选区并按坐标定位；在段落侧栏整选之后处理，排除控件、修饰键、触摸和滚动条
 - 各栏自然高度、适量尾部阅读空间、30%参考线与模式切换可测量就绪事件的协调
 - 为独立同步 action 提供当前文档、模式、分栏拖动状态与两个编辑器句柄
 - Front Matter 卡片、大纲面板
@@ -702,7 +702,7 @@
 **Owns:**
 - Markdown 源码的单一 CodeMirror 6 `EditorView`、输入同步、只读态和 IME 生命周期
 - 首次进入源码或双栏时由工作区挂载；缓存快照只保留文档、选区与历史，重挂载时绑定当前 UI，静态主题按需复用以避免 CSS 规则累积
-- 源码选区、聚焦、范围显示、undo/redo、行/offset 与滚动 DOM 的 handle
+- 源码选区、视口坐标光标定位、聚焦、范围显示、undo/redo、行/offset 与滚动 DOM 的 handle；坐标定位不改变正文和历史，保护只读与组字态
 - 统一逻辑行比较，重复更新不发事务；通过 `markdownSourceEditor.ts#getSourceTextChanges` 按行和字符细分多处差异，一次事务保留中间未改动文本的选区与视口锚点
 - 当前内容的测量就绪修订，等待 CodeMirror 视口锚点调整后通知双栏跟随
 - 不改 Markdown offset 和 history 的块级 CodeMirror widget spacer，以及测量完成信号
@@ -1389,6 +1389,7 @@
 - Markdown 同步（编辑后序列化为 Markdown 通知应用层）
 - 双栏锚点只读快照；用结构差异确认的前后缀换算复杂块造成的位置偏移，不沿用不可靠区间
 - 语义选区变化与选中 Markdown 片段通知
+- 按视口坐标折叠选区，先提交节点输入再定位；使用实际内容边界区分文末和 min-height 留白，不增加撤销步骤
 - 文档脏状态管理
 - 模式切换（语义/源码）
 - 命令执行、只读事务门禁、撤销前活动编辑提交与节点组字等待

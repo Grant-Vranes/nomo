@@ -3,9 +3,19 @@ type Background = { image: string; position: string; size: string; repeat: strin
 
 const BLOCK_SELECTOR = 'p,li,td,th,h1,h2,h3,h4,h5,h6';
 const ROOT_ATTRIBUTE = 'data-nomo-selection-root';
+const ACTIVE_ATTRIBUTE = 'data-nomo-selection-active';
 const MAX_PAINTED_BLOCKS = 128;
 const stylesByDocument = new WeakMap<Document, { style: HTMLStyleElement; users: number }>();
 let nextRootId = 0;
+
+/** 模型选区可留给工具栏使用；只有从本正文起选的浏览器选区参与补色。 */
+function selectionForRoot(root: HTMLElement): Selection | null {
+  const document = root.ownerDocument;
+  const selection = document.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount ||
+    !root.contains(selection.anchorNode) || document.activeElement?.matches('input,textarea')) return null;
+  return selection;
+}
 
 function retainStyle(document: Document) {
   let shared = stylesByDocument.get(document);
@@ -65,6 +75,7 @@ export function createLineSelectionPaint(root: HTMLElement) {
   const window = document.defaultView!;
   const { group, release } = retainStyle(document);
   const originalMarker = root.getAttribute(ROOT_ATTRIBUTE);
+  const originalActive = root.getAttribute(ACTIVE_ATTRIBUTE);
   const rootId = String(++nextRootId);
   root.setAttribute(ROOT_ATTRIBUTE, rootId);
   const scope = `[${ROOT_ATTRIBUTE}="${rootId}"]`;
@@ -82,11 +93,10 @@ export function createLineSelectionPaint(root: HTMLElement) {
   const refresh = () => {
     frame = undefined;
     if (destroyed) return;
-    const selection = document.getSelection();
-    const active = document.activeElement;
-    const nativeInput = active?.matches('input,textarea') && root.contains(active);
+    const selection = selectionForRoot(root);
+    root.toggleAttribute(ACTIVE_ATTRIBUTE, !!selection);
     const blocks = new Map<HTMLElement, { bounds: DOMRect; style: CSSStyleDeclaration; rectangles: PaintRect[] }>();
-    if (selection && !selection.isCollapsed && !nativeInput) {
+    if (selection) {
       const rootBounds = root.getBoundingClientRect();
       const pane = root.closest('.semantic-pane,.markdown-mini-large-preview');
       const clip = pane?.getBoundingClientRect() ?? rootBounds;
@@ -209,9 +219,20 @@ export function createLineSelectionPaint(root: HTMLElement) {
     painted = next;
   };
   const schedule = () => {
-    if (!destroyed && frame === undefined) frame = window.requestAnimationFrame(refresh);
+    if (destroyed) return;
+    const selection = selectionForRoot(root);
+    // 同步撤掉桥接背景和行内对象的选中样式，避免下一帧只剩一条矮补色。
+    root.toggleAttribute(ACTIVE_ATTRIBUTE, !!selection);
+    if (!selection) {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      frame = undefined;
+      writeRules([]);
+      painted.clear();
+    } else if (frame === undefined) frame = window.requestAnimationFrame(refresh);
   };
   document.addEventListener('selectionchange', schedule);
+  document.addEventListener('focusin', schedule);
+  document.addEventListener('focusout', schedule);
   window.addEventListener('scroll', schedule, true);
   window.addEventListener('resize', schedule);
   schedule();
@@ -222,11 +243,15 @@ export function createLineSelectionPaint(root: HTMLElement) {
       destroyed = true;
       if (frame !== undefined) window.cancelAnimationFrame(frame);
       document.removeEventListener('selectionchange', schedule);
+      document.removeEventListener('focusin', schedule);
+      document.removeEventListener('focusout', schedule);
       window.removeEventListener('scroll', schedule, true);
       window.removeEventListener('resize', schedule);
       painted.clear();
       if (originalMarker === null) root.removeAttribute(ROOT_ATTRIBUTE);
       else root.setAttribute(ROOT_ATTRIBUTE, originalMarker);
+      if (originalActive === null) root.removeAttribute(ACTIVE_ATTRIBUTE);
+      else root.setAttribute(ACTIVE_ATTRIBUTE, originalActive);
       release();
     },
   };
