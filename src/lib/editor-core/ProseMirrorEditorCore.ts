@@ -76,6 +76,7 @@ import {
   projectInlineSourceWithMapping,
 } from './InlineSourceCodec';
 import { tableControlsPlugin } from './plugins/tableControls';
+import { TableNodeView, tableLayoutPlugin } from './nodeViews/TableNodeView';
 import { tableHtmlBlockPlugin } from './plugins/tableHtml';
 import { taskListPlugin } from './plugins/taskList';
 import { tocSyncPlugin } from './plugins/tocSync';
@@ -283,6 +284,7 @@ export class ProseMirrorEditorCore implements EditorCore {
         },
       },
       nodeViews: {
+        table: (node, view) => new TableNodeView(node, view),
         hard_break: (node, view, getPos) => new TypographyBreakNodeView(node, view, getPos),
         code_block: (node, view, getPos) =>
           new CodeBlockNodeView(node, view, getPos as () => number, this.isRestoringNodeSelection(getPos)),
@@ -1483,6 +1485,7 @@ export class ProseMirrorEditorCore implements EditorCore {
         tocSyncPlugin(),
         tableHtmlBlockPlugin(),
         tableControlsPlugin(),
+        tableLayoutPlugin(),
         tableEditing({ allowTableNodeSelection: true }),
         createCalloutPlugin(),
         keymap({

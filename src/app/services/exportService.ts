@@ -226,6 +226,13 @@ export function cleanEditorArtifacts(htmlFragment: string): string {
   }
 
   restoreMermaidExportSize(root);
+  root.querySelectorAll('colgroup[data-table-layout-owned]').forEach(node => node.remove());
+  root.querySelectorAll<HTMLElement>('table[data-table-layout]').forEach(table => {
+    table.style.removeProperty('width');
+    table.style.removeProperty('table-layout');
+    table.style.removeProperty('zoom');
+    for (const attribute of [...table.attributes]) if (attribute.name.startsWith('data-table-layout')) table.removeAttribute(attribute.name);
+  });
   // Remove visual layout while retaining the semantic soft/hard break distinction.
   root.querySelectorAll('[data-kp-owned]').forEach((node) => node.remove());
   root.querySelectorAll('[data-kp-reflow],[data-kp-geometry]').forEach((node) => {

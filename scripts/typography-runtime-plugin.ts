@@ -56,7 +56,7 @@ export function typographyRuntimePlugin(): Plugin {
       return `export default ${JSON.stringify(await source)}`;
     },
     handleHotUpdate(context) {
-      if (context.file.replace(/\\/g, '/').includes('/src/lib/typography/')) {
+      if (/\/src\/lib\/(typography|table-layout)\//.test(context.file.replace(/\\/g, '/'))) {
         source = undefined;
         const module = context.server.moduleGraph.getModuleById(
           '\0virtual:nomo-typography-runtime',

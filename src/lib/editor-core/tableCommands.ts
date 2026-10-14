@@ -2,6 +2,7 @@ import type { Node as ProseMirrorNode } from 'prosemirror-model';
 import { TextSelection, type Command, type EditorState, type Transaction } from 'prosemirror-state';
 import {
   addColumnAfter,
+  addColumn,
   addColumnBefore,
   addRowAfter,
   addRowBefore,
@@ -9,6 +10,7 @@ import {
   deleteColumn,
   deleteRow,
   deleteTable,
+  removeColumn,
   selectedRect,
   TableMap,
 } from 'prosemirror-tables';
@@ -118,6 +120,36 @@ export function deleteCurrentTableColumn(): Command {
       }
       dispatch(tr.scrollIntoView());
     });
+  };
+}
+
+/** Overlay buttons address a logical grid line, even inside a merged header cell. */
+export function insertTableColumnAt(column: number): Command {
+  return (state, dispatch) => {
+    const context = findTableContext(state);
+    if (!context || column < 0 || column > context.map.width) return false;
+    if (!dispatch) return true;
+    const tr = addColumn(state.tr, selectedRect(state), column);
+    normalizeInsertedTableColumn(tr, context.tableStart, context.table, column);
+    const table = tr.doc.nodeAt(context.tableStart - 1)!;
+    moveSelectionToResizedTable(tr, context.tableStart, table, context.rowIndex, column);
+    dispatch(tr.scrollIntoView());
+    return true;
+  };
+}
+
+export function deleteTableColumnAt(column: number): Command {
+  return (state, dispatch) => {
+    const context = findTableContext(state);
+    if (!context || column < 0 || column >= context.map.width || context.map.width <= 1) return false;
+    if (!dispatch) return true;
+    const tr = state.tr;
+    removeColumn(tr, selectedRect(state), column);
+    if (hasFirstTableRowHeader(context.table)) normalizeFirstTableRowHeaderInTransaction(tr, context.tableStart);
+    const table = tr.doc.nodeAt(context.tableStart - 1)!;
+    moveSelectionToResizedTable(tr, context.tableStart, table, context.rowIndex, Math.min(column, context.map.width - 2));
+    dispatch(tr.scrollIntoView());
+    return true;
   };
 }
 

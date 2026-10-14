@@ -294,6 +294,9 @@ function prepareParagraphSnapshot(
     (parseFloat(style.paddingLeft) || 0) -
     (parseFloat(style.paddingRight) || 0);
   if (width < 1) return null;
+  // Code is an atomic KP box, but table cells must still be able to wrap long URLs/code.
+  // Keep only this paragraph on native layout rather than widening its entire column.
+  if (element.closest('td,th') && [...element.querySelectorAll<HTMLElement>('code,.pm-inline-source-code')].some(code => code.scrollWidth > width)) return null;
   const rootFont = parseFloat(style.fontSize) || 16;
   const lineHeightCss = style.lineHeight;
   const lineHeight = parseFloat(lineHeightCss) || rootFont * 1.75;

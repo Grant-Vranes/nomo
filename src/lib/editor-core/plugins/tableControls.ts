@@ -5,16 +5,16 @@ import { isInTable, rowIsHeader, TableMap, tableNodeTypes } from 'prosemirror-ta
 import type { Node } from 'prosemirror-model';
 import { onInterfaceLocaleChanged, t } from '../../../app/i18n';
 import {
-  addTableColumnAfter,
-  addTableColumnBefore,
   deleteCurrentTable,
-  deleteCurrentTableColumn,
+  deleteTableColumnAt,
+  insertTableColumnAt,
   normalizeTableRowChange,
   resizeCurrentTable,
   setTableColumnAlignment,
   toggleFirstTableRowHeader,
 } from '../tableCommands';
 import { findActiveTableElement } from './tableControlDom';
+import { TABLE_LAYOUT_EVENT } from '../../table-layout/dom';
 
 const tableControlsKey = new PluginKey('tableControls');
 
@@ -41,7 +41,12 @@ export function tableControlsPlugin(options: TableControlsOptions = {}): Plugin 
 
 class TableControlsView {
   private readonly dom = document.createElement('div');
-  private readonly refresh = () => requestAnimationFrame(() => this.update(this.view));
+  private frame = 0;
+  private observedTable: HTMLTableElement | null = null;
+  private readonly observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.refresh());
+  private readonly refresh = () => {
+    if (!this.frame) this.frame = requestAnimationFrame(() => { this.frame = 0; this.update(this.view); });
+  };
   private resizePickerOpen = false;
   private resizePreviewRows = 0;
   private resizePreviewColumns = 0;
@@ -62,6 +67,8 @@ class TableControlsView {
     this.view.dom.addEventListener('focusin', this.refresh);
     this.view.dom.addEventListener('mouseup', this.refresh);
     this.view.dom.addEventListener('keyup', this.refresh);
+    this.view.dom.addEventListener('scroll', this.refresh, true);
+    this.view.dom.addEventListener(TABLE_LAYOUT_EVENT, this.refresh);
     document.addEventListener('pointerdown', this.closeResizePickerOnDocumentPointerDown);
     this.unsubscribeLocale = onInterfaceLocaleChanged(() => this.update(this.view));
     this.update(view);
@@ -71,6 +78,11 @@ class TableControlsView {
 
   update(view: EditorView): void {
     const table = findActiveTableElement(view);
+    if (table !== this.observedTable) {
+      this.observer?.disconnect();
+      this.observedTable = table;
+      if (table) this.observer?.observe(table);
+    }
     if (!view.editable || !isInTable(view.state) || !table) {
       this.resizePickerOpen = false;
       this.dom.classList.remove('visible');
@@ -80,7 +92,11 @@ class TableControlsView {
 
     const overlayHost = this.getOverlayHost(view);
     const hostRect = overlayHost.getBoundingClientRect();
-    const tableRect = table.getBoundingClientRect();
+    const fullRect = table.getBoundingClientRect();
+    const scrollRect = table.closest('.nomo-table-scroll')?.getBoundingClientRect() ?? fullRect;
+    const visibleLeft = Math.max(fullRect.left, scrollRect.left);
+    const visibleRight = Math.min(fullRect.right, scrollRect.right);
+    const tableRect = new DOMRect(visibleLeft, fullRect.top, Math.max(0, visibleRight - visibleLeft), fullRect.height);
     const scale = this.getOverlayScale(overlayHost);
     const left = (tableRect.left - hostRect.left) / scale.x + overlayHost.scrollLeft;
     const top = (tableRect.top - hostRect.top) / scale.y + overlayHost.scrollTop;
@@ -92,7 +108,8 @@ class TableControlsView {
 
     const rows = table.rows;
     const rowCount = rows.length;
-    const colCount = rows[0]?.cells.length ?? 0;
+    const info = this.getTableInfo();
+    const colCount = info ? TableMap.get(info.node).width : rows[0]?.cells.length ?? 0;
     if (rowCount === 0 || colCount === 0) return;
     if (!this.resizePickerOpen) {
       this.resizePreviewRows = rowCount;
@@ -100,7 +117,10 @@ class TableControlsView {
     }
 
     const rowRects = Array.from(rows, (row) => row.getBoundingClientRect());
-    const firstRowCellRects = Array.from(rows[0].cells, (cell) => cell.getBoundingClientRect());
+    const cols = table.querySelectorAll('colgroup[data-table-layout-owned] > col');
+    const firstRowCellRects = cols.length === colCount
+      ? Array.from(cols, col => col.getBoundingClientRect())
+      : Array.from({ length: colCount }, (_, index) => new DOMRect(fullRect.left + index * fullRect.width / colCount, fullRect.top, fullRect.width / colCount, rows[0].getBoundingClientRect().height));
 
     this.dom.replaceChildren();
 
@@ -124,9 +144,13 @@ class TableControlsView {
   }
 
   destroy(): void {
+    cancelAnimationFrame(this.frame);
+    this.observer?.disconnect();
     this.view.dom.removeEventListener('focusin', this.refresh);
     this.view.dom.removeEventListener('mouseup', this.refresh);
     this.view.dom.removeEventListener('keyup', this.refresh);
+    this.view.dom.removeEventListener('scroll', this.refresh, true);
+    this.view.dom.removeEventListener(TABLE_LAYOUT_EVENT, this.refresh);
     document.removeEventListener('pointerdown', this.closeResizePickerOnDocumentPointerDown);
     this.unsubscribeLocale();
     this.dom.remove();
@@ -184,6 +208,7 @@ class TableControlsView {
     // 仅处理列间隙（1..colCount-1），四角边缘由边框按钮处理
     for (let j = 1; j < colCount; j++) {
       const x = this.colGapX(firstRowCellRects, j, tableRect, scale);
+      if (x < 0 || x > tableRect.width / scale.x) continue;
       const title = t.insertColumnBetween({ from: j, to: j + 1 });
 
       const topBtn = this.createButton(title, '+', 'col-insert-top', () => this.insertColumnAt(j));
@@ -375,12 +400,13 @@ class TableControlsView {
     for (let c = 0; c < colCount; c++) {
       const cellRect = firstRowCellRects[c];
       const centerX = (cellRect.left - tableRect.left + cellRect.width / 2) / scale.x;
+      if (centerX < 0 || centerX > tableRect.width / scale.x) continue;
 
       const btn = this.createButton(
         t.deleteTableColumn({ index: c + 1 }),
         '−',
         'delete-col-btn',
-        () => this.deleteColumnAt(0, c),
+        () => this.deleteColumnAt(c),
       );
       btn.style.left = `${Math.round(centerX)}px`;
       this.dom.appendChild(btn);
@@ -706,21 +732,7 @@ class TableControlsView {
   // ===== 操作：插入列 =====
 
   private insertColumnAt(pos: number): void {
-    const info = this.getTableInfo();
-    if (!info) return;
-    const map = TableMap.get(info.node);
-
-    if (pos === 0) {
-      this.moveCursorTo(info, map, 0, 0);
-      addTableColumnBefore()(this.view.state, (tr) => this.view.dispatch(tr));
-    } else if (pos >= map.width) {
-      this.moveCursorTo(info, map, 0, map.width - 1);
-      addTableColumnAfter()(this.view.state, (tr) => this.view.dispatch(tr));
-    } else {
-      this.moveCursorTo(info, map, 0, pos - 1);
-      addTableColumnAfter()(this.view.state, (tr) => this.view.dispatch(tr));
-    }
-    this.view.focus();
+    this.run(insertTableColumnAt(pos));
   }
 
   // ===== 操作：删除行/列 =====
@@ -758,13 +770,8 @@ class TableControlsView {
     this.view.focus();
   }
 
-  private deleteColumnAt(row: number, col: number): void {
-    const info = this.getTableInfo();
-    if (!info) return;
-    const map = TableMap.get(info.node);
-    this.moveCursorTo(info, map, row, col);
-    deleteCurrentTableColumn()(this.view.state, (tr) => this.view.dispatch(tr));
-    this.view.focus();
+  private deleteColumnAt(col: number): void {
+    this.run(deleteTableColumnAt(col));
   }
 
   // ===== 辅助方法 =====
@@ -777,20 +784,6 @@ class TableControlsView {
     const rowCells = map.cellsInRect({ left: 0, right: map.width, top: row, bottom: row + 1 });
     const cellPosition = tableStart + (rowCells[0] ?? map.map[row * map.width]);
     tr.setSelection(Selection.near(tr.doc.resolve(cellPosition + 1)));
-  }
-
-  /** 将光标移动到指定单元格内 */
-  private moveCursorTo(
-    info: { tableStart: number; node: Node },
-    map: TableMap,
-    row: number,
-    col: number,
-  ): void {
-    const cellNodePos = info.tableStart + map.map[row * map.width + col];
-    const tr = this.view.state.tr.setSelection(
-      Selection.near(this.view.state.doc.resolve(cellNodePos + 1)),
-    );
-    this.view.dispatch(tr);
   }
 
   private run(

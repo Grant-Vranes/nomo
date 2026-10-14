@@ -26,6 +26,7 @@ import { logDebug } from '../../services/logger';
 import { refreshTypographyBreaks } from '../nodeViews/TypographyBreakNodeView';
 import { analyzeInlineSource } from '../InlineSourceCodec';
 import { inlineSourceEditingPluginKey } from './inlineSourceEditing';
+import { TABLE_LAYOUT_EVENT } from '../../table-layout/dom';
 
 const key = new PluginKey<DecorationSet>('nomo-typography');
 const meta = 'nomo:typography';
@@ -410,6 +411,18 @@ function createViewController(view: EditorView) {
     measureCache.clear();
     geometryChanged();
   };
+  const tableLayoutChanged = (event: Event) => {
+    const table = event.target;
+    if (!(table instanceof HTMLTableElement)) return;
+    // Clear only this table's fixed breaks before committing its new colgroup.
+    // Other paragraphs retain their width signatures and do not need remeasurement.
+    const ranges = (key.getState(view.state)?.find() ?? [])
+      .filter(decoration => decoration.spec.paragraph && table.contains(view.nodeDOM(decoration.from)))
+      .map(decoration => ({ from: decoration.from, to: decoration.to }));
+    if (ranges.length && !publish([], false, ranges)) { geometryChanged(); return; }
+    schedule();
+  };
+  view.dom.addEventListener(TABLE_LAYOUT_EVENT, tableLayoutChanged);
   const contentLoaded = () => {
     // Async NodeViews may replace an image element without changing the document.
     indexedDoc = null;
@@ -1276,6 +1289,7 @@ function createViewController(view: EditorView) {
       visibilityObserver?.disconnect();
       unsubscribe();
       document.fonts?.removeEventListener('loadingdone', fontsChanged);
+      view.dom.removeEventListener(TABLE_LAYOUT_EVENT, tableLayoutChanged);
       view.dom.removeEventListener('keydown', clearActive, true);
       view.dom.removeEventListener('beforeinput', clearActive, true);
       for (const event of ['paste', 'cut', 'drop'])

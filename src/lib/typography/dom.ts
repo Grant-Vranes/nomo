@@ -5,6 +5,7 @@ import { getTypographyOptions, subscribeTypography } from './options';
 import { softBreakText } from './rules';
 import type { ParagraphLayout, TypographyController, TypographyOptions } from './types';
 import { createLineSelectionPaint } from './selectionPaint';
+import { TABLE_LAYOUT_EVENT } from '../table-layout/dom';
 
 /** Only for read-only trees. ProseMirror uses its own decoration adapter. */
 export function createDomTypography(
@@ -41,6 +42,14 @@ export function createDomTypography(
       });
     }, 150);
   };
+  const tableLayoutChanged = (event: Event) => {
+    const table = event.target;
+    if (table instanceof HTMLTableElement) {
+      for (const paragraph of originals.keys()) if (table.contains(paragraph)) restore(paragraph);
+    }
+    invalidate();
+  };
+  root.addEventListener(TABLE_LAYOUT_EVENT, tableLayoutChanged);
   const run = async () => {
     const token = revision;
     const options = snapshot ?? getTypographyOptions();
@@ -140,6 +149,7 @@ export function createDomTypography(
       observer?.disconnect();
       unsubscribe();
       root.removeEventListener('load', invalidate, true);
+      root.removeEventListener(TABLE_LAYOUT_EVENT, tableLayoutChanged);
       document.fonts?.removeEventListener('loadingdone', invalidate);
       root.removeEventListener('copy', copy);
       selectionPaint.destroy();

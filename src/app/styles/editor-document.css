@@ -1,3 +1,5 @@
+@import '../../lib/table-layout/table-layout.css';
+
 .editor-pane,
 .semantic-pane {
   min-width: 0;
@@ -2181,7 +2183,7 @@
 }
 
 .prosemirror-host .ProseMirror table {
-  width: max-content;
+  width: auto;
   max-width: 100%;
   margin: 42px 0 20px;
   border-collapse: collapse;
@@ -2201,7 +2203,7 @@
 .prosemirror-host .ProseMirror th,
 .prosemirror-host .ProseMirror td {
   position: relative;
-  min-width: 90px;
+  min-width: 0;
   max-width: 100%;
   padding: 9px 11px;
   vertical-align: top;

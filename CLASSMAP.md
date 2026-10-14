@@ -84,6 +84,7 @@
 | 六类行内显隐与组字 | `src/lib/editor-core/plugins/inlineSourceEditing.ts` | `src/app/styles/editor-document.css`, `plugins/typography.ts` | 光标/选区所在格式局部展开、单击与实际拖选区分、拖选保持、IME 冻结、真实符号装饰与空模板追踪 |
 | 当前标题层级角标 | `src/lib/editor-core/plugins/headingLevelIndicator.ts` | `src/app/styles/editor-document.css` | H1-H6 当前标题角标的定位、显隐或 GSAP 动效 |
 | 表格控件 | `src/lib/editor-core/plugins/tableControls.ts` | `src/lib/editor-core/plugins/tableControlDom.ts`, `tableCommands.ts`, `markdownSerialization.ts` | 表格行列控制 UI、共用行增删事务内的列对齐与首行表头归一化、单元格内容保存 |
+| 表格自动列宽与局部滚动 | `src/lib/table-layout/widths.ts`, `src/lib/table-layout/dom.ts` | `src/lib/editor-core/nodeViews/TableNodeView.ts`, `src/lib/table-layout/export.ts`, `src/lib/table-layout/table-layout.css`, `plugins/tableControls.ts`, `plugins/typography.ts` | 语义内容度量、合并格约束、按需列宽、视图级调度与缓存、精细排版失效、HTML/PDF 目标宽度重排；自动宽度不写入 Markdown |
 | 不可编辑 HTML 回退展示 | `src/lib/editor-core/plugins/tableHtml.ts` | `html/htmlClassifier.ts`, `utils/html.ts` | 原始 HTML widget 展示；Markdown 表格由统一 parser 与 schema 渲染 |
 | 任务列表 | `src/lib/editor-core/plugins/taskList.ts` | `src/lib/editor-core/InlineSourceCodec.ts`, `editorCommands.ts`, `ProseMirrorEditorCore.ts`, `markdownSerialization.ts` | 修改任务首段标记识别、列表切换/续行、只读复选框或保存边界 |
 | 链接交互 | `src/lib/editor-core/plugins/linkInteraction.ts` | `src/app/components/LinkQuickEditor.svelte` | 链接点击/悬浮/编辑 |

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { Node as ProseMirrorNode } from 'prosemirror-model';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { TableMap } from 'prosemirror-tables';
-import { addTableRowAfter, createTableNode, resizeCurrentTable } from './tableCommands';
+import { addTableRowAfter, createTableNode, resizeCurrentTable, insertTableColumnAt, deleteTableColumnAt } from './tableCommands';
+import { parseMarkdown } from './markdown';
+import { history, undo } from 'prosemirror-history';
 import { schema } from './schema';
 
 function findCellTextPosition(doc: ProseMirrorNode, rowIndex: number, columnIndex: number): number {
@@ -55,6 +57,31 @@ function getTableSize(table: ProseMirrorNode): { rows: number; columns: number }
 }
 
 describe('tableCommands', () => {
+  it('合并表头中的逻辑列按钮只删除指定一列，撤销恢复完整网格', () => {
+    const doc = parseMarkdown('<table data-nomo-table="semantic"><tbody><tr><th><p>A</p></th><th colspan="2"><p>BC</p></th></tr><tr><td><p>a</p></td><td><p>b</p></td><td><p>c</p></td></tr></tbody></table>');
+    let state = EditorState.create({ doc, plugins: [history()] });
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, findCellTextPosition(state.doc, 1, 1))));
+    deleteTableColumnAt(1)(state, tr => { state = state.apply(tr); });
+    const table = findFirstTable(state.doc);
+    expect(TableMap.get(table).width).toBe(2);
+    expect(table.child(1).child(1).textContent).toBe('c');
+    expect(table.child(0).child(1).attrs.colspan).toBe(1);
+    undo(state, tr => { state = state.apply(tr); });
+    expect(state.doc.eq(doc)).toBe(true);
+  });
+
+  it('在合并表头内部指定列间隙插入，而不是插到合并范围之后', () => {
+    const doc = parseMarkdown('<table data-nomo-table="semantic"><tbody><tr><th><p>A</p></th><th colspan="2"><p>BC</p></th></tr><tr><td><p>a</p></td><td><p>b</p></td><td><p>c</p></td></tr></tbody></table>');
+    let state = EditorState.create({ doc });
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, findCellTextPosition(state.doc, 1, 1))));
+    insertTableColumnAt(2)(state, tr => { state = state.apply(tr); });
+    const table = findFirstTable(state.doc);
+    expect(TableMap.get(table).width).toBe(4);
+    expect(table.child(1).child(2).textContent).toBe('');
+    expect(table.child(1).child(3).textContent).toBe('c');
+    expect(table.child(0).child(1).attrs.colspan).toBe(3);
+    expect(TableMap.get(table).problems).toBeNull();
+  });
   it('新增下方行后把光标移动到新行同列单元格', () => {
     const table = createTableNode(1, 2);
     const doc = schema.nodes.doc.create(null, [table]);

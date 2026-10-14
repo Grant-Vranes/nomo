@@ -16,6 +16,15 @@ afterEach(() => {
 });
 
 describe('exportService', () => {
+  it('drops auto-layout geometry but retains authored column widths and contents', () => {
+    const html = cleanEditorArtifacts('<div class="nomo-table-scroll"><table data-table-layout="ready" data-table-layout-version="4" style="width:900px;table-layout:fixed;zoom:0.5"><colgroup data-table-layout-owned="true"><col style="width:899px"></colgroup><tbody><tr><th data-colwidth="180">Name</th></tr><tr><td>Value</td></tr></tbody></table></div>');
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    expect(doc.querySelector('colgroup')).toBeNull();
+    expect(doc.querySelector('table')?.style.width).toBe('');
+    expect(doc.querySelector('table')?.hasAttribute('data-table-layout')).toBe(false);
+    expect(doc.querySelector('th')?.getAttribute('data-colwidth')).toBe('180');
+    expect(doc.querySelector('td')?.textContent).toBe('Value');
+  });
   it('未保存文档也能读取 Windows、UNC 和 Unix 绝对图片路径', async () => {
     for (const path of ['D:/图片/a.png', 'D:\\图片\\a.png', '\\\\server\\share\\a.png', '/Users/nomo/a.png']) {
       expect(await resolveImagePath(path, null)).toEqual({ absolutePath: path });
