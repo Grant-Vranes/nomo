@@ -363,24 +363,51 @@
       return true;
     };
 
-    const getSplitSourceFrame = () => {
+    const getSourceFrame = (layout: HTMLElement) => {
       const style = getComputedStyle(node);
       const top = Number.parseFloat(style.getPropertyValue('--md-editor-split-padding-top'));
       const bottom = Number.parseFloat(style.getPropertyValue('--md-editor-split-padding-bottom'));
-      if (!Number.isFinite(top) || !Number.isFinite(bottom)) return null;
-      return { top: Math.max(0, top), bottom: Math.max(0, bottom) };
+      if (Number.isFinite(top) && Number.isFinite(bottom)) {
+        return { top: Math.max(0, top), bottom: Math.max(0, bottom) };
+      }
+      const layoutStyle = getComputedStyle(layout);
+      return {
+        top: Number.parseFloat(layoutStyle.paddingTop) || 0,
+        bottom: Number.parseFloat(layoutStyle.paddingBottom) || 0,
+      };
     };
 
-    const syncSplitSourceFrame = (pane: HTMLElement, top: number, bottom: number) => {
+    const syncSourceViewport = (
+      pane: HTMLElement,
+      scrollElement: HTMLElement,
+      frame: { top: number; bottom: number },
+    ) => {
+      const host = pane.querySelector<HTMLElement>('.source-editor');
+      if (!host) return false;
       const zoom = getEditorZoom();
-      const topChanged = setPixelVariable(pane, '--md-editor-source-frame-padding-top', top / zoom);
-      const bottomChanged = setPixelVariable(
-        pane,
-        '--md-editor-source-frame-padding-bottom',
-        bottom / zoom,
-      );
-      if (topChanged || bottomChanged) sourceEditor?.requestMeasure();
-      return topChanged || bottomChanged;
+      const paneRect = pane.getBoundingClientRect();
+      const hostRect = host.getBoundingClientRect();
+      const paneScaleX = paneRect.width / pane.clientWidth || 1;
+      const paneScaleY = paneRect.height / pane.clientHeight || 1;
+      const insetLeft = (hostRect.left - paneRect.left) / paneScaleX / zoom;
+      const insetTop = (hostRect.top - paneRect.top) / paneScaleY / zoom;
+      // 保留原正文区域扣除双侧滚动条槽后的宽度；扩展视口不能改变换行。
+      const scrollbarGutter = scrollElement.offsetWidth - scrollElement.clientWidth;
+      const variables: [string, number][] = [
+        ['--md-editor-source-viewport-inset-left', insetLeft],
+        ['--md-editor-source-viewport-inset-top', insetTop],
+        ['--md-editor-source-viewport-width', pane.clientWidth / zoom],
+        ['--md-editor-source-viewport-height', pane.clientHeight / zoom],
+        ['--md-editor-source-content-width', hostRect.width / paneScaleX / zoom - scrollbarGutter],
+        ['--md-editor-source-frame-padding-top', frame.top / zoom],
+        ['--md-editor-source-frame-padding-bottom', frame.bottom / zoom],
+      ];
+      let changed = false;
+      for (const [name, value] of variables) {
+        changed = setPixelVariable(pane, name, value) || changed;
+      }
+      if (changed) sourceEditor?.requestMeasure();
+      return changed;
     };
 
     const syncContentMinHeight = (
@@ -410,14 +437,14 @@
       const contentEnd = getContentEnd(editorSurface);
       if (!layout || !editorSurface || !contentEnd) return null;
 
-      const sourceFrame = paneMode === 'source' ? getSplitSourceFrame() : null;
+      const sourceFrame = paneMode === 'source' ? getSourceFrame(layout) : null;
       const scrollElement =
         paneMode === 'source' ? sourceEditor?.getScrollElement() : pane;
       if (!scrollElement || scrollElement.clientHeight <= 0) return null;
 
       const layoutBottomPadding = Number.parseFloat(getComputedStyle(layout).paddingBottom) || 0;
       const bottomPadding = paneMode === 'source' ? (sourceFrame?.bottom ?? 0) / getEditorZoom() : layoutBottomPadding;
-      if (sourceFrame && syncSplitSourceFrame(pane, sourceFrame.top, sourceFrame.bottom)) {
+      if (sourceFrame && syncSourceViewport(pane, scrollElement, sourceFrame)) {
         scheduleUpdate();
         return null;
       }
@@ -491,6 +518,7 @@
           semanticPane,
           sourcePane?.querySelector(':scope > .document-layout'),
           semanticPane?.querySelector(':scope > .document-layout'),
+          sourcePane?.querySelector('.source-editor'),
           sourceSurface,
           semanticSurface,
           getContentEnd(sourceSurface),
@@ -570,6 +598,11 @@
           pane?.style.removeProperty('--md-editor-scroll-past-end-space');
           pane?.style.removeProperty('--md-editor-source-frame-padding-top');
           pane?.style.removeProperty('--md-editor-source-frame-padding-bottom');
+          pane?.style.removeProperty('--md-editor-source-viewport-inset-left');
+          pane?.style.removeProperty('--md-editor-source-viewport-inset-top');
+          pane?.style.removeProperty('--md-editor-source-viewport-width');
+          pane?.style.removeProperty('--md-editor-source-viewport-height');
+          pane?.style.removeProperty('--md-editor-source-content-width');
           pane?.style.removeProperty('--md-editor-split-content-min-height');
           pane
             ?.querySelector<HTMLElement>(':scope > .document-layout')
