@@ -186,6 +186,8 @@
   export let pendingInlineMarks: InlinePendingMarks;
   export let openTablePicker: () => void;
   export let openLinkPicker: () => void;
+  export let openEmojiPicker: (event: MouseEvent) => void = () => undefined;
+  export let emojiPickerOpen = false;
   export let openSearchPanel: (replaceVisible?: boolean) => void;
   export let closeSearchPanel: () => void;
   export let updateSearchQuery: (event: Event) => void;
@@ -527,6 +529,9 @@
                   {openTablePicker}
                   {closeTablePicker}
                   {openLinkPicker}
+                  {openEmojiPicker}
+                  {emojiPickerOpen}
+                  emojiInsertionDisabled={readonlyDocumentMode || largeDocumentMode}
                   {insertTableWithSize}
                   {updateContentWidth}
                   {setMode}

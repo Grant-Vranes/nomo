@@ -16,6 +16,8 @@
     type DecorationSet,
   } from '@codemirror/view';
   import { onDestroy, onMount } from 'svelte';
+  import { isolateHistory } from '@codemirror/commands';
+  import { sourceEmojiSuggestions } from '../../lib/emoji/sourceSuggestions';
   import type { BlockAlignmentAnchor } from '../services/markdownBlockAlignment';
   import { detachSourceEditorState, getSourceEditorTheme, getSourceTextChanges, type MarkdownSourceEditorHandle, type MarkdownSourceRuntimeState, type MarkdownSourceSelectionSnapshot } from './markdownSourceEditor';
 
@@ -105,6 +107,7 @@
 
   function createEditorExtensions() {
     return [
+          sourceEmojiSuggestions(),
           historyCompartment.of(history()),
           keymap.of([...defaultKeymap, ...historyKeymap]),
           EditorView.lineWrapping,
@@ -264,6 +267,14 @@
       getSelection() {
         const selection = getView().state.selection.main;
         return { from: selection.from, to: selection.to, anchor: selection.anchor, head: selection.head };
+      },
+      replaceRange(from, to, text, expectedRevision) {
+        const editorView = getView();
+        if (readonlyDocumentMode || editorView.composing || (expectedRevision !== undefined && expectedRevision !== contentRevision) ||
+          from < 0 || to < from || to > editorView.state.doc.length) return false;
+        editorView.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length },
+          annotations: isolateHistory.of('full'), userEvent: 'input.emoji', scrollIntoView: true });
+        return true;
       },
       setSelection(from, to = from) {
         const editorView = getView();

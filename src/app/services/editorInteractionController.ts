@@ -129,6 +129,12 @@ export function createEditorInteractionController(options: EditorInteractionOpti
   }
 
   function runCommand(command: EditorCommand) {
+    if (options.getMode() === 'source' && command.type === 'insertText') {
+      const sourceEditor = options.getSourceEditor();
+      const selection = sourceEditor?.getSelection();
+      if (sourceEditor && selection && sourceEditor.replaceRange?.(selection.from, selection.to, command.text)) sourceEditor.focus();
+      return;
+    }
     if (options.getMode() === 'source' && (command.type === 'undo' || command.type === 'redo')) {
       const sourceEditor = options.getSourceEditor();
       sourceEditor?.focus();

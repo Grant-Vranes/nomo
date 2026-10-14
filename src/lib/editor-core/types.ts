@@ -45,7 +45,7 @@ export interface EditorSelectionSnapshot {
 }
 
 export interface EditorQuickInsertPickerEvent {
-  kind: 'image' | 'link';
+  kind: 'image' | 'link' | 'emoji';
   selection: EditorSelectionSnapshot;
 }
 
@@ -141,6 +141,7 @@ export type EditorPasteResult =
   | { status: 'rejected'; reason: 'readonly' | 'no-text' };
 
 export type EditorCommand =
+  | { type: 'insertText'; text: string }
   | { type: 'toggleBold' }
   | { type: 'toggleItalic' }
   | { type: 'toggleCode' }

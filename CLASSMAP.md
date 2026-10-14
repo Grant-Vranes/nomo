@@ -93,6 +93,9 @@
 | 正文目录事务同步 | `src/lib/editor-core/plugins/tocSync.ts` | `src/lib/toc/tocService.ts` | 标题变化后的 TOC 派生更新与撤销历史保持 |
 | 编辑器上下文菜单插件 | `src/lib/editor-core/plugins/contextMenu.ts` | `src/app/App.svelte`, `src/app/components/ContextMenu.svelte` | 语义编辑区目标命中、选区定位与右键菜单事件分发 |
 | 快捷插入菜单 | `src/lib/editor-core/plugins/quickInsert.ts` | `src/lib/editor-core/quickInsert.ts`, `editorCommands.ts`, `src/app/styles/editor-quick-insert.css` | 行首/空格后触发、类别/样式键盘导航、浮层定位与生命周期，无搜索 |
+| Emoji 短代码建议 | `src/lib/editor-core/plugins/emojiSuggestions.ts`, `src/lib/emoji/sourceSuggestions.ts` | `src/lib/emoji/suggestions.ts`, `sourceContext.ts`, `ProseMirrorEditorCore.ts`, `MarkdownSourceEditor.svelte` | 语义/源码的冒号补全、代码与公式排除、组字保护、确认与撤销、浮层生命周期 |
+| Emoji 搜索与联网缓存 | `src/app/services/emojiCatalog.ts`, `src-tauri/src/emoji_catalog.rs` | `src/lib/emoji/catalog.ts`, `src/app/i18n.emoji.ts` | 固定版本元数据、双语搜索索引、三源错峰获取、SHA-256 校验、4 MiB 原子缓存与共享加载 |
+| Emoji 选择器与插入目标 | `src/app/components/EmojiPicker.svelte`, `src/app/services/emojiInsertion.ts` | `src/app/App.svelte`, `EditorToolbar.svelte`, `src/app/styles/editor-emoji.css` | 九类分类/虚拟网格、键盘选择、双栏/组合标签目标、修订校验与纯文本插入 |
 | 行内代码语法高亮装饰 | `src/lib/editor-core/plugins/codeHighlightDecorationPlugin.ts` | `InlineSourceCodec.ts`, `plugins/inlineCodeSelectionBridge.ts` | 派生代码范围的 token 着色与选区背景 |
 | 正文与行内对象选区背景 | `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | `src/lib/typography/selectionPaint.ts`, `src/app/styles/editor-document.css`, `plugins/typography.ts` | 修改正文/行内代码选区背景、原子对象及其外边距背景包裹或原生输入框选区边界 |
 | 连续行选区绘制 | `src/lib/typography/selectionPaint.ts` | `dom.ts`, `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | 合并可见行矩形、按光标行框绘制并保持首帧高度、小数像素对齐及共享 CSSOM 样式释放；不写入正文 DOM 或导出快照 |
@@ -1517,7 +1520,7 @@
 
 **Owns：**
 - 快捷插入类别、默认样式及对应命令，无搜索索引
-- 图片/链接选择动作、LaTeX 公式块、图表模板和行内/块注释类别
+- 图片/链接/Emoji 选择动作、LaTeX 公式块、图表模板和行内/块注释类别
 - 默认触发符号与单个标点/符号校验
 
 **Called by:** `plugins/quickInsert.ts`, `src/app/services/settings.ts`, `src/app/components/SettingsWindow.svelte`
@@ -1539,6 +1542,7 @@
 - 菜单 DOM、光标附近定位、界面语言更新及挂起/销毁清理
 - 提交输入法字符后的触发及行内代码范围排除
 - 滚动列表中保持键盘选中行可见，向应用层传递图片/链接插入选区
+- 向应用层传递 Emoji 选择器的替换选区；ARIA 属性只清理本菜单持有的值
 
 **Does not own：** 内容插入/块转换事务在 `editorCommands.ts`，图片/链接选择窗口、偏好保存和设置 UI 在应用层。
 
@@ -4163,6 +4167,7 @@
 | `src/app/actions/` | Svelte actions（clickOutside、motion） |
 | `src/app/styles/` | CSS 样式文件（主题、布局、编辑器、表格等） |
 | `src/lib/editor-core/` | ProseMirror 编辑器核心 |
+| `src/lib/emoji/` | Emoji 双语索引、共享建议浮层、源码输入适配与有界围栏上下文 |
 | `src/lib/editor-core/callout/` | Callout 提示块（schema、parser、serializer、命令、插件） |
 | `src/lib/editor-core/html/` | HTML 块安全策略与转换 |
 | `src/lib/editor-core/nodeViews/` | 各类 NodeView 实现 |

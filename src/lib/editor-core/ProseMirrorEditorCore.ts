@@ -17,6 +17,7 @@ import {
 import { history, redo, undo } from 'prosemirror-history';
 import { inputRules } from 'prosemirror-inputrules';
 import { dismissQuickInsert, quickInsertPlugin } from './plugins/quickInsert';
+import { emojiSuggestionsPlugin } from './plugins/emojiSuggestions';
 import { DEFAULT_QUICK_INSERT_TRIGGER, isQuickInsertTrigger } from './quickInsert';
 import { keymap } from 'prosemirror-keymap';
 import { EditorState, Selection, NodeSelection, TextSelection, type Transaction } from 'prosemirror-state';
@@ -1337,6 +1338,10 @@ export class ProseMirrorEditorCore implements EditorCore {
     if (this.destroyed || this.runtime.readonly) {
       return false;
     }
+    if (command.type === 'insertText') {
+      return !!this.view && this.isEditable() && !isActiveEditComposing(this.view) &&
+        this.view.state.selection instanceof TextSelection && this.view.state.selection.$from.parent.inlineContent;
+    }
 
     if (this.runtime.mode !== 'semantic' && isPendingInlineMarkCommand(command)) {
       return false;
@@ -1451,6 +1456,7 @@ export class ProseMirrorEditorCore implements EditorCore {
       selection: appended ? TextSelection.create(doc, doc.content.size - 1) : undefined,
       plugins: [
         windowsImePunctuationFallbackPlugin(),
+        emojiSuggestionsPlugin(() => this.isEditable()),
         quickInsertPlugin(() => ({
           enabled: this.isEditable() && (this.runtime.quickInsertEnabled ?? true),
           trigger: this.runtime.quickInsertTrigger ?? DEFAULT_QUICK_INSERT_TRIGGER,

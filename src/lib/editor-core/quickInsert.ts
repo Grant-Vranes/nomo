@@ -32,6 +32,7 @@ export type QuickInsertEditorCommand = Extract<
 export type QuickInsertCommand =
   | QuickInsertEditorCommand
   | { type: 'chooseImage' }
+  | { type: 'chooseEmoji' }
   | { type: 'chooseLink' };
 
 export interface QuickInsertVariant {
@@ -152,5 +153,9 @@ export const QUICK_INSERT_CATEGORIES: QuickInsertCategory[] = [
     label: () => t.horizontalRule(),
     icon: 'divider',
     variants: [{ label: () => '', command: { type: 'insertHorizontalRule' } }],
+  },
+  {
+    id: 'emoji', label: () => t.emojiInsert(), icon: 'emoji',
+    variants: [{ label: () => '', command: { type: 'chooseEmoji' } }],
   },
 ];

@@ -1,4 +1,5 @@
 mod app_logger;
+mod emoji_catalog;
 mod config;
 mod export;
 mod external_link;
@@ -304,6 +305,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::emoji_catalog::load_emoji_catalog,
             crate::file_clipboard::copy_file_to_clipboard,
             crate::export::export_html,
             crate::export::export_docx,

@@ -4,6 +4,7 @@ import { writable } from 'svelte/store';
 // @ts-expect-error Paraglide 生成目录被 .gitignore 忽略，不提供可提交的声明文件。
 import { getLocale, overwriteGetLocale, type Locale } from '../paraglide/runtime';
 import { JA_JP_EXTRA_TRANSLATIONS } from './i18n.ja';
+import { EMOJI_TRANSLATIONS } from './i18n.emoji';
 
 export type EffectiveInterfaceLocale = 'zh-CN' | 'zh-TW' | 'en-US' | 'ja-JP';
 export type InterfaceLanguagePreference = 'system' | EffectiveInterfaceLocale;
@@ -2223,6 +2224,7 @@ function getExtraTranslation(
   inputs?: Record<string, unknown>,
 ): string | null {
   const value =
+    EMOJI_TRANSLATIONS[locale]?.[key] ??
     EXTRA_TRANSLATIONS[locale]?.[key] ??
     EXTRA_TRANSLATIONS['en-US']?.[key] ??
     EXTRA_TRANSLATIONS['zh-CN']?.[key];

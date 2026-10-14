@@ -71,10 +71,10 @@ function insertSelected(view: EditorView, getOptions: () => QuickInsertOptions):
   const category = QUICK_INSERT_CATEGORIES[session.category];
   const command = category.variants[session.variants[session.category]].command;
   let inserted: boolean;
-  if (command.type === 'chooseImage' || command.type === 'chooseLink') {
+  if (command.type === 'chooseImage' || command.type === 'chooseLink' || command.type === 'chooseEmoji') {
     inserted =
       getOptions().onChoose?.({
-        kind: command.type === 'chooseImage' ? 'image' : 'link',
+        kind: command.type === 'chooseImage' ? 'image' : command.type === 'chooseEmoji' ? 'emoji' : 'link',
         selection: { anchor: session.from, head: session.to },
       }) ?? false;
     if (inserted)
@@ -228,6 +228,7 @@ export function quickInsertPlugin(getOptions: () => QuickInsertOptions): Plugin 
 let nextMenuId = 0;
 
 const ICON_PATHS: Record<string, string[]> = {
+  emoji: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20', 'M8 9h.01M16 9h.01M7 14a5 5 0 0 0 10 0'],
   heading: ['M6 4v16M18 4v16M6 12h12'],
   list: ['M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01'],
   table: ['M3 3h18v18H3zM3 9h18M9 3v18M3 15h18'],
@@ -378,8 +379,10 @@ class QuickInsertMenu {
     ) {
       this.dom.hidden = true;
       this.activeCategory = -1;
-      this.view.dom.removeAttribute('aria-activedescendant');
-      this.view.dom.removeAttribute('aria-controls');
+      if (this.view.dom.getAttribute('aria-controls') === this.list.id) {
+        this.view.dom.removeAttribute('aria-activedescendant');
+        this.view.dom.removeAttribute('aria-controls');
+      }
       return;
     }
     this.title.textContent = t.quickInsert();

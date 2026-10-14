@@ -20,6 +20,7 @@
     Quote,
     ScanLine,
     Search,
+    Smile,
     Sigma,
     Strikethrough,
     Superscript,
@@ -61,6 +62,9 @@
   export let toggleToolbar: () => void;
   export let inactive = false;
   export let openSearchPanel: () => void;
+  export let openEmojiPicker: (event: MouseEvent) => void = () => undefined;
+  export let emojiInsertionDisabled = false;
+  export let emojiPickerOpen = false;
 
   const tableRows = [1, 2, 3, 4, 5];
   const tableColumns = [1, 2, 3, 4, 5, 6];
@@ -384,6 +388,9 @@
     <span class="divider toolbar-actions-divider"></span>
     <span class="toolbar-spacer"></span>
     <div class="toolbar-utilities">
+      <button class="icon-button" class:active={emojiPickerOpen} data-emoji-trigger aria-haspopup="dialog" aria-expanded={emojiPickerOpen}
+        title={t.emojiInsert()} aria-label={t.emojiInsert()} disabled={emojiInsertionDisabled || inactive}
+        on:mousedown|preventDefault on:click|stopPropagation={(event) => { closeResponsivePickers(); openEmojiPicker(event); }}><Smile size={18} /></button>
       <button
         class="icon-button"
         title={t.searchReplace()}

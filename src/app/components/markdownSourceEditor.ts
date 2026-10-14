@@ -170,6 +170,7 @@ export interface MarkdownSourceEditorHandle {
   getMarkdown(): string;
   setMarkdown(markdown: string, options?: { addToHistory?: boolean }): void;
   getSelection(): MarkdownSourceSelection;
+  replaceRange?(from: number, to: number, text: string, expectedRevision?: number): boolean;
   getSelectionStatsSnapshot?(): MarkdownSourceSelectionSnapshot;
   setSelection(from: number, to?: number): void;
   getSelectedMarkdown(): string;

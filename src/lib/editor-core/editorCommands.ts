@@ -898,6 +898,12 @@ export function executeEditorCommand(
     fn(state, dispatch);
 
   switch (command.type) {
+    case 'insertText': {
+      if (!(state.selection instanceof TextSelection) || !state.selection.$from.parent.inlineContent) return false;
+      dispatch(closeHistory(state.tr).insertText(command.text).scrollIntoView());
+      dispatch(closeHistory(view.state.tr).setMeta('addToHistory', false));
+      return true;
+    }
     case 'toggleBold':
       return run(toggleInlineSourceFormat('strong'));
     case 'toggleItalic':

@@ -211,6 +211,8 @@
   import { getPlatformCapabilities } from './services/platform';
   import type { ThemeMode } from '../lib/theme/types';
   import { applyInterfaceLanguagePreference, t, type EffectiveInterfaceLocale } from './i18n';
+  import type { EmojiEntry } from '../lib/emoji/catalog';
+  import { insertEmojiAtTarget, isEmojiTargetCurrent as validateEmojiTarget, type EmojiInsertionTarget } from './services/emojiInsertion';
   import { createFolderExplorerController } from './services/folderExplorerController';
   import { createDocumentActionsController } from './services/documentActionsController';
   import {
@@ -424,6 +426,14 @@
   let tablePickerOpen = false;
   let linkPickerOpen = false;
   let quickInsertLinkTarget: QuickInsertPickerTarget | null = null;
+  let emojiPickerComponent: typeof import('./components/EmojiPicker.svelte').default | null = null;
+  type EmojiPickerTarget = EmojiInsertionTarget & {
+    anchor: { left: number; top: number; bottom: number };
+  };
+  let emojiPickerTarget: EmojiPickerTarget | null = null;
+  $: if (emojiPickerTarget && (emojiPickerTarget.tabId !== activeTabId || emojiPickerTarget.editor !== editor ||
+    emojiPickerTarget.viewMode !== mode || emojiPickerTarget.pane !== splitActivePane || readonlyDocumentMode || workspaceInteractionDisabled || isSwitchingTab ||
+    (emojiPickerTarget.mode === 'source' && emojiPickerTarget.source !== sourceEditor))) emojiPickerTarget = null;
   let linkText = '';
   let linkHref = '';
   let linkError = '';
@@ -3582,6 +3592,7 @@
       editor: runtime.editor,
       contentRevision: snapshot.contentRevision ?? snapshot.version,
     };
+    if (event.kind === 'emoji') return openEmojiPicker(undefined, event.selection);
     if (event.kind === 'image') return chooseImageForContextMenu(target);
     openLinkPicker();
     if (!linkPickerOpen) return false;
@@ -3591,6 +3602,57 @@
     linkCanRemove = false;
     linkDraftTitle = null;
     return true;
+  }
+
+  function openEmojiPicker(event?: MouseEvent, selectionOverride?: { anchor: number; head: number }): boolean {
+    if (emojiPickerTarget && !selectionOverride) { closeEmojiPicker(); return true; }
+    const runtime = documentRuntimes.get(activeTabId);
+    if (!runtime || runtime.disposed || runtime.editor !== editor || isSwitchingTab || readonlyDocumentMode || workspaceInteractionDisabled || largeDocumentMode) return false;
+    const activeMode = getActiveEditorMode();
+    if (activeMode === 'semantic' && !editor.canExecute({ type: 'insertText', text: '' })) return false;
+    const source = activeMode === 'source' ? sourceEditor : undefined;
+    if (source?.isComposing?.()) return false;
+    const sourceSnapshot = source?.getSelectionStatsSnapshot?.();
+    const snapshot = activeMode === 'semantic' ? editor.getSnapshot() : null;
+    const selection = selectionOverride ?? snapshot?.selection ?? (sourceSnapshot ? { anchor: sourceSnapshot.from, head: sourceSnapshot.to } : null);
+    if (!selection || (activeMode === 'source' && sourceSnapshot?.documentId !== activeTabId)) return false;
+    const button = event?.currentTarget instanceof HTMLElement ? event.currentTarget.getBoundingClientRect() : null;
+    const caret = activeMode === 'semantic' ? editor.getSelectionAnchorRect() : null;
+    emojiPickerTarget = {
+      tabId: activeTabId, editor, source, mode: activeMode, viewMode: mode, pane: splitActivePane, selection,
+      contentRevision: sourceSnapshot?.contentRevision ?? snapshot!.contentRevision ?? snapshot!.version,
+      anchor: button ?? caret ?? { left: window.innerWidth / 2 - 176, top: 100, bottom: 100 },
+    };
+    closeTablePicker();
+    if (linkPickerOpen) closeLinkPicker();
+    window.dispatchEvent(new Event('nomo:emoji-picker-open'));
+    if (!emojiPickerComponent) void import('./components/EmojiPicker.svelte').then((module) => { emojiPickerComponent = module.default; });
+    return true;
+  }
+
+  function isEmojiTargetCurrent(target: EmojiPickerTarget): boolean {
+    return validateEmojiTarget(target, emojiInsertionContext(target));
+  }
+
+  function emojiInsertionContext(target: EmojiPickerTarget) {
+    const runtime = documentRuntimes.get(target.tabId);
+    return { tabId: activeTabId, editor, source: sourceEditor, viewMode: mode, pane: splitActivePane,
+      readonly: readonlyDocumentMode, disabled: workspaceInteractionDisabled || isSwitchingTab, runtimeAvailable: !!runtime && !runtime.disposed && runtime.editor === target.editor };
+  }
+
+  function closeEmojiPicker() {
+    const target = emojiPickerTarget;
+    emojiPickerTarget = null;
+    if (target && isEmojiTargetCurrent(target)) {
+      if (target.mode === 'source') target.source?.focus({ preventScroll: true });
+      else target.editor.focus();
+    }
+  }
+
+  function chooseEmoji(entry: EmojiEntry) {
+    const target = emojiPickerTarget;
+    emojiPickerTarget = null;
+    if (target) insertEmojiAtTarget(target, emojiInsertionContext(target), entry.unicode);
   }
 
   function chooseImageForContextMenu(target?: QuickInsertPickerTarget): boolean {
@@ -4320,11 +4382,13 @@
   }
 
   function handleSemanticSelectionChange(event: EditorSelectionSnapshotEvent) {
+    if (emojiPickerTarget?.mode === 'semantic' && event.contentRevision !== emojiPickerTarget.contentRevision) emojiPickerTarget = null;
     if (isSwitchingTab || getActiveEditorMode() !== 'semantic') return;
     writingStatsController.setSelection(event.selection ? { from: event.selection.anchor, to: event.selection.head } : null);
   }
 
   function handleSourceSelectionChange(range: MarkdownSourceSelectionSnapshot) {
+    if (emojiPickerTarget?.mode === 'source' && range.documentId === emojiPickerTarget.tabId && range.contentRevision !== emojiPickerTarget.contentRevision) emojiPickerTarget = null;
     if (isSwitchingTab || range.documentId !== activeTabId || getActiveEditorMode() !== 'source') return;
     writingStatsController.setSelection({ from: range.from, to: range.to, sourceCoordinates: 'normalized' });
   }
@@ -6804,6 +6868,7 @@
   });
 
   function syncFromEditor(event: EditorChangeEvent) {
+    if (emojiPickerTarget?.mode === 'semantic' && event.contentRevision !== undefined && event.contentRevision !== emojiPickerTarget.contentRevision) emojiPickerTarget = null;
     if (event.reason === 'content-pending') writingStatsController.suspend();
     else statsContentRevision = event.contentRevision ?? statsContentRevision;
     if (isSwitchingTab) return;
@@ -7992,6 +8057,8 @@
   {pendingInlineMarks}
   {openTablePicker}
   {openLinkPicker}
+  {openEmojiPicker}
+  emojiPickerOpen={emojiPickerTarget !== null}
   {openSearchPanel}
   {closeSearchPanel}
   {updateSearchQuery}
@@ -8217,3 +8284,7 @@
   onDismiss={handleExternalChangeDismiss}
   onCloseDiscard={handleExternalChangeCloseDiscard}
 />
+
+{#if emojiPickerTarget && emojiPickerComponent}
+  <svelte:component this={emojiPickerComponent} {interfaceLocale} anchor={emojiPickerTarget.anchor} onChoose={chooseEmoji} onClose={closeEmojiPicker} />
+{/if}
