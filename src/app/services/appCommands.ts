@@ -1,4 +1,5 @@
 import { isDiagramType, type EditorCommand } from '../../lib/editor-core';
+import { resetOutlinePanelPosition } from './outlinePanelPosition';
 import type { EditorViewMode } from '../types';
 import {
   DEFAULT_SHORTCUT_PREFERENCES,
@@ -174,6 +175,8 @@ export function executeDesktopCommand(command: string, handlers: AppCommandHandl
     handlers.setMode(handlers.getMode() === 'source' ? 'semantic' : 'source');
   } else if (command === 'toggle-outline') {
     handlers.toggleOutlineVisible();
+  } else if (command === 'reset-outline-position') {
+    resetOutlinePanelPosition();
   } else if (command === 'toggle-theme') {
     handlers.toggleTheme();
   } else if (command === 'toggle-focus') {

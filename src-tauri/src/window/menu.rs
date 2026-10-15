@@ -518,6 +518,12 @@ fn build_view_menu<R: Runtime>(app: &AppHandle<R>) -> Result<tauri::menu::Submen
         )?)
         .item(&menu_item(
             app,
+            "reset-outline-position",
+            tr(locale, "menu_reset_outline_position"),
+            None,
+        )?)
+        .item(&menu_item(
+            app,
             "toggle-toolbar",
             tr(locale, "menu_toggle_toolbar"),
             Some(toolbar_accelerator.as_str()),

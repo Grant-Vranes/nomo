@@ -22,6 +22,7 @@
   } from '../../lib/editor-core';
   import type { EditorViewMode } from '../types';
   import { clickOutside } from '../actions/clickOutside';
+  import { resetOutlinePanelPosition } from '../services/outlinePanelPosition';
   import { getPlatformCapabilities } from '../services/platform';
   import { getDiagramTypeLabel, t } from '../i18n';
   import WindowsCaptionControls from './WindowsCaptionControls.svelte';
@@ -885,6 +886,9 @@
                 >
                 <button on:click={() => finish(toggleOutlineVisible, 'view')}
                   >{outlineVisible ? t.hideOutline() : t.showOutline()}</button
+                >
+                <button on:click={() => finish(resetOutlinePanelPosition, 'view')}
+                  >{t.resetOutlinePosition()}</button
                 >
                 <button on:click={() => finish(toggleToolbar, 'view')}>
                   {toolbarHidden ? t.showToolbar() : t.hideToolbar()}

@@ -156,6 +156,7 @@
 | 大纲滚动定位 | `src/app/services/outlineNavigation.ts` | `src/app/services/editorInteractionController.ts`, `src/lib/outline/outlineService.ts` | 模式切换/源码与语义视图滚动同步，PM/DOM 标题语义匹配 |
 | Markdown 源码 CodeMirror | `src/app/components/MarkdownSourceEditor.svelte` | `src/app/components/markdownSourceEditor.ts`, `src/app/components/EditorWorkspace.svelte` | 修改源码输入、选区、历史、行坐标、滚动容器或块 spacer |
 | 大纲状态 | `src/app/services/outlineState.ts` | — | 大纲展开/折叠/可见性/激活项计算 |
+| 大纲浮窗定位 | `src/app/actions/outlinePanelDrag.ts`, `src/app/services/outlinePanelPosition.ts` | `EditorWorkspace.svelte`, `AppTitleBar.svelte`, `appCommands.ts` | 顶部区域拖动、编辑区边界约束、位置记忆与菜单重置；不参与章节重排或正文排版 |
 | TOC 服务 | `src/lib/toc/tocService.ts` | `src/lib/editor-core/nodeViews/TocBlockNodeView.ts`, `src/lib/outline/outlineService.ts` | 生成 TOC Markdown/目录项数据，标题字面符号转义与统一跳转 |
 
 ### 渲染服务
@@ -616,7 +617,7 @@
 
 **Called by:** `src/app/components/AppShell.svelte`
 
-**Depends on:** `src/app/i18n.ts`, `src/app/services/platform.ts`, `WindowsCaptionControls.svelte`, `@lucide/svelte`
+**Depends on:** `src/app/i18n.ts`, `src/app/services/platform.ts`, `src/app/services/outlinePanelPosition.ts`, `WindowsCaptionControls.svelte`, `@lucide/svelte`
 
 **Change this when：**
 - 添加/移除自定义标题栏菜单项。
@@ -669,6 +670,7 @@
 - Front Matter 卡片、大纲面板
 - 大纲标题与空白区域的导航、展开/折叠、复制标题和隐藏大纲菜单项
 - 大纲整行 Pointer 拖拽状态机、三区落点提示、延时展开与边缘滚动
+- 大纲顶部区域（含标题及周围留白）通过 `src/app/actions/outlinePanelDrag.ts` 移动面板；`src/app/services/outlinePanelPosition.ts` 保存编辑区内偏移并提供统一重置入口，拖动和归位沿用同一正文避让规则，不改变正文排版
 - 外部变更提示
 - 模式切换（语义编辑/源码编辑/只读/大文档提示）
 
@@ -678,7 +680,7 @@
 
 **Called by:** `src/app/components/AppShell.svelte`
 
-**Depends on:** `FrontMatterCard.svelte`, `MarkdownSourceEditor.svelte`, `src/app/services/markdownScrollSyncWorkspace.ts`, `src/lib/editor-core/types.ts`, `src/lib/outline/outlineReorder.ts`
+**Depends on:** `FrontMatterCard.svelte`, `MarkdownSourceEditor.svelte`, `src/app/services/markdownScrollSyncWorkspace.ts`, `src/lib/editor-core/types.ts`, `src/lib/outline/outlineReorder.ts`, `src/app/actions/outlinePanelDrag.ts`, `src/app/services/outlinePanelPosition.ts`
 
 **Change this when：**
 - 修改编辑区布局
@@ -1311,7 +1313,7 @@
 
 **Called by:** `src/app/App.svelte`
 
-**Depends on:** `src/lib/editor-core/types.ts`, `src/app/services/settings.ts`
+**Depends on:** `src/lib/editor-core/types.ts`, `src/app/services/settings.ts`, `src/app/services/outlinePanelPosition.ts`
 
 **Change this when：**
 - 添加新的应用级命令

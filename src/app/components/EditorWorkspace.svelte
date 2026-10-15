@@ -2,6 +2,8 @@
   import { ChevronDown, ChevronsDownUp, ChevronsUpDown } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import { slide } from 'svelte/transition';
+  import { outlinePanelDrag } from '../actions/outlinePanelDrag';
+  import { resetOutlinePanelPosition } from '../services/outlinePanelPosition';
   import type { ContextMenuItem, ContextMenuRequest, EditorCore } from '../../lib/editor-core';
   import type { FrontMatterBlock } from '../../lib/markdown/frontMatter';
   import type { OutlineItem } from '../../lib/outline/outlineService';
@@ -871,6 +873,7 @@
         action: collapseAllOutline,
       },
       outlineSeparator(),
+      { label: t.resetOutlinePosition(), icon: 'undo', action: resetOutlinePanelPosition },
       { label: t.hideOutline(), icon: 'outline', action: toggleOutlineVisible },
     ];
   }
@@ -1066,13 +1069,14 @@
       <aside
         bind:this={outlinePanel}
         class="content-outline"
+        use:outlinePanelDrag
         class:outline-dragging={outlineDragging}
         class:outline-readonly={readonlyDocumentMode}
         aria-label={t.documentOutline()}
         transition:outlinePanelTransition
         on:contextmenu={handleOutlineContextMenu}
       >
-        <div class="content-outline-header">
+        <div class="content-outline-header" title={t.dragOutlinePanel()}>
           <strong>{t.documentOutline()}</strong>
           {#if hasExpandableOutline}
             <button

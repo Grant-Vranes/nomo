@@ -203,7 +203,7 @@ describe('App outline layout', () => {
 
   it('keeps the document centered until it needs to avoid the floating outline', () => {
     const documentLayouts =
-      editorSource.match(/<div class="document-layout">[\s\S]*?<\/div>/g) ?? [];
+      editorSource.match(/<div\s+class="document-layout"[^>]*>[\s\S]*?<\/div>/g) ?? [];
     const adaptiveDocumentStyles = extractCssBlock(
       documentStylesSource,
       '.editor-grid:has(> .content-outline) .document-layout',
@@ -225,6 +225,11 @@ describe('App outline layout', () => {
     expect(documentStylesSource).toMatch(
       /\.editor-grid:has\(> \.content-outline\) \.document-layout > \.front-matter-card\s*\{[\s\S]*?grid-column:\s*2;/,
     );
+    expect(documentStylesSource).not.toContain('data-floating');
+    const outlineTopRegion = extractCssBlock(outlineStylesSource, '.content-outline-header');
+    expect(outlineTopRegion).toMatch(/min-height:\s*54px;/);
+    expect(outlineTopRegion).toMatch(/margin:\s*-14px -14px 0;/);
+    expect(outlineTopRegion).toMatch(/padding:\s*14px 14px 12px;/);
     expect(outlineStyles).toMatch(/position:\s*fixed;/);
     expect(outlineStyles).toMatch(/width:\s*220px;/);
     expect(outlineStyles).toMatch(/right:\s*clamp\(32px,\s*3\.5cqw,\s*160px\);/);

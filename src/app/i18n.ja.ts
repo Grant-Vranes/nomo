@@ -405,6 +405,8 @@ export const JA_JP_EXTRA_TRANSLATIONS = {
   mode: '編集モード',
   showOutline: '文書のアウトラインを表示',
   hideOutline: '文書のアウトラインを非表示にする',
+  resetOutlinePosition: 'アウトラインの位置をリセット',
+  dragOutlinePanel: '上部をドラッグしてアウトラインを移動',
   showToolbar: 'ツールバーを表示',
   hideToolbar: 'ツールバーを非表示',
   semanticEditingTitle: 'セマンティック編集',

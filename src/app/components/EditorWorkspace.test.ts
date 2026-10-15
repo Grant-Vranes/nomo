@@ -5,16 +5,107 @@ import { extractOutline } from '../../lib/outline/outlineService';
 import EditorWorkspace from './EditorWorkspace.svelte';
 import type { MarkdownSourceEditorHandle } from './markdownSourceEditor';
 import type { EditorCore } from '../../lib/editor-core';
+import { resetOutlinePanelPosition } from '../services/outlinePanelPosition';
+import { executeDesktopCommand, type AppCommandHandlers } from '../services/appCommands';
 
 type Props = ComponentProps<typeof EditorWorkspace>;
 
 afterEach(() => {
   vi.useRealTimers();
   cleanup();
+  resetOutlinePanelPosition();
   vi.restoreAllMocks();
 });
 
 describe('EditorWorkspace outline drag', () => {
+  it('moves from the top region including its blank space, saves on release and restores across mounts', async () => {
+    const moveOutlineSection = vi.fn(() => true);
+    const rendered = render(EditorWorkspace, {
+      props: createProps('# One\n# Two', { moveOutlineSection }),
+    });
+    const { panel, title } = mockPanelGeometry(rendered.container);
+    const capture = mockPointerCapture(title);
+    await dispatchPointer(title, 'pointerdown', { clientX: 920, clientY: 180 });
+    await dispatchPointer(window, 'pointermove', { clientX: 620, clientY: 220 });
+    expect(panel.style.left).toBe('500px');
+    expect(panel.style.top).toBe('108px');
+    expect(panel.hasAttribute('data-floating')).toBe(false);
+    expect(window.localStorage.getItem('newmd.outline.position.v1')).toBeNull();
+    expect(rendered.container.querySelector('.outline-drag-preview')).toBeNull();
+    await dispatchPointer(window, 'pointerup', { clientX: 620, clientY: 220 });
+    expect(panel.hasAttribute('data-floating')).toBe(true);
+    expect(JSON.parse(window.localStorage.getItem('newmd.outline.position.v1')!)).toEqual({ left: 500, top: 108 });
+    expect(moveOutlineSection).not.toHaveBeenCalled();
+    expect(capture.release).toHaveBeenCalledOnce();
+    const rows = [...panel.querySelectorAll<HTMLElement>('.content-outline-row')];
+    rows[1].getBoundingClientRect = () => new DOMRect(500, 30, 220, 30);
+    mockPointerCapture(rows[0]);
+    await dragTo(rows[0], rows[1], 45);
+    expect(moveOutlineSection).toHaveBeenCalledWith({ sourceIndex: 0, targetIndex: 1, placement: 'inside' });
+    expect(panel.style.left).toBe('500px');
+    expect(JSON.parse(window.localStorage.getItem('newmd.outline.position.v1')!)).toEqual({ left: 500, top: 108 });
+    rendered.unmount();
+
+    const reopened = render(EditorWorkspace, { props: createProps('# Another document') });
+    const geometry = mockPanelGeometry(reopened.container);
+    await fireEvent(window, new Event('resize'));
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    expect(geometry.panel.style.left).toBe('500px');
+    expect(geometry.panel.style.top).toBe('108px');
+    expect(geometry.panel.hasAttribute('data-floating')).toBe(true);
+  });
+
+  it('excludes the bulk button and cancels title movement without saving', async () => {
+    const rendered = render(EditorWorkspace, {
+      props: createProps('# Parent\n## Child', { isOutlineItemExpandable: (index) => index === 0 }),
+    });
+    const { panel, title } = mockPanelGeometry(rendered.container);
+    const capture = mockPointerCapture(title);
+    const button = panel.querySelector('.outline-bulk-toggle')!;
+    await dispatchPointer(button, 'pointerdown', { clientX: 920, clientY: 180 });
+    await dispatchPointer(window, 'pointermove', { clientX: 620, clientY: 220 });
+    expect(capture.set).not.toHaveBeenCalled();
+    expect(panel.hasAttribute('data-positioned')).toBe(false);
+
+    for (const cancelType of ['escape', 'pointercancel', 'blur', 'lostpointercapture']) {
+      await dispatchPointer(title, 'pointerdown', { clientX: 920, clientY: 180 });
+      await dispatchPointer(window, 'pointermove', { clientX: 620, clientY: 220 });
+      expect(panel.hasAttribute('data-positioned')).toBe(true);
+      if (cancelType === 'escape') await fireEvent.keyDown(window, { key: 'Escape' });
+      else if (cancelType === 'blur') await fireEvent(window, new Event('blur'));
+      else await dispatchPointer(cancelType === 'lostpointercapture' ? title : window, cancelType, { clientX: 620, clientY: 220 });
+      expect(panel.hasAttribute('data-positioned')).toBe(false);
+      expect(panel.style.left).toBe('');
+      expect(window.localStorage.getItem('newmd.outline.position.v1')).toBeNull();
+    }
+  });
+
+  it('constrains restored positions without overwriting them and resets from either menu', async () => {
+    window.localStorage.setItem('newmd.outline.position.v1', JSON.stringify({ left: 9000, top: 9000 }));
+    const openContextMenu = vi.fn();
+    const rendered = render(EditorWorkspace, { props: createProps('# One', { openContextMenu }) });
+    const { panel } = mockPanelGeometry(rendered.container);
+    await fireEvent(window, new Event('resize'));
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    expect(panel.style.left).toBe('772px');
+    expect(panel.style.top).toBe('372px');
+    expect(JSON.parse(window.localStorage.getItem('newmd.outline.position.v1')!)).toEqual({ left: 9000, top: 9000 });
+
+    await fireEvent.contextMenu(panel);
+    const reset = openContextMenu.mock.lastCall![0].items.find((item: { icon: string }) => item.icon === 'undo');
+    reset.action();
+    expect(panel.hasAttribute('data-positioned')).toBe(false);
+    expect(panel.hasAttribute('data-floating')).toBe(false);
+    expect(panel.style.top).toBe('');
+    expect(window.localStorage.getItem('newmd.outline.position.v1')).toBeNull();
+
+    // 原生“视图”菜单必须使用同一重置入口，即使当前面板已隐藏。
+    window.localStorage.setItem('newmd.outline.position.v1', JSON.stringify({ left: 100, top: 80 }));
+    rendered.unmount();
+    executeDesktopCommand('reset-outline-position', {} as AppCommandHandlers);
+    expect(window.localStorage.getItem('newmd.outline.position.v1')).toBeNull();
+  });
+
   it('publishes a semantic workspace before creating source, then reuses source until unmount', async () => {
     const ready = vi.fn();
     const destroy = vi.fn();
@@ -249,6 +340,17 @@ describe('EditorWorkspace paper clicks', () => {
     expect(place).not.toHaveBeenCalled();
   });
 });
+
+function mockPanelGeometry(container: HTMLElement) {
+  const grid = container.querySelector<HTMLElement>('.editor-grid')!;
+  const panel = container.querySelector<HTMLElement>('.content-outline')!;
+  const title = panel.querySelector<HTMLElement>('.content-outline-header')!;
+  Object.defineProperties(grid, { clientWidth: { configurable: true, value: 1000 }, clientHeight: { configurable: true, value: 600 } });
+  Object.defineProperties(panel, { offsetWidth: { configurable: true, value: 220 }, offsetHeight: { configurable: true, value: 220 } });
+  grid.getBoundingClientRect = () => new DOMRect(100, 100, 1000, 600);
+  panel.getBoundingClientRect = () => new DOMRect(900, 168, 220, 220);
+  return { grid, panel, title };
+}
 
 function createProps(markdown: string, overrides: Partial<Props> = {}): Props {
   const outline = extractOutline(markdown);

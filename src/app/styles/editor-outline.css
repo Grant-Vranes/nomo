@@ -25,13 +25,30 @@
   background: color-mix(in srgb, var(--md-editor-surface) 92%, transparent);
 }
 
+/* 手动位置以所属编辑区为坐标系，保持正文与章节拖拽各自的布局和状态。 */
+.content-outline[data-positioned] {
+  position: absolute;
+  right: auto;
+  max-width: calc(100% - 16px);
+  max-height: calc(100% - 16px);
+}
+
 .content-outline-header {
+  cursor: grab;
+  touch-action: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 28px;
-  margin-bottom: 12px;
+  /* 覆盖顶部及两侧留白；标题和列表仍保持原来的视觉位置。 */
+  min-height: 54px;
+  margin: -14px -14px 0;
+  padding: 14px 14px 12px;
+}
+
+.content-outline.outline-panel-moving,
+.content-outline.outline-panel-moving .content-outline-header {
+  cursor: grabbing;
 }
 
 .content-outline-header strong {

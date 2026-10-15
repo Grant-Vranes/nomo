@@ -226,6 +226,7 @@
   max-width: none;
 }
 
+/* 正文避让只取决于大纲是否显示，移动或归位面板不改变正文排版。 */
 .editor-grid:has(> .content-outline) .document-layout {
   --md-editor-outline-safe-space: calc(224px + clamp(32px, 3.5cqw, 160px));
   grid-template-columns:
