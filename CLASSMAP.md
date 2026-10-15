@@ -257,7 +257,7 @@
 | 更新前端 IPC 适配 | `src/lib/desktop/tauriUpdater.ts` | `src/app/services/softwareUpdate.ts` | 检查/下载/安装/共享快照 IPC 契约变更 |
 | 更新后端 | `src-tauri/src/software_update.rs` | `src-tauri/src/window/tray.rs` | GitHub Release、安装形态、共享状态、下载/校验/安装器 |
 | 升级后首次启动日志 | `src-tauri/src/software_update.rs`, `src/app/components/SoftwareUpdateSuccessDialog.svelte` | `src-tauri/src/lib.rs`, `src/app/App.svelte`, `src/lib/desktop/tauriUpdater.ts` | 内置日志、最高版本与待展示记录、跨窗口领取、实际挂载确认及启动时序 |
-| 版本发布与 Pages 同步 | `.github/workflows/release.yml` | `.github/workflows/sync-pages-notes.yml`, `.github/release-notes/` | 安装包发布、MD5 生成、发布说明维护、Cloudflare/GitHub Pages 重建与线上校验 |
+| 版本发布与 Pages 同步 | `.github/workflows/release.yml` | `.github/workflows/backfill-linux-release.yml`, `.github/workflows/sync-pages-notes.yml`, `.github/release-notes/` | 安装包发布、已有稳定版的 Linux 补发、MD5 生成、发布说明维护、Cloudflare/GitHub Pages 重建与线上校验 |
 
 ### 原生系统集成
 
