@@ -79,3 +79,27 @@ export function sanitizeHtml(html: string): string {
   }
   return template.innerHTML;
 }
+
+/** 编辑器与导出共用 HTML 回退展示；源码缩进不能变成居中段落里的视觉换行。 */
+export function renderHtmlPreview(target: HTMLElement, safeHtml: string): void {
+  const template = document.createElement('template');
+  template.innerHTML = safeHtml.trim();
+  const children = Array.from(template.content.childNodes).filter(
+    node => node.nodeType !== Node.TEXT_NODE || node.textContent?.trim(),
+  );
+  const root = children.length === 1 && children[0].nodeType === Node.ELEMENT_NODE
+    ? children[0] as HTMLElement : null;
+
+  if (root?.localName === 'p') {
+    const align = root.getAttribute('align')?.toLowerCase();
+    if (align === 'left' || align === 'center' || align === 'right') {
+      target.classList.add('html-widget-aligned-paragraph');
+      target.style.display = 'block';
+      target.style.textAlign = align;
+      target.style.whiteSpace = 'normal';
+    }
+    target.innerHTML = root.innerHTML;
+    return;
+  }
+  target.innerHTML = safeHtml;
+}

@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanEditorArtifacts, createExportHtmlDocument, inlineLocalImages, resolveImagePath } from './exportService';
+import { cleanEditorArtifacts, createExportHtmlDocument, exportHtml, exportPdf, inlineLocalImages, resolveImagePath } from './exportService';
+import { captureExportAppearance } from './export/snapshot';
+import { exportHtmlFile, exportPdfFromHtml } from '../../lib/desktop/tauriStorage';
+import { save } from '@tauri-apps/plugin-dialog';
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn().mockResolvedValue(null) }));
 
 // 模拟 tauriStorage 的 readFileAsBase64，避免在单元测试中调用 Tauri。
 vi.mock('../../lib/desktop/tauriStorage', () => ({
@@ -16,6 +21,14 @@ afterEach(() => {
 });
 
 describe('exportService', () => {
+  it('取消保存对话框时 HTML/PDF 均不生成或写入文件', async () => {
+    const snapshot = { documentId: 'a', contentRevision: 1, markdown: '```mermaid\nBAD\n```', documentPath: null, title: 'a', suggestedFileName: 'a', appearance: captureExportAppearance() };
+    expect(await exportHtml(snapshot)).toEqual({ success: false, cancelled: true });
+    expect(await exportPdf(snapshot)).toEqual({ success: false, cancelled: true });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(exportHtmlFile).not.toHaveBeenCalled();
+    expect(exportPdfFromHtml).not.toHaveBeenCalled();
+  });
   it('drops auto-layout geometry but retains authored column widths and contents', () => {
     const html = cleanEditorArtifacts('<div class="nomo-table-scroll"><table data-table-layout="ready" data-table-layout-version="4" style="width:900px;table-layout:fixed;zoom:0.5"><colgroup data-table-layout-owned="true"><col style="width:899px"></colgroup><tbody><tr><th data-colwidth="180">Name</th></tr><tr><td>Value</td></tr></tbody></table></div>');
     const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -109,7 +122,7 @@ describe('exportService', () => {
     expect(output).toContain('正文内容');
   });
 
-  it('inlineLocalImages 保留 data/blob 图片链接，对 http/https 尝试转 base64', async () => {
+  it('inlineLocalImages 保留 data 图片，将 blob 和远程图片内嵌', async () => {
     const originalFetch = globalThis.fetch;
     // 模拟 fetch 返回图片 blob
     globalThis.fetch = vi.fn().mockResolvedValue({
@@ -124,9 +137,9 @@ describe('exportService', () => {
         <img src="blob:abc" />
       `;
       const { html: result, warnings } = await inlineLocalImages(html, null);
-      // data: 和 blob: 保持原样
+      // data: 保持原样；blob: 必须转为可携带的 data URL。
       expect(result).toContain('data:image/png;base64,ABC');
-      expect(result).toContain('blob:abc');
+      expect(result).not.toContain('blob:abc');
       // https:// 远程图片被转换为 base64 data URL
       expect(result).toContain('data:');
       expect(result).not.toContain('https://example.com/a.png');

@@ -1,594 +1,73 @@
+@import './document-content.css';
 @import '../../lib/table-layout/table-layout.css';
+@import './editor-toc.css';
 
-:root {
-  color-scheme: light;
-  --nomo-export-bg: #ffffff;
-  --nomo-export-fg: #202428;
-  --nomo-export-heading-fg: #171a1f;
-  --nomo-export-muted-fg: #68707a;
-  --nomo-export-link-fg: #116d8f;
-  --nomo-export-border: #dfe3e8;
-  --nomo-export-code-bg: #f5f6f8;
-  --nomo-export-code-fg: #383a42;
-  --nomo-export-code-border: #e0e2e6;
-  --nomo-export-table-border: #dfe3e8;
-  --nomo-export-table-header-bg: #f0f2f4;
-  --nomo-export-blockquote-border: #7f9f97;
-  --nomo-export-blockquote-fg: #465753;
-  --nomo-export-blockquote-bg: transparent;
-  --nomo-export-blockquote-bg-classic: #f2f4f5;
-  --nomo-export-callout-note-border: #3b82f6;
-  --nomo-export-callout-note-bg: transparent;
-  --nomo-export-callout-note-bg-classic: #f2f4f5;
-  --nomo-export-callout-note-fg: #1e40af;
-  --nomo-export-callout-tip-border: #22c55e;
-  --nomo-export-callout-tip-bg: transparent;
-  --nomo-export-callout-tip-bg-classic: #f2f4f5;
-  --nomo-export-callout-tip-fg: #166534;
-  --nomo-export-callout-important-border: #a855f7;
-  --nomo-export-callout-important-bg: transparent;
-  --nomo-export-callout-important-bg-classic: #f2f4f5;
-  --nomo-export-callout-important-fg: #6b21a8;
-  --nomo-export-callout-warning-border: #f59e0b;
-  --nomo-export-callout-warning-bg: transparent;
-  --nomo-export-callout-warning-bg-classic: #f2f4f5;
-  --nomo-export-callout-warning-fg: #92400e;
-  --nomo-export-callout-caution-border: #ef4444;
-  --nomo-export-callout-caution-bg: transparent;
-  --nomo-export-callout-caution-bg-classic: #f2f4f5;
-  --nomo-export-callout-caution-fg: #991b1b;
-  --nomo-export-radius-sm: 4px;
-  --nomo-export-radius-md: 8px;
-  --nomo-export-font-body: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-  --nomo-export-font-mono: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
+/* 独立文档只定义容器，正文外观来自共用样式和主题快照。 */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
 body {
-  margin: 0;
-  padding: 0;
+  padding: 32px 24px;
+  background: var(--md-editor-document-bg);
+  color: var(--md-editor-fg);
+  font-family: var(--md-editor-font-document);
+  font-size: var(--md-editor-font-size);
+  line-height: var(--md-editor-line-height);
 }
-
-body {
-  background: var(--nomo-export-bg);
-  color: var(--nomo-export-fg);
-  font-family: var(--nomo-export-font-body);
-  font-size: 16px;
-  line-height: 1.7;
-}
-
-/* 防止点击页面时浏览器给 body 或 article 容器添加 focus outline 黑边框 */
-body:focus,
-body:focus-visible,
-.nomo-export:focus,
-.nomo-export:focus-visible {
-  outline: none;
-}
-
 .nomo-export {
-  width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 40px clamp(24px, 6vw, 80px);
-  color: var(--nomo-export-fg);
-  font-family: var(--nomo-export-font-body);
-  font-size: 16px;
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-
-.nomo-export h1,
-.nomo-export h2,
-.nomo-export h3,
-.nomo-export h4,
-.nomo-export h5,
-.nomo-export h6 {
-  margin-top: 0;
-  color: var(--nomo-export-heading-fg);
-  line-height: 1.25;
-  letter-spacing: 0;
-  page-break-after: avoid;
-}
-
-.nomo-export h1 {
-  margin: 0 0 22px;
-  font-size: 32px;
-}
-
-.nomo-export h2 {
-  margin: 32px 0 14px;
-  font-size: 26px;
-}
-
-.nomo-export h3 {
-  margin: 24px 0 12px;
-  font-size: 21px;
-}
-
-.nomo-export h4,
-.nomo-export h5,
-.nomo-export h6 {
-  margin: 20px 0 10px;
-  font-size: 17px;
-}
-
-.nomo-export p {
-  margin: 12px 0;
-}
-
-.nomo-export a {
-  color: var(--nomo-export-link-fg);
-  text-decoration: underline;
-}
-
-.nomo-export strong {
-  font-weight: 700;
-}
-
-.nomo-export em {
-  font-style: italic;
-}
-
-.nomo-export s {
-  text-decoration: line-through;
-}
-
-.nomo-export ul,
-.nomo-export ol {
-  margin: 12px 0;
-  padding-left: 1.6em;
-}
-
-.nomo-export li {
-  margin: 4px 0;
-}
-
-.nomo-export li > ul,
-.nomo-export li > ol {
-  margin: 4px 0;
-}
-
-.nomo-export img {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  margin: 12px 0;
-}
-
-.nomo-export img[src*='img.shields.io'],
-.nomo-export img[src*='badgen.net'] {
-  display: inline-block;
-  width: auto;
-  height: 20px;
-  margin: 2px 4px;
-  vertical-align: text-bottom;
-}
-
-.nomo-export a:has(img[src*='img.shields.io']),
-.nomo-export a:has(img[src*='badgen.net']) {
-  display: inline-flex;
-  align-items: center;
-  margin: 2px 4px;
-  line-height: 1;
-  text-decoration: none;
-  vertical-align: text-bottom;
-}
-
-.nomo-export a:has(img[src*='img.shields.io']) img,
-.nomo-export a:has(img[src*='badgen.net']) img {
-  margin: 0;
-}
-
-.nomo-export hr {
-  margin: 24px 0;
-  border: 0;
-  border-top: 1px solid var(--nomo-export-border);
-}
-
-.nomo-export blockquote {
-  position: relative;
-  margin: 18px 0;
-  padding: 12px 16px;
-  border-radius: 10px;
-  background: var(--nomo-export-blockquote-bg);
-  color: var(--nomo-export-blockquote-fg);
-}
-
-.nomo-export blockquote::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 4px;
-  border-radius: 2px;
-  background: var(--nomo-export-blockquote-border);
-  pointer-events: none;
-}
-
-.nomo-export blockquote > :first-child {
-  margin-top: 0;
-}
-
-.nomo-export blockquote > :last-child {
-  margin-bottom: 0;
-}
-
-.nomo-export .callout-card {
-  position: relative;
-  margin: 18px 0;
-  padding: 12px 16px;
-  border-radius: 10px;
-  background: var(--nomo-export-callout-note-bg);
-  color: var(--nomo-export-callout-note-fg);
-  overflow: hidden;
-}
-
-.nomo-export .callout-card::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 4px;
-  border-radius: 2px;
-  background: var(--nomo-export-callout-note-border);
-  pointer-events: none;
-}
-
-.nomo-export .callout-card[data-callout-type='note'] {
-  background: var(--nomo-export-callout-note-bg);
-  color: var(--nomo-export-callout-note-fg);
-}
-
-.nomo-export .callout-card[data-callout-type='note']::before {
-  background: var(--nomo-export-callout-note-border);
-}
-
-.nomo-export .callout-card[data-callout-type='tip'] {
-  background: var(--nomo-export-callout-tip-bg);
-  color: var(--nomo-export-callout-tip-fg);
-}
-
-.nomo-export .callout-card[data-callout-type='tip']::before {
-  background: var(--nomo-export-callout-tip-border);
-}
-
-.nomo-export .callout-card[data-callout-type='important'] {
-  background: var(--nomo-export-callout-important-bg);
-  color: var(--nomo-export-callout-important-fg);
-}
-
-.nomo-export .callout-card[data-callout-type='important']::before {
-  background: var(--nomo-export-callout-important-border);
-}
-
-.nomo-export .callout-card[data-callout-type='warning'] {
-  background: var(--nomo-export-callout-warning-bg);
-  color: var(--nomo-export-callout-warning-fg);
-}
-
-.nomo-export .callout-card[data-callout-type='warning']::before {
-  background: var(--nomo-export-callout-warning-border);
-}
-
-.nomo-export .callout-card[data-callout-type='caution'] {
-  background: var(--nomo-export-callout-caution-bg);
-  color: var(--nomo-export-callout-caution-fg);
-}
-
-.nomo-export .callout-card[data-callout-type='caution']::before {
-  background: var(--nomo-export-callout-caution-border);
-}
-
-.nomo-export .callout-card > :first-child {
-  margin-top: 0;
-}
-
-.nomo-export .callout-card > :last-child {
-  margin-bottom: 0;
-}
-
-.nomo-export code {
-  padding: 2px 5px;
-  border-radius: var(--nomo-export-radius-sm);
-  background: rgba(245, 246, 248, 0.88);
-  color: var(--nomo-export-code-fg);
-  font-family: var(--nomo-export-font-mono);
-  font-size: 0.92em;
-}
-
-.nomo-export .code-card {
-  --code-gutter-width: 32px;
-  --code-content-padding-left: 12px;
-  --code-content-padding-right: 16px;
-  --code-content-padding-block: 12px;
-  --code-line-height: 18px;
-  position: relative;
-  margin: 18px 0;
-  border: 1px solid var(--nomo-export-code-border);
-  border-radius: var(--nomo-export-radius-md);
-  background: var(--nomo-export-code-bg);
-  color: var(--nomo-export-code-fg);
-  page-break-inside: avoid;
-}
-
-.nomo-export .code-card header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 38px;
-  padding: 0 10px 0 14px;
-  border-bottom: 1px solid var(--nomo-export-code-border);
-  color: rgba(56, 58, 66, 0.82);
-  font-family: var(--nomo-export-font-mono);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.nomo-export .code-card header div {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.nomo-export .code-card pre {
-  max-width: 100%;
-  margin: 0;
-  overflow-x: auto;
-  background: transparent;
-}
-
-.nomo-export .code-card code {
-  display: block;
-  min-width: max-content;
-  padding: var(--code-content-padding-block) var(--code-content-padding-right)
-    var(--code-content-padding-block) var(--code-content-padding-left);
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  font-family: var(--nomo-export-font-mono);
-  font-size: 13px;
-  line-height: var(--code-line-height);
-  white-space: pre;
-}
-
-.nomo-export .code-card .code-body {
-  display: flex;
-  overflow: hidden;
-}
-
-.nomo-export .code-card .line-numbers-gutter {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--nomo-export-code-border);
-  overflow: hidden;
-}
-
-.nomo-export .code-card .line-numbers-wrapper {
-  padding: var(--code-content-padding-block) 0;
-}
-
-.nomo-export .code-card .line-numbers-gutter span {
-  display: block;
-  padding: 0 8px 0 6px;
-  color: rgba(56, 58, 66, 0.42);
-  text-align: right;
-  font-family: var(--nomo-export-font-mono);
-  font-size: 13px;
-  line-height: var(--code-line-height);
-  white-space: nowrap;
-}
-
-.nomo-export .code-card .code-content {
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.nomo-export .code-card .code-line {
-  display: grid;
-  grid-template-columns: var(--code-gutter-width) minmax(0, 1fr);
-  min-height: 22px;
-}
-
-.nomo-export .code-card .line-number {
-  padding: 0 8px 0 6px;
-  color: rgba(56, 58, 66, 0.42);
-  text-align: right;
-}
-
-.nomo-export .code-card .line-content {
-  padding-right: 16px;
-  white-space: pre;
-}
-
-/* 支持 .table-scroll 包裹的表格（tableHtml 插件渲染的管道表格） */
-.nomo-export .table-scroll {
-  max-width: 100%;
-  margin: 18px 0;
-  overflow-x: auto;
-  border: 1px solid var(--nomo-export-table-border);
-  border-radius: var(--nomo-export-radius-md);
-  background: #ffffff;
-  page-break-inside: avoid;
-}
-
-.nomo-export .table-scroll table {
-  width: auto;
-  max-width: 100%;
-  border-collapse: collapse;
-  table-layout: auto;
-  font-size: 14px;
-}
-
-.nomo-export .table-scroll th,
-.nomo-export .table-scroll td {
-  min-width: 90px;
-  padding: 10px 12px;
-  border-right: 1px solid var(--nomo-export-table-border);
-  border-bottom: 1px solid var(--nomo-export-table-border);
-  text-align: left;
-  vertical-align: top;
-}
-
-.nomo-export .table-scroll th {
-  background: var(--nomo-export-table-header-bg);
-  color: var(--nomo-export-heading-fg);
-  font-weight: 700;
-}
-
-.nomo-export .table-scroll tr:last-child td {
-  border-bottom: 0;
-}
-
-.nomo-export .table-scroll th:last-child,
-.nomo-export .table-scroll td:last-child {
-  border-right: 0;
-}
-
-/* 支持无 .table-scroll 包裹的纯 table（prosemirror-tables 渲染的表格） */
-.nomo-export table {
-  width: auto;
-  max-width: 100%;
-  margin: 18px 0;
-  border-collapse: collapse;
-  table-layout: auto;
-  font-size: 14px;
-  border: 1px solid var(--nomo-export-table-border);
-  border-radius: var(--nomo-export-radius-md);
-  background: #ffffff;
-  page-break-inside: avoid;
-}
-
-.nomo-export table th,
-.nomo-export table td {
-  min-width: 90px;
-  padding: 10px 12px;
-  border-right: 1px solid var(--nomo-export-table-border);
-  border-bottom: 1px solid var(--nomo-export-table-border);
-  text-align: left;
-  vertical-align: top;
-}
-
-.nomo-export table th {
-  background: var(--nomo-export-table-header-bg);
-  color: var(--nomo-export-heading-fg);
-  font-weight: 700;
-}
-
-.nomo-export table tr:last-child td {
-  border-bottom: 0;
-}
-
-.nomo-export table th:last-child,
-.nomo-export table td:last-child {
-  border-right: 0;
-}
-
-.nomo-export .task-row {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  margin: 8px 0;
-}
-
-.nomo-export .task-row input {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 1.15em;
-  height: 1.15em;
-  margin: 0;
-  padding: 0;
-  border: 0.09em solid var(--nomo-export-border);
-  border-radius: var(--nomo-export-radius-sm);
-  background-color: #ffffff;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 0 0;
-  flex-shrink: 0;
-  box-sizing: border-box;
-}
-
-.nomo-export .task-row input:checked {
-  background-color: #2f7d6f;
-  border-color: #2f7d6f;
-  background-size: 0.75em 0.75em;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
-}
-
-.nomo-export .mermaid-block {
-  margin: 18px 0;
-  page-break-inside: avoid;
-}
-
-.nomo-export .mermaid-block-rendered {
-  display: flex;
-  justify-content: center;
-}
-
-.nomo-export .mermaid-block-rendered svg {
-  max-width: 100%;
-  height: auto;
-}
-
-.nomo-export .footnote {
-  margin: 18px 0 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--nomo-export-border);
-  font-size: 14px;
-}
-
-.nomo-export .footnote-item {
-  margin: 6px 0;
-}
-
-.nomo-export .footnote-backlink {
-  color: var(--nomo-export-link-fg);
-  text-decoration: none;
-}
-
+  width: 100%; max-width: var(--nomo-export-width, 960px); min-height: 0;
+  margin: 0 auto; padding: 0; outline: none; overflow-wrap: anywhere;
+}
+.nomo-export p { margin: 1em 0; }
+.nomo-export .html-widget-aligned-paragraph { margin: 1em 0; }
+.nomo-export h4, .nomo-export h5, .nomo-export h6 { color: var(--md-editor-heading-fg); }
+.nomo-export hr { border: 0; border-top: 1px solid var(--md-editor-border); margin: 24px 0; }
+.nomo-export img { min-width: 0; min-height: 0; height: auto; user-select: auto; }
+.nomo-export .task-checkbox-widget, .nomo-export .footnote-ref, .nomo-export .footnote-def-marker { cursor: default; }
+.nomo-export .task-checkbox-widget { user-select: none; }
+.nomo-export .callout-header { user-select: text; }
+.nomo-export .mermaid-block-rendered { display: flex; justify-content: center; }
+.nomo-export .mermaid-block-rendered svg { display: block; max-width: 100%; height: auto; }
+.nomo-export .mermaid-block, .nomo-export .math-block { cursor: default; }
+.nomo-export .math-block { overflow-x: auto; }
+.nomo-export .code-card .export-code {
+  margin: 0; padding: 12px 0; border: 0; border-radius: 0;
+  overflow-x: auto; background: transparent;
+}
+.nomo-export .export-code code { padding: 0; font: var(--code-font); white-space: pre; }
+.nomo-export .export-code .code-line { display: block; position: relative; padding-left: 4.5em; min-height: var(--code-line-height); }
+.nomo-export .export-code .code-line::before {
+  content: attr(data-line); position: absolute; left: 0; width: 3.5em; padding-right: 0.75em;
+  border-right: 1px solid var(--md-editor-code-border);
+  color: color-mix(in srgb, var(--md-editor-code-fg) 42%, transparent); text-align: right; user-select: none;
+}
+.nomo-export .export-code .line-content { display: block; padding-right: 16px; white-space: pre; }
+.nomo-export .toc-link { text-decoration: none; }
+.nomo-export .toc-text { white-space: normal; overflow: visible; }
+.nomo-export .footnote-ref a { color: inherit; text-decoration: none; }
+.nomo-export .nomo-export-source { white-space: pre-wrap; overflow-wrap: anywhere; }
+.nomo-export .nomo-render-error { display: block; color: var(--md-editor-danger); font-size: 0.85em; white-space: normal; }
+@media (max-width: 600px) { body { padding: 20px 16px; } }
+
+/* 准备阶段就启用打印几何，排版器测量与原生 print 媒体使用同一组度量。 */
+body.nomo-print-document { padding: 0; }
+.nomo-export.nomo-print { max-width: none; }
+.nomo-export.nomo-print .export-code,
+.nomo-export.nomo-print .export-code code { overflow: visible; min-width: 0; white-space: pre-wrap; }
+.nomo-export.nomo-print .export-code .line-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+.nomo-export.nomo-print .export-code .code-line { break-inside: avoid; }
+.nomo-export.nomo-print .nomo-table-scroll { overflow: visible; }
+.nomo-export.nomo-print table { break-inside: auto; }
+.nomo-export.nomo-print thead { display: table-header-group; }
+.nomo-export.nomo-print tr { break-inside: avoid; }
+.nomo-export.nomo-print .nomo-print-keep { break-inside: avoid; }
+.nomo-export.nomo-print .nomo-print-split,
+.nomo-export.nomo-print blockquote,
+.nomo-export.nomo-print .callout-card { break-inside: auto; overflow: visible; }
+.nomo-export.nomo-print h1, .nomo-export.nomo-print h2, .nomo-export.nomo-print h3,
+.nomo-export.nomo-print h4, .nomo-export.nomo-print h5, .nomo-export.nomo-print h6,
+.nomo-export.nomo-print .code-card header, .nomo-export.nomo-print .callout-header { break-after: avoid; }
+.nomo-export.nomo-print p { orphans: 2; widows: 2; }
 @media print {
-  body {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  .nomo-export {
-    padding: 24px clamp(16px, 4vw, 40px);
-    max-width: none;
-  }
-
-  .nomo-export h1,
-  .nomo-export h2,
-  .nomo-export h3,
-  .nomo-export h4,
-  .nomo-export h5,
-  .nomo-export h6 {
-    page-break-after: avoid;
-  }
-
-  .nomo-export .code-card,
-  .nomo-export .table-scroll,
-  .nomo-export table,
-  .nomo-export img {
-    page-break-inside: avoid;
-  }
-
-  .nomo-export pre {
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
+  html, body { padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .nomo-export { max-width: none; }
 }

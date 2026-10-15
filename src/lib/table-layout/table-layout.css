@@ -42,15 +42,12 @@
   max-width: 100%;
   min-width: 0;
 }
-.nomo-export .nomo-table-scroll {
-  margin: 18px 0;
-}
 .nomo-export .nomo-table-scroll th:last-child,
 .nomo-export .nomo-table-scroll td:last-child {
-  border-right: 1px solid var(--nomo-export-table-border);
+  border-right: 1px solid var(--md-editor-table-border);
 }
 .nomo-export .nomo-table-scroll tr:last-child td {
-  border-bottom: 1px solid var(--nomo-export-table-border);
+  border-bottom: 1px solid var(--md-editor-table-border);
 }
 @media print {
   .nomo-export .nomo-table-scroll {

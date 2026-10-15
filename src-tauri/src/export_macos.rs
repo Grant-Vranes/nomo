@@ -73,16 +73,25 @@ fn prepare_and_print_webview(
     } else {
         width
     };
+    let page_height = if input.orientation.as_deref() == Some("landscape") {
+        width
+    } else {
+        height
+    };
     let margins = input.margins.as_ref();
     let content_width = (page_width
         - millimeters_to_points(margins.map(|v| v.left))
         - millimeters_to_points(margins.map(|v| v.right)))
         / POINTS_PER_MILLIMETER;
+    let content_height = (page_height
+        - millimeters_to_points(margins.map(|v| v.top))
+        - millimeters_to_points(margins.map(|v| v.bottom)))
+        / POINTS_PER_MILLIMETER;
     let script = NSString::from_str(
         &r#"
 if (document.getElementById('nomo-typography-options')) {
   if (!window.__NOMO_PREPARE_PRINT__) throw new Error('Typography runtime unavailable');
-  await window.__NOMO_PREPARE_PRINT__(__CONTENT_WIDTH__);
+  await window.__NOMO_PREPARE_PRINT__(__CONTENT_WIDTH__, __CONTENT_HEIGHT__);
 }
 if (document.fonts && document.fonts.ready) {
   await document.fonts.ready;
@@ -96,7 +105,8 @@ await Promise.all(Array.from(document.images).map((image) => {
 }));
 return true;
 "#
-        .replace("__CONTENT_WIDTH__", &content_width.to_string()),
+        .replace("__CONTENT_WIDTH__", &content_width.to_string())
+        .replace("__CONTENT_HEIGHT__", &content_height.to_string()),
     );
     let handler = RcBlock::new(move |_value: *mut AnyObject, error: *mut NSError| {
         if !error.is_null() {

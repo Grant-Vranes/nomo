@@ -1,11 +1,12 @@
 import { createDomTypography, waitForTypographyAssets } from './dom';
 import { DEFAULT_TYPOGRAPHY, type TypographyOptions } from './types';
 import { createExportTableLayout } from '../table-layout/export';
+import { preparePrintDocument, classifyPrintBlocks } from './exportPrint';
 
 declare global {
   interface Window {
     __NOMO_FLUSH_TYPOGRAPHY__?: () => Promise<void>;
-    __NOMO_PREPARE_PRINT__?: (widthMm: number) => Promise<void>;
+    __NOMO_PREPARE_PRINT__?: (widthMm: number, heightMm?: number) => Promise<void>;
   }
 }
 
@@ -18,22 +19,29 @@ if (root) {
   const controller = createDomTypography(root, options);
   const tables = createExportTableLayout(root);
   let printing = false;
-  window.__NOMO_FLUSH_TYPOGRAPHY__ = async () => {
-    await waitForTypographyAssets(root);
+  const abort = new AbortController();
+  let pending = Promise.resolve();
+  const enqueue = (operation: () => Promise<void>) => {
+    const result = pending.then(() => { abort.signal.throwIfAborted(); return operation(); });
+    pending = result.catch(() => undefined);
+    return result;
+  };
+  const flush = async () => {
+    await waitForTypographyAssets(root, 20_000, abort.signal);
+    abort.signal.throwIfAborted();
     await tables.flush(printing);
     controller.invalidate();
     await controller.flush();
   };
-  window.__NOMO_PREPARE_PRINT__ = async (widthMm) => {
-    if (!Number.isFinite(widthMm) || widthMm <= 0) throw new Error('Invalid print width');
-    root.style.setProperty('width', `${widthMm}mm`, 'important');
-    root.style.setProperty('max-width', 'none', 'important');
-    root.style.setProperty('padding', '0', 'important');
-    root.style.setProperty('margin', '0', 'important');
+  window.__NOMO_FLUSH_TYPOGRAPHY__ = () => enqueue(flush);
+  window.__NOMO_PREPARE_PRINT__ = (widthMm, heightMm = 257) => enqueue(async () => {
+    preparePrintDocument(root, widthMm, heightMm);
     printing = true;
-    await window.__NOMO_FLUSH_TYPOGRAPHY__!();
-  };
-  window.addEventListener('pagehide', () => { tables.destroy(); controller.destroy(); }, { once: true });
+    await flush();
+    abort.signal.throwIfAborted();
+    classifyPrintBlocks(root, heightMm);
+  });
+  window.addEventListener('pagehide', () => { abort.abort(); tables.destroy(); controller.destroy(); }, { once: true });
   void window.__NOMO_FLUSH_TYPOGRAPHY__().catch(() => {
     root.dataset.kpState = 'error';
   });

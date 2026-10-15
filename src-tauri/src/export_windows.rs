@@ -41,10 +41,19 @@ async fn wait_for_document_ready(
     } else {
         width
     };
+    let page_height = if input.orientation.as_deref() == Some("landscape") {
+        width
+    } else {
+        height
+    };
     let margins = input.margins.as_ref();
     let content_width = (page_width
         - millimeters_to_inches(margins.map(|v| v.left))
         - millimeters_to_inches(margins.map(|v| v.right)))
+        * MILLIMETERS_PER_INCH;
+    let content_height = (page_height
+        - millimeters_to_inches(margins.map(|v| v.top))
+        - millimeters_to_inches(margins.map(|v| v.bottom)))
         * MILLIMETERS_PER_INCH;
     let sequence = DOCUMENT_READY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let ready_title = format!("nomo-pdf-document-ready-{sequence}");
@@ -53,7 +62,7 @@ async fn wait_for_document_ready(
 (async () => {
   if (document.getElementById('nomo-typography-options')) {
     if (!window.__NOMO_PREPARE_PRINT__) throw new Error('Typography runtime unavailable');
-    await window.__NOMO_PREPARE_PRINT__(__CONTENT_WIDTH__);
+    await window.__NOMO_PREPARE_PRINT__(__CONTENT_WIDTH__, __CONTENT_HEIGHT__);
   }
   if (document.fonts && document.fonts.ready) {
     await document.fonts.ready;
@@ -71,6 +80,7 @@ async fn wait_for_document_ready(
 })
 "#
     .replace("__CONTENT_WIDTH__", &content_width.to_string())
+    .replace("__CONTENT_HEIGHT__", &content_height.to_string())
     .replace("__READY_TITLE__", &ready_title)
     .replace("__ERROR_TITLE__", &error_title);
     let (result_tx, result_rx) = oneshot::channel();

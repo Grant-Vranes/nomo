@@ -1,18 +1,19 @@
-import { resolveImagePath } from './exportImagePath';
 export { resolveImagePath } from './exportImagePath';
 import { restoreMermaidExportSize } from '../../lib/services/mermaidDiagramView';
 import {
   exportHtmlFile,
   exportPdfFromHtml,
-  readFileAsBase64,
 } from '../../lib/desktop/tauriStorage';
 import { logDebug, logInfo, logWarn } from '../../lib/services/logger';
 import exportCssContent from '../styles/export-document.css?inline';
 import typographyRuntime from 'virtual:nomo-typography-runtime';
 import katexCss from 'virtual:nomo-katex-css';
-import { getTypographyOptions } from '../../lib/typography/options';
+import { captureExportAppearance } from './export/snapshot';
+import { renderExportBody } from './export/render';
+import { throwIfExportAborted, type ExportSnapshot, type ExportAppearance, type ExportTaskOptions } from './export/types';
+export { inlineLocalImages } from './export/images';
+import { inlineLocalImages } from './export/images';
 
-const REMOTE_IMAGE_FETCH_TIMEOUT_MS = 8_000;
 const PDF_OUTLINE_MARKER_HOST = 'nomo-pdf-outline.invalid';
 
 interface PdfOutlineEntry {
@@ -21,18 +22,7 @@ interface PdfOutlineEntry {
   level: number;
 }
 
-export interface ExportDocumentInput {
-  /** 当前文档 Markdown 内容（用于 fallback 或元数据）。 */
-  markdown: string;
-  /** 编辑器渲染后的 HTML，从 editorHost.innerHTML 获取。 */
-  renderedHtml: string;
-  /** 当前文档磁盘路径，用于解析相对图片路径。 */
-  documentPath: string | null;
-  /** 导出文件名建议，不含扩展名。 */
-  suggestedFileName: string;
-  /** 文档标题，用于 HTML <title>。 */
-  title: string;
-}
+export type ExportDocumentInput = ExportSnapshot;
 
 export interface ExportResult {
   success: boolean;
@@ -45,18 +35,13 @@ export interface ExportResult {
 /**
  * 导出当前文档为单文件 HTML。
  */
-export async function exportHtml(input: ExportDocumentInput): Promise<ExportResult> {
+export async function exportHtml(input: ExportDocumentInput, options: ExportTaskOptions = {}): Promise<ExportResult> {
   return perfAsync('exportService', 'exportHtml', async () => {
+    throwIfExportAborted(options.signal);
     logInfo('exportService', '开始导出 HTML', {
       title: input.title,
       documentPath: input.documentPath,
     });
-
-    const { html, warnings } = await buildExportDocument(
-      input.renderedHtml,
-      input.documentPath,
-      input.title,
-    );
 
     const defaultName = input.suggestedFileName || 'Untitled';
     const filePath = await pickSavePath(`${defaultName}.html`, [
@@ -68,6 +53,8 @@ export async function exportHtml(input: ExportDocumentInput): Promise<ExportResu
       return { success: false, cancelled: true };
     }
 
+    const { html, warnings } = await buildExportDocument(input, options);
+    throwIfExportAborted(options.signal);
     const result = await exportHtmlFile({ html_content: html, file_path: filePath });
     logInfo('exportService', 'HTML 导出完成', { filePath, bytes: result.bytes_written });
     return { success: true, filePath, warnings };
@@ -81,18 +68,13 @@ export async function exportHtml(input: ExportDocumentInput): Promise<ExportResu
 /**
  * 导出当前文档为 PDF（复用同一份内嵌图片的 HTML）。
  */
-export async function exportPdf(input: ExportDocumentInput): Promise<ExportResult> {
+export async function exportPdf(input: ExportDocumentInput, options: ExportTaskOptions = {}): Promise<ExportResult> {
   return perfAsync('exportService', 'exportPdf', async () => {
+    throwIfExportAborted(options.signal);
     logInfo('exportService', '开始导出 PDF', {
       title: input.title,
       documentPath: input.documentPath,
     });
-
-    const { html, warnings } = await buildExportDocument(
-      input.renderedHtml,
-      input.documentPath,
-      input.title,
-    );
 
     const defaultName = input.suggestedFileName || 'Untitled';
     const filePath = await pickSavePath(`${defaultName}.pdf`, [
@@ -104,6 +86,8 @@ export async function exportPdf(input: ExportDocumentInput): Promise<ExportResul
       return { success: false, cancelled: true };
     }
 
+    const { html, warnings } = await buildExportDocument(input, options);
+    throwIfExportAborted(options.signal);
     const pdfDocument = addPdfOutlineMarkers(html);
     const result = await exportPdfFromHtml({
       html_content: pdfDocument.html,
@@ -145,7 +129,7 @@ export function addPdfOutlineMarkers(html: string): { html: string; outline: Pdf
   const jobId = createPdfOutlineJobId();
 
   for (const heading of headings) {
-    const title = (heading.textContent ?? '').replace(/\s+/g, ' ').trim();
+    const title = (heading.getAttribute('data-nomo-heading-title') ?? heading.textContent ?? '').replace(/\s+/g, ' ').trim();
     if (!title) {
       continue;
     }
@@ -196,21 +180,15 @@ function createPdfOutlineJobId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-/**
- * 构建完整导出 HTML 文档字符串。
- * - 清理编辑器 UI 痕迹
- * - 注入导出专用 CSS
- * - 图片路径保持原样（P1 阶段再内嵌 base64）
- */
-export async function buildExportDocument(
-  renderedHtml: string,
-  documentPath: string | null,
-  title: string,
-): Promise<{ html: string; warnings: string[] }> {
-  const bodyHtml = cleanEditorArtifacts(renderedHtml);
-  const { html, warnings } = await inlineLocalImages(bodyHtml, documentPath);
-  const documentHtml = createExportHtmlDocument(html, title, exportCssContent);
-  return { html: documentHtml, warnings };
+/** HTML 与 PDF 共用同一份只读正文、资源及外观快照。 */
+export async function buildExportDocument(input: ExportSnapshot, options: ExportTaskOptions = {}): Promise<{ html: string; warnings: string[] }> {
+  const rendered = await renderExportBody(input, options);
+  const resources = await inlineLocalImages(rendered.html, input.documentPath, options);
+  throwIfExportAborted(options.signal);
+  return {
+    html: createExportHtmlDocument(resources.html, input.title, exportCssContent, input.appearance),
+    warnings: [...rendered.warnings, ...resources.warnings],
+  };
 }
 
 /**
@@ -352,32 +330,26 @@ export function createExportHtmlDocument(
   bodyHtml: string,
   title: string,
   cssContent: string,
+  appearance: ExportAppearance = captureExportAppearance(),
 ): string {
   const escapedTitle = escapeHtml(title || 'Exported Document');
-  const configuration = JSON.stringify(getTypographyOptions()).replace(/</g, '\\u003c');
-  const rootStyle = typeof document === 'undefined' ? null : getComputedStyle(document.documentElement);
-  const font = rootStyle?.getPropertyValue('--md-editor-font-body').trim() ?? '';
-  const fontStyle = font && !/[<>]/.test(font) ? `:root{--nomo-export-font-body:${font};}` : '';
-  const fontSize = parseFloat(rootStyle?.getPropertyValue('--md-editor-font-size') ?? '');
-  const lineHeight = parseFloat(rootStyle?.getPropertyValue('--md-editor-line-height') ?? '');
-  const metricsStyle = `.nomo-export{${Number.isFinite(fontSize) ? `font-size:${fontSize}px;` : ''}${Number.isFinite(lineHeight) ? `line-height:${lineHeight};` : ''}}`;
+  const configuration = JSON.stringify(appearance.typography).replace(/</g, '\\u003c');
+  const style = document.createElement('div').style;
+  for (const [name, value] of Object.entries(appearance.cssVariables)) style.setProperty(name, value);
+  style.setProperty('--nomo-export-width', `${appearance.maxWidthPx}px`);
+  style.setProperty('color-scheme', appearance.attributes['data-theme']);
+  const attributes = Object.entries(appearance.attributes).map(([key, value]) => `${key}="${escapeHtml(value)}"`).join(' ');
+  const usesKatex = /class=["'][^"']*\bkatex(?:\s|["'])/.test(bodyHtml);
+  const css = `${cssContent}\n${usesKatex ? katexCss : ''}\n:root{${style.cssText}}`;
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${escapeHtml(appearance.locale)}" ${attributes}>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapedTitle}</title>
-  <style>
-${cssContent}
-${bodyHtml.includes('katex') ? katexCss : ''}
-${fontStyle}
-${metricsStyle}
-  </style>
+  <style>${css.replace(/<\/style/gi, '<\\/style')}</style>
 </head>
-<body>
-  <article class="nomo-export markdown-body">
-${bodyHtml}
-  </article>
+<body><article class="nomo-export markdown-body">${bodyHtml}</article>
   <script id="nomo-typography-options" type="application/json">${configuration}</script>
   <script>${typographyRuntime.replace(/<\/script/gi, '<\\/script')}</script>
 </body>
@@ -406,145 +378,6 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-export async function inlineLocalImages(
-  html: string,
-  documentPath: string | null,
-): Promise<{ html: string; warnings: string[] }> {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  const images = Array.from(doc.querySelectorAll('img[src]'));
-  const warnings: string[] = [];
-
-  for (const img of images) {
-    const originalSrc = img.getAttribute('src') ?? '';
-    const result = await inlineImageSrc(originalSrc, documentPath);
-
-    if (result.dataUrl) {
-      img.setAttribute('src', result.dataUrl);
-    } else if (result.warning) {
-      warnings.push(result.warning);
-    }
-  }
-
-  return { html: doc.body.innerHTML, warnings };
-}
-
-async function inlineImageSrc(
-  src: string,
-  documentPath: string | null,
-): Promise<{ dataUrl?: string; warning?: string }> {
-  const trimmed = src.trim();
-
-  // data: 和 blob: 已经内嵌，保持原样。
-  if (/^(data:|blob:)/i.test(trimmed)) {
-    return {};
-  }
-
-  // 远程图片 fetch 后转为 base64 内嵌；设置超时，避免导出被慢请求无限阻塞。
-  if (/^https?:/i.test(trimmed)) {
-    return fetchImageAsBase64(trimmed, REMOTE_IMAGE_FETCH_TIMEOUT_MS).catch((error) => ({
-      warning: `远程图片未能内嵌（${error instanceof Error ? error.message : String(error)}）：${trimmed}`,
-    }));
-  }
-
-  // asset:// 或 http://asset.localhost/ 是 Tauri 本地资源协议，尝试 fetch 转 base64。
-  if (isAssetUrl(trimmed)) {
-    return fetchImageAsBase64(trimmed, REMOTE_IMAGE_FETCH_TIMEOUT_MS).catch((error) => ({
-      warning: `图片未能内嵌（${error instanceof Error ? error.message : String(error)}）：${trimmed}`,
-    }));
-  }
-
-  // file:// 转换为本地路径。
-  const localPath = fileUrlToLocalPath(trimmed) ?? trimmed;
-
-  // 解析为绝对路径。
-  const resolved = await resolveImagePath(localPath, documentPath);
-  if (resolved.warning) {
-    return { warning: resolved.warning };
-  }
-
-  const absolutePath = resolved.absolutePath;
-  if (!absolutePath) {
-    return { warning: `无法解析图片路径：${trimmed}` };
-  }
-
-  try {
-    const { data_url } = await readFileAsBase64(absolutePath);
-    return { dataUrl: data_url };
-  } catch (error) {
-    return {
-      warning: `图片读取失败（${error instanceof Error ? error.message : String(error)}）：${trimmed}`,
-    };
-  }
-}
-
-function isAssetUrl(src: string): boolean {
-  const lower = src.toLowerCase();
-  return (
-    lower.startsWith('asset://') ||
-    lower.startsWith('http://asset.localhost/') ||
-    lower.startsWith('https://asset.localhost/')
-  );
-}
-
-async function fetchImageAsBase64(
-  url: string,
-  timeoutMs: number,
-): Promise<{ dataUrl?: string; warning?: string }> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`fetch failed: ${response.status}`);
-    }
-    const blob = await response.blob();
-    const dataUrl = await blobToDataUrl(blob);
-    return { dataUrl };
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(`fetch timeout after ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result;
-      if (typeof result === 'string') {
-        resolve(result);
-      } else {
-        reject(new Error('FileReader 结果不是字符串'));
-      }
-    };
-    reader.onerror = () => reject(reader.error ?? new Error('读取 Blob 失败'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-function fileUrlToLocalPath(src: string): string | null {
-  if (!src.toLowerCase().startsWith('file://')) {
-    return null;
-  }
-  const withoutProtocol = src.slice('file://'.length);
-  // Windows file:///C:/path -> /C:/path -> C:/path
-  if (withoutProtocol.startsWith('/')) {
-    const path = withoutProtocol.slice(1);
-    if (/^[a-zA-Z]:[\/]/.test(path)) {
-      return path;
-    }
-    // Unix file:///home/user/path -> /home/user/path
-    return withoutProtocol;
-  }
-  return withoutProtocol;
 }
 
 // 简化 perfAsync 本地实现，避免循环依赖。

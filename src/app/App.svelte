@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { captureExportAppearance, captureExportSnapshot } from './services/export/snapshot';
   import { createWritingStatsController } from './services/writingStatsController';
   import { onDestroy, onMount, tick } from 'svelte';
   import { prepareMarkdownMiniTransition } from './services/markdownMiniTransition';
@@ -6815,6 +6816,7 @@
 
   onDestroy(() => {
     wordExportAbort?.abort();
+    documentExportAbort?.abort();
     markdownMiniTransitionController?.dispose();
     installedReleaseNotesCheckReady = false;
     if (desktopEnabled) {
@@ -7315,6 +7317,8 @@
     showToast(t.featureComingSoon({ featureName }));
   }
 
+  let documentExportBusy = false;
+  let documentExportAbort: AbortController | undefined;
   let wordExportBusy = false;
   let wordExportAbort: AbortController | undefined;
 
@@ -7351,65 +7355,35 @@
 
   async function handleExport(format: 'html' | 'pdf' | 'docx') {
     if (format === 'docx') { await handleWordExport(); return; }
-    if (isSegmentedTextTab(tabs.find((tab) => tab.id === activeTabId))) {
-      // TXT/JSON 不进入 Markdown HTML/PDF 导出链路。
-      return;
-    }
-    if (!nativePath && !markdown.trim()) {
-      showToast(t.noOpenDocumentForExport(), 2000);
-      return;
-    }
-
-    const { exportHtml, exportPdf } = await import('./services/exportService');
-    await editor.awaitCompositionEnd?.();
-    editor.commitPendingEdits();
-    editor.refreshSemanticView();
-    if (editorHost) {
-      // 导出快照先等待当前宿主的图表、图片及屏幕外代码高亮完成更新。
-      const [{ MermaidBlockNodeView }, { ImageNodeView }, { CodeBlockNodeView }] = await Promise.all([
-        import('../lib/editor-core/nodeViews/MermaidBlockNodeView'),
-        import('../lib/editor-core/nodeViews/ImageNodeView'),
-        import('../lib/editor-core/nodeViews/CodeBlockNodeView'),
-      ]);
-      await Promise.all([
-        MermaidBlockNodeView.flushThemeUpdates(editorHost),
-        ImageNodeView.flushUpdates(editorHost),
-        CodeBlockNodeView.flushHighlights(editorHost),
-      ]);
-    }
-    const renderedHtml = editor.getExportHtml?.() ?? editorHost?.innerHTML ?? '';
-    const suggestedFileName = fileName.replace(/\.(md|markdown|txt)$/i, '') || 'Untitled';
-
-    const result =
-      format === 'html'
-        ? await exportHtml({
-            markdown,
-            renderedHtml,
-            documentPath: nativePath,
-            suggestedFileName,
-            title: fileName || 'Untitled',
-          })
-        : await exportPdf({
-            markdown,
-            renderedHtml,
-            documentPath: nativePath,
-            suggestedFileName,
-            title: fileName || 'Untitled',
-          });
-
-    if (result.cancelled) {
-      return;
-    }
-
-    if (result.success) {
-      const message =
-        format === 'html'
+    if (documentExportBusy) return;
+    const tab = tabs.find((candidate) => candidate.id === activeTabId);
+    if (!isMarkdownTab(tab)) return;
+    const runtime = getDocumentRuntime(tab);
+    const appearance = captureExportAppearance(runtime.host);
+    const abort = new AbortController();
+    documentExportBusy = true;
+    documentExportAbort = abort;
+    try {
+      const snapshot = await captureExportSnapshot(tab, runtime, {
+        appearance, signal: abort.signal,
+        isAvailable: () => tabs.some((candidate) => candidate.id === tab.id), flush: flushDocumentRuntime,
+      });
+      if (!snapshot) return;
+      if (!snapshot.documentPath && !snapshot.markdown.trim()) { showToast(t.noOpenDocumentForExport(), 2000); return; }
+      const { exportHtml, exportPdf } = await import('./services/exportService');
+      const result = await (format === 'html' ? exportHtml : exportPdf)(snapshot, { signal: abort.signal });
+      if (abort.signal.aborted || result.cancelled) return;
+      if (result.success) {
+        const message = format === 'html'
           ? t.exportHtmlSuccess({ path: result.filePath! })
           : t.exportPdfSuccess({ path: result.filePath! });
-      const warningText = result.warnings?.filter(Boolean).join('；');
-      showToast(warningText ? `${message}；${warningText}` : message, warningText ? 5000 : 2500);
-    } else {
-      showToast(result.error ?? t.exportFailed(), 3500);
+        const warningText = result.warnings?.filter(Boolean).join('；');
+        showToast(warningText ? `${message}；${warningText}` : message, warningText ? 10000 : 2500);
+      } else showToast(result.error ?? t.exportFailed(), 5000);
+    } catch (error) {
+      if (!abort.signal.aborted) showToast(`${t.exportFailed()}: ${error instanceof Error ? error.message : String(error)}`, 5000);
+    } finally {
+      if (documentExportAbort === abort) { documentExportAbort = undefined; documentExportBusy = false; }
     }
   }
 

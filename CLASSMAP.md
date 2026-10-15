@@ -40,7 +40,7 @@
 | 精细段落排版 | `src/lib/typography/knuthPlass.ts` | `types.ts`, `rules.ts`, `hyphenation.ts`, `measure.ts`, `renderPlan.ts`, `positions.ts`, `solver.ts`, `typography.worker.ts` | 修改 KP 间距质量评分、两端/左对齐选择、中文规则、英文 Liang 断词、可取消分批/有界同步测量、目标几何快照、文字测量 LRU 或位置映射 |
 | 精细排版编辑适配 | `src/lib/editor-core/plugins/typography.ts` | `nodeViews/TypographyBreakNodeView.ts`, `InlineSourceCodec.ts`, `ProseMirrorEditorCore.ts`, `src/lib/typography/options.ts`, `rules.ts`, `interaction.ts`, `src/app/styles/editor-document.css`, `src/app/services/settings.ts` | 修改输入与导航保护、字素光标移动、局部缓存、正文输入与符号显隐同帧排版、编辑态真实空格宽度和长空格串换行、超预算编辑降级与空闲追补、宽度持续 KP、缩放停止后追补与可见区更新、增量装饰提交、手势阅读锚点、DOM 绑定校验、视觉断点、软换行、KP 选区背景或设置开关 |
 | 排版交互生命周期 | `src/lib/typography/interaction.ts` | `src/app/actions/typographyRange.ts`, `src/app/services/settings.ts`, `src/app/services/editorSettingsController.ts`, `src/app/services/markdownMiniTransition.ts`, `src/app/components/StatusBar.svelte`, `src/app/App.svelte` | 修改窗口内重叠交互 token、150 ms 静默收束、即时 CSS 与几何版本通知、阅读锚点回调、缩放滑块直接更新、小窗过渡排版暂停或跨窗口几何更新 |
-| 只读与离线排版 | `src/lib/typography/dom.ts` | `renderPlan.ts`, `selectionPaint.ts`, `exportRuntime.ts`, `scripts/typography-runtime-plugin.ts`, `src/quicklook/preview-entry.ts`, `src/app/components/MarkdownMiniLargePreview.svelte` | 修改只读布局、字距与连续选区背景、离线运行时或打印就绪契约 |
+| 只读与离线排版 | `src/lib/typography/dom.ts` | `renderPlan.ts`, `selectionPaint.ts`, `exportRuntime.ts`, `exportPrint.ts`, `dom.test.ts`, `scripts/typography-runtime-plugin.ts`, `src/quicklook/preview-entry.ts`, `src/app/components/MarkdownMiniLargePreview.svelte` | 修改只读布局、图片克隆的加载失效、字距与连续选区背景、离线运行时或打印就绪契约 |
 | 编辑器工厂与 API | `src/lib/editor-core/createEditorCore.ts` | `src/lib/editor-core/index.ts` | EditorCore 创建参数或对外接口变更 |
 | ProseMirror 核心实现 | `src/lib/editor-core/ProseMirrorEditorCore.ts` | `src/lib/editor-core/clipboardMarkdown.ts`, `markdown.ts`, `schema.ts`, plugins, nodeViews | EditorView 生命周期、事务、模式切换、命令执行、选区 Markdown 通知、剪贴板负载与右键目标事务 |
 | 剪贴板 Markdown 判定 | `src/lib/editor-core/clipboardMarkdown.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts`, `markdown.ts` | 修改纯文本/Markdown 等价判定、粘贴 Slice 或纯文本事务标记 |
@@ -86,7 +86,7 @@
 | 正文外侧整段选择 | `src/lib/editor-core/plugins/paragraphSelectionGutter.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts`, `src/app/styles/editor-document.css`, `src/app/i18n.ts`, `src/app/i18n.ja.ts` | 顶层普通段落与标题左侧的悬停短竖线、真实整段选区、缩放命中和浮层生命周期；不接管列表、表格、代码块或正文拖选 |
 | 表格控件 | `src/lib/editor-core/plugins/tableControls.ts` | `src/lib/editor-core/plugins/tableControlDom.ts`, `tableCommands.ts`, `markdownSerialization.ts` | 表格行列控制 UI、共用行增删事务内的列对齐与首行表头归一化、单元格内容保存 |
 | 表格自动列宽与局部滚动 | `src/lib/table-layout/widths.ts`, `src/lib/table-layout/dom.ts` | `src/lib/editor-core/nodeViews/TableNodeView.ts`, `src/lib/table-layout/export.ts`, `src/lib/table-layout/table-layout.css`, `plugins/tableControls.ts`, `plugins/typography.ts` | 语义内容度量、合并格约束、按需列宽、视图级调度与缓存、精细排版失效、HTML/PDF 目标宽度重排；自动宽度不写入 Markdown |
-| 不可编辑 HTML 回退展示 | `src/lib/editor-core/plugins/tableHtml.ts` | `html/htmlClassifier.ts`, `utils/html.ts` | 原始 HTML widget 展示；Markdown 表格由统一 parser 与 schema 渲染 |
+| 不可编辑 HTML 回退展示 | `src/lib/editor-core/plugins/tableHtml.ts` | `html/htmlClassifier.ts`, `utils/html.ts`, `src/app/services/export/render.ts` | 原始 HTML widget 展示；编辑器与导出共用对齐段落和 HTML 空白处理；Markdown 表格由统一 parser 与 schema 渲染 |
 | 任务列表 | `src/lib/editor-core/plugins/taskList.ts` | `src/lib/editor-core/InlineSourceCodec.ts`, `editorCommands.ts`, `ProseMirrorEditorCore.ts`, `markdownSerialization.ts` | 修改任务首段标记识别、列表切换/续行、只读复选框或保存边界 |
 | 链接交互 | `src/lib/editor-core/plugins/linkInteraction.ts` | `src/app/components/LinkQuickEditor.svelte` | 链接点击/悬浮/编辑 |
 | 六类行内字符命令 | `src/lib/editor-core/inlineSourceCommands.ts` | `editorCommands.ts`, `ProseMirrorEditorCore.ts` | 工具栏/快捷键包裹、局部取消、清除格式与空模板；pendingInlineMarks 为兼容派生接口 |
@@ -224,7 +224,9 @@
 
 | Responsibility | Primary code | Related code | Change when |
 |---|---|---|---|
-| HTML/PDF 导出 | `src/app/services/exportService.ts` | `src/lib/desktop/tauriStorage.ts`, `src/app/styles/export-document.css` | 导出格式、图片内嵌策略、HTML 模板变更 |
+| HTML/PDF 导出 | `src/app/services/exportService.ts` | `src/app/services/export/`, `src/lib/desktop/tauriStorage.ts`, `src/app/styles/document-content.css`, `src/app/styles/export-document.css` | 冻结文档与外观、独立只读渲染、资源内嵌、HTML 模板或 PDF 打印变更 |
+| 导出快照与只读正文 | `src/app/services/export/snapshot.ts`, `src/app/services/export/render.ts` | `export/types.ts`, `export/images.ts`, `src/lib/editor-core/codeLanguages.ts`, `src/lib/editor-core/callout/calloutIcons.ts` | IME/图片插入等待、文档隔离、主题快照、无挂载视图的代码/公式/图表/目录渲染、资源预算与取消 |
+| 共用正文样式与打印准备 | `src/app/styles/document-content.css`, `src/lib/typography/exportPrint.ts` | `editor-document.css`, `export-document.css`, `src/lib/typography/exportRuntime.ts` | 编辑器与导出共用展示样式（含内嵌徽章及链接布局）、目标版心、跨页分类、安全表头提升及媒体尺寸约束 |
 | Word 导出 | `src/app/services/wordExportService.ts` | `src/app/services/word/`, `src/app/App.svelte`, `src/lib/desktop/tauriStorage.ts`, `src-tauri/src/export.rs` | Markdown 快照、DOCX 内容、资源预算、Worker 打包与二进制原子保存 |
 | 导出图片路径解析 | `src/app/services/exportImagePath.ts` | `exportService.ts`, `word/resources.ts` | HTML/PDF/Word 共用本地图片绝对路径与相对路径解析 |
 
@@ -1254,7 +1256,7 @@
 
 **Owns:**
 - HTML/PDF 导出：构建自包含 HTML 文档
-- 图片内嵌策略：将本地图片（本地路径、asset 协议）和远程图片（https://）转为 base64 data URL
+- 调度 `export/` 中的快照正文渲染和资源内嵌；HTML/PDF 接收同一份文档与外观值快照
 - 编辑器 UI 痕迹清理（cleanEditorArtifacts）
 - 完整 HTML 文档外壳生成（createExportHtmlDocument）
 - 文件保存对话框调用（pickSavePath）
@@ -1266,7 +1268,7 @@
 
 **Called by:** `src/app/App.svelte`（通过菜单/快捷键触发导出）
 
-**Depends on:** `src/lib/desktop/tauriStorage.ts`, `src/app/styles/export-document.css`
+**Depends on:** `src/app/services/export/`, `src/lib/desktop/tauriStorage.ts`, `src/app/styles/export-document.css`
 
 **Change this when：**
 - 修改图片内嵌策略（新增/移除图片来源类型支持）
@@ -1277,7 +1279,7 @@
 - 修改导出触发 UI
 - 修改后端文件写入逻辑
 
-**Related tests:** `src/app/services/exportService.test.ts`
+**Related tests:** `src/app/services/exportService.test.ts`, `src/app/services/export/snapshot.test.ts`, `src/app/services/export/render.test.ts`, `src/app/services/export/images.test.ts`, `src/lib/typography/exportPrint.test.ts`
 
 **Confidence:** high
 
@@ -3176,11 +3178,12 @@
 **Owns:**
 - `escapeHtml`：HTML 特殊字符转义
 - `sanitizeHtml`：简单 HTML 安全过滤（检测 script/iframe/on* 事件）
+- `renderHtmlPreview`：编辑器与导出共用安全 HTML 的展示结构、对齐段落与空白折叠
 
 **Does not own:**
 - 不拥有 HTML 块分类（在 htmlClassifier.ts 中）
 
-**Called by:** `src/quicklook/preview.ts`, 渲染相关模块
+**Called by:** `src/quicklook/preview.ts`, `src/lib/editor-core/plugins/tableHtml.ts`, `src/app/services/export/render.ts`, 渲染相关模块
 
 **Depends on:** —
 
@@ -3673,12 +3676,12 @@
 
 **Owns:**
 - Windows PDF 导出：通过隐藏 WebView2 的 PrintToPdf 生成 PDF
-- 字体、图片、目标版心与精细排版完成门禁
+- 字体、图片、目标版心宽高与精细排版完成门禁
 
 **Does not own:**
 - 不拥有 HTML 临时文件写入（在 export.rs 中）
 
-**Called by:** `src-tauri/src/lib.rs`（注册为 IPC）
+**Called by:** `src-tauri/src/export.rs`（在原生 PDF 任务中调用）
 
 **Depends on:** `src-tauri/src/export.rs`, `src-tauri/src/models.rs`
 

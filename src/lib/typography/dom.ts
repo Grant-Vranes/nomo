@@ -20,11 +20,25 @@ export function createDomTypography(
   let running: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout>;
   let width = root.clientWidth;
+  // 克隆只读正文会重新触发 img.load；沿克隆传递已知尺寸，不能把同一张图片反复当作新资源。
+  // WeakMap 不拥有图片生命周期，只保留尺寸，不保留可能很大的 data URL。
+  const loadedImages = new WeakMap<HTMLImageElement, { width: number; height: number }>();
+  const imageGeometry = (image: HTMLImageElement) => ({ width: image.naturalWidth, height: image.naturalHeight });
+  const cloneNode = (node: Node): Node => {
+    const clone = node.cloneNode(true);
+    const images = node instanceof HTMLImageElement ? [node] : node instanceof Element ? [...node.querySelectorAll('img')] : [];
+    const copies = clone instanceof HTMLImageElement ? [clone] : clone instanceof Element ? [...clone.querySelectorAll('img')] : [];
+    images.forEach((image, index) => {
+      const geometry = loadedImages.get(image) ?? (image.complete && image.naturalWidth > 0 ? imageGeometry(image) : undefined);
+      if (geometry && copies[index]) loadedImages.set(copies[index], geometry);
+    });
+    return clone;
+  };
   const selectionPaint = createLineSelectionPaint(root);
   const restore = (paragraph: HTMLElement) => {
     const original = originals.get(paragraph);
     if (!original) return;
-    paragraph.replaceChildren(...original.children.map((node) => node.cloneNode(true)));
+    paragraph.replaceChildren(...original.children.map(cloneNode));
     if (original.style === null) paragraph.removeAttribute('style');
     else paragraph.setAttribute('style', original.style);
     delete paragraph.dataset.kpLayout;
@@ -64,7 +78,7 @@ export function createDomTypography(
       if (paragraph.closest('pre,figure,.math-display,[contenteditable="true"]')) continue;
       if (!originals.has(paragraph))
         originals.set(paragraph, {
-          children: [...paragraph.childNodes].map((n) => n.cloneNode(true)),
+          children: [...paragraph.childNodes].map(cloneNode),
           style: paragraph.getAttribute('style'),
         });
       restore(paragraph);
@@ -74,7 +88,7 @@ export function createDomTypography(
         const result = measured ? await solver.solve(measured.input) : null;
         if (destroyed || token !== revision) return;
         if (measured && result?.status === 'ready') {
-          renderParagraph(paragraph, measured, result);
+          renderParagraph(paragraph, measured, result, cloneNode);
         } else {
           paragraph.dataset.kpLayout = 'fallback';
           paragraph.dataset.kpReason =
@@ -115,7 +129,20 @@ export function createDomTypography(
           }
         });
   observer?.observe(root);
-  root.addEventListener('load', invalidate, true);
+  const loaded = (event: Event) => {
+    if (event.target instanceof HTMLImageElement) {
+      const image = event.target;
+      const current = imageGeometry(image);
+      const previous = loadedImages.get(image);
+      if (previous?.width === current.width && previous.height === current.height) return;
+      if (previous) {
+        previous.width = current.width;
+        previous.height = current.height;
+      } else loadedImages.set(image, current);
+    }
+    invalidate();
+  };
+  root.addEventListener('load', loaded, true);
   document.fonts?.addEventListener('loadingdone', invalidate);
   const copy = (event: ClipboardEvent) => {
     const selection = window.getSelection();
@@ -148,7 +175,7 @@ export function createDomTypography(
       solver.destroy();
       observer?.disconnect();
       unsubscribe();
-      root.removeEventListener('load', invalidate, true);
+      root.removeEventListener('load', loaded, true);
       root.removeEventListener(TABLE_LAYOUT_EVENT, tableLayoutChanged);
       document.fonts?.removeEventListener('loadingdone', invalidate);
       root.removeEventListener('copy', copy);
@@ -164,6 +191,7 @@ function renderParagraph(
   paragraph: HTMLElement,
   measured: MeasuredParagraph,
   result: ParagraphLayout,
+  cloneNode: (node: Node) => Node,
 ) {
   const plan = createRenderPlan(measured, result);
   const styles = new Map(plan.styles.map((style) => [style.from, style]));
@@ -175,7 +203,7 @@ function renderParagraph(
     const style = styles.get(binding.from);
     if (style) span.style.cssText = unitStyleCss(style, binding.atomic);
     if (binding.atomic) {
-      let copy = binding.node.cloneNode(true) as HTMLElement;
+      let copy = cloneNode(binding.node) as HTMLElement;
       if (copy.dataset.nomoBreak === 'soft') {
         copy = document.createElement('span');
         copy.dataset.nomoBreak = 'soft';
@@ -211,28 +239,36 @@ function renderParagraph(
 }
 
 /** Export waits for actual assets; timeout is an error, never a successful flush. */
-export async function waitForTypographyAssets(root: HTMLElement, timeoutMs = 20_000) {
+export async function waitForTypographyAssets(root: HTMLElement, timeoutMs = 20_000, signal?: AbortSignal) {
   let timer: ReturnType<typeof setTimeout>;
   const cleanups: (() => void)[] = [];
   try {
     await Promise.race([
       Promise.all([
         document.fonts?.ready,
-        ...[...root.querySelectorAll('img')].map((image) =>
-          image.complete
-            ? Promise.resolve()
-            : new Promise<void>((resolve) => {
-                const done = () => {
-                  image.removeEventListener('load', done);
-                  image.removeEventListener('error', done);
-                  resolve();
-                };
-                cleanups.push(done);
-                image.addEventListener('load', done);
-                image.addEventListener('error', done);
-              }),
-        ),
+        ...[...root.querySelectorAll('img')].map(async (image) => {
+          if (!image.complete) {
+            await new Promise<void>((resolve) => {
+              const done = () => {
+                image.removeEventListener('load', done);
+                image.removeEventListener('error', done);
+                resolve();
+              };
+              cleanups.push(done);
+              image.addEventListener('load', done, { once: true });
+              image.addEventListener('error', done, { once: true });
+            });
+          }
+          // 失败的图片已由导出资源阶段报告；成功加载后必须等解码，不能只等 load。
+          if (image.naturalWidth > 0 && typeof image.decode === 'function') await image.decode();
+        }),
       ]),
+      new Promise((_, reject) => {
+        const abort = () => reject(new DOMException('Cancelled', 'AbortError'));
+        cleanups.push(() => signal?.removeEventListener('abort', abort));
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+      }),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error('Typography assets timed out')), timeoutMs);
       }),
