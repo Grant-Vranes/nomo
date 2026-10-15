@@ -25,13 +25,14 @@ export interface OpenTargetRouting {
 export async function routeOpenTarget(
   target: OpenTarget,
   routing: OpenTargetRouting,
+  preferCurrentWindow = false,
 ): Promise<void> {
   await routing.syncTargets();
   let decision = await routing.prepare(target, false);
   if (decision.action === 'handled') return;
 
   let activated = false;
-  let useCurrent = decision.action === 'activate-current' || routing.isReusableInitialWindow();
+  let useCurrent = preferCurrentWindow || decision.action === 'activate-current' || routing.isReusableInitialWindow();
   if (!useCurrent) {
     const behavior = routing.getBehavior();
     useCurrent = behavior === 'current-window';
@@ -72,9 +73,12 @@ export async function routeOpenTarget(
   }
 
   if (!activated) await routing.activateCurrent();
-  await routing.openCurrent(decision.target);
+  // 当前窗口已拥有的目录只需激活；重新打开会用持久化快照覆盖未保存内容和新建标签。
+  if (decision.action !== 'activate-current' || decision.target.kind !== 'folder') {
+    await routing.openCurrent(decision.target);
+  }
   if (decision.action === 'activate-current' && decision.remainingTarget) {
     // 先定位当前窗口已打开的标签，再为批次中的未打开文件选择去向。
-    await routeOpenTarget(decision.remainingTarget, routing);
+    await routeOpenTarget(decision.remainingTarget, routing, preferCurrentWindow);
   }
 }

@@ -21,6 +21,25 @@ import {
 import { t } from '../i18n';
 import type { MarkdownEncoding } from '../../lib/services/storage';
 
+/** 串行打开，单项失败不阻断后续文件；批次只保留错误信息，不持有正文。 */
+export async function openDocumentBatch(
+  paths: readonly string[],
+  openDocument: (path: string) => Promise<unknown>,
+  fallbackMessage: string,
+): Promise<Array<{ path: string; message: string }>> {
+  const failures: Array<{ path: string; message: string }> = [];
+  for (const path of paths) {
+    try {
+      await openDocument(path);
+    } catch (error) {
+      const message = error instanceof Error ? error.message
+        : typeof error === 'string' && error.trim() ? error : fallbackMessage;
+      failures.push({ path, message });
+    }
+  }
+  return failures;
+}
+
 export function findDroppedDocumentPath(paths: string[]) {
   return paths.find((path) => /\.(md|markdown|txt|json)$/i.test(path)) ?? null;
 }

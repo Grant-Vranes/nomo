@@ -6,7 +6,8 @@ import {
   installSampleDocument,
   openMarkdownWithDialog,
   parseNativeError,
-  pickDocumentPathWithDialog,
+  pickDocumentPathsWithDialog,
+  takePendingExternalOpen,
   readWorkspaceDraft,
   writeWorkspaceDraft,
 } from './tauriStorage';
@@ -51,15 +52,32 @@ describe('document dialogs', () => {
       filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
     });
 
-    await pickDocumentPathWithDialog();
+    await pickDocumentPathsWithDialog();
     expect(openDialogMock).toHaveBeenLastCalledWith({
-      multiple: false,
+      multiple: true,
       filters: [{ name: 'Documents', extensions: ['md', 'markdown', 'txt', 'json'] }],
     });
   });
 });
 
-describe('parseNativeError', () => {
+describe('multiple document selection', () => {
+  it.each([
+    [null, []],
+    ['D:/文档/a.md', ['D:/文档/a.md']],
+    [['b.json', 'a.md', 'c.txt'], ['b.json', 'a.md', 'c.txt']],
+  ])('normalizes %j without reading document contents', async (selected, expected) => {
+    openDialogMock.mockResolvedValue(selected);
+    expect(await pickDocumentPathsWithDialog()).toEqual(expected);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('propagates picker failures to the application', async () => {
+    openDialogMock.mockRejectedValue(new Error('dialog unavailable'));
+    await expect(pickDocumentPathsWithDialog()).rejects.toThrow('dialog unavailable');
+  });
+});
+
+describe('parseNativeError' , () => {
   it('解析 PERMISSION_DENIED 错误码', () => {
     const result = parseNativeError('[PERMISSION_DENIED] 没有权限访问 C:\\test.md');
     expect(result.code).toBe('PERMISSION_DENIED');
@@ -182,4 +200,13 @@ describe('workspace drafts', () => {
     await deleteWorkspaceDraft('draft-1');
     expect(invokeMock).toHaveBeenCalledWith('delete_workspace_draft', { draftId: 'draft-1' });
   });
+});
+
+
+it('启动原子取走队列，事件仅确认自身路径', async () => {
+  invokeMock.mockResolvedValue(['a.md', 'b.md']);
+  expect(await takePendingExternalOpen()).toEqual(['a.md', 'b.md']);
+  expect(invokeMock).toHaveBeenLastCalledWith('take_pending_external_open', { paths: null });
+  await takePendingExternalOpen(['a.md']);
+  expect(invokeMock).toHaveBeenLastCalledWith('take_pending_external_open', { paths: ['a.md'] });
 });

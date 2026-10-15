@@ -17,6 +17,41 @@ pub(crate) enum OpenTargetInput {
     Folder { path: String },
 }
 
+/// 首个有效目标为文档时收集整批文档，为文件夹时保留单目录打开；元数据检查放到阻塞线程，避免慢磁盘阻塞窗口事件。
+#[tauri::command]
+pub(crate) async fn resolve_dropped_open_target(
+    paths: Vec<String>,
+) -> Result<Option<OpenTargetInput>, String> {
+    tauri::async_runtime::spawn_blocking(move || resolve_dropped_paths(paths))
+        .await
+        .map_err(|error| format!("识别拖放路径失败：{error}"))?
+}
+
+fn resolve_dropped_paths(paths: Vec<String>) -> Result<Option<OpenTargetInput>, String> {
+    let mut documents = Vec::new();
+    let mut seen = HashSet::new();
+    for path in paths {
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("无法读取拖放路径 {path}：{error}")),
+        };
+        if metadata.is_dir() && documents.is_empty() {
+            return Ok(Some(OpenTargetInput::Folder { path }));
+        }
+        if metadata.is_file()
+            && super::external_open::has_supported_extension(std::path::Path::new(&path))
+        {
+            if let Some(key) = normalize_target_path(&path) {
+                if seen.insert(key) {
+                    documents.push(path);
+                }
+            }
+        }
+    }
+    Ok((!documents.is_empty()).then_some(OpenTargetInput::Documents { paths: documents }))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WindowOpenTargetsInput {
@@ -636,6 +671,99 @@ fn focus_document_window(app: &AppHandle, label: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct DropFixture(PathBuf);
+
+    impl DropFixture {
+        fn new() -> Self {
+            static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "nomo-dropped-targets-{}-{}-{}",
+                std::process::id(),
+                crate::config::now_ts(),
+                SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self, name: &str) -> String {
+            self.0.join(name).to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for DropFixture {
+        fn drop(&mut self) {
+            // 只清理本测试创建的独立临时目录。
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn dropped_folders_use_metadata_even_with_document_extensions() {
+        let fixture = DropFixture::new();
+        for name in ["中文 工作目录", "example.md"] {
+            let path = fixture.path(name);
+            fs::create_dir(&path).unwrap();
+            let target = resolve_dropped_paths(vec![path.clone()]).unwrap();
+            assert!(
+                matches!(target, Some(OpenTargetInput::Folder { path: actual }) if actual == path)
+            );
+        }
+    }
+
+    #[test]
+    fn dropped_mixed_paths_preserve_first_target_kind() {
+        let fixture = DropFixture::new();
+        let folder = fixture.path("folder");
+        let unsupported = fixture.path("image.png");
+        let missing = fixture.path("missing.md");
+        fs::create_dir(&folder).unwrap();
+        fs::write(&unsupported, "ignored").unwrap();
+        for extension in ["md", "MARKDOWN", "txt", "JSON"] {
+            let file = fixture.path(&format!("文档 file.{extension}"));
+            fs::write(&file, "content").unwrap();
+            let target = resolve_dropped_paths(vec![
+                missing.clone(),
+                unsupported.clone(),
+                file.clone(),
+                folder.clone(),
+            ])
+            .unwrap();
+            assert_eq!(paths(target), vec![file.clone()]);
+            let target = resolve_dropped_paths(vec![folder.clone(), file]).unwrap();
+            assert!(matches!(target, Some(OpenTargetInput::Folder { path }) if path == folder));
+        }
+        assert!(resolve_dropped_paths(vec![missing, unsupported])
+            .unwrap()
+            .is_none());
+        assert!(resolve_dropped_paths(Vec::new()).unwrap().is_none());
+    }
+
+    #[test]
+    fn dropped_documents_collect_all_supported_paths_in_order_without_duplicates() {
+        let fixture = DropFixture::new();
+        let files: Vec<_> = ["a.md", "b.markdown", "c.txt", "d.json"]
+            .iter().map(|name| fixture.path(name)).collect();
+        for path in &files { fs::write(path, "content").unwrap(); }
+        let mut input = files.clone();
+        input.insert(1, files[0].clone());
+        assert_eq!(paths(resolve_dropped_paths(input).unwrap()), files);
+    }
+
+    #[test]
+    fn dropped_metadata_errors_are_reported_without_reading_past_selected_target() {
+        let fixture = DropFixture::new();
+        let folder = fixture.path("folder");
+        fs::create_dir(&folder).unwrap();
+        // NUL 在各平台都是无效文件系统路径，可稳定覆盖非 NotFound 错误。
+        let invalid = fixture.path("invalid\0path");
+        let error = resolve_dropped_paths(vec![invalid.clone(), folder.clone()]).unwrap_err();
+        assert!(error.contains("无法读取拖放路径"));
+        assert!(error.contains(&invalid));
+        let target = resolve_dropped_paths(vec![folder.clone(), invalid]).unwrap();
+        assert!(matches!(target, Some(OpenTargetInput::Folder { path }) if path == folder));
+    }
 
     fn snapshot(folder: &str, files: &[&str]) -> WindowTargetSnapshot {
         WindowTargetSnapshot {

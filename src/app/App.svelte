@@ -20,7 +20,8 @@
     rememberRecentEntry,
     checkPathsExist,
     statMarkdownFile,
-    pickDocumentPathWithDialog,
+    pickDocumentPathsWithDialog,
+    takePendingExternalOpen,
     deleteFile,
     revealInExplorer,
     type RecentEntry,
@@ -103,6 +104,7 @@
     openInDirectoryWindow,
     refreshInterfaceLanguageChrome,
     prepareOpenTargetWindow,
+    resolveDroppedOpenTarget,
     setMarkdownMiniModePinned,
     syncWindowOpenTargets,
     updateAppWindowTitle,
@@ -147,8 +149,8 @@
     type WorkspaceDraftPersistenceCache,
   } from './services/workspacePersistence';
   import {
-    findDroppedDocumentPath,
     readMarkdownFromPath,
+    openDocumentBatch,
     rememberNativeFolder,
     pickFolderPath,
   } from './services/documentFiles';
@@ -658,7 +660,7 @@
   const pendingDocumentOpens = new Set<Promise<boolean>>();
   const pendingEditorOperations = new Set<Promise<unknown>>();
   const deferredWorkspaceOperations: Array<() => Promise<unknown>> = [];
-  const deferredOpenTargets: OpenTarget[] = [];
+  const deferredOpenTargets: (OpenTarget & { preferCurrentWindow?: boolean })[] = [];
   let transferredOpenTargetWindowLabel: string | undefined;
   let deferredOpenForwarding: Promise<void> | undefined;
   let drainingDeferredWorkspaceOperations = false;
@@ -2265,8 +2267,15 @@
       await openFolderInCurrentWindow(target.path);
       return;
     }
-    for (const path of target.paths) {
-      await openFilePathInCurrentWindow(path);
+    if (!desktopEnabled) return;
+    const failures = await openDocumentBatch(target.paths, (path) => openDocumentPath(path, {
+      message: t.recentFileOpened(),
+      fallbackMessage: t.openFileFailed(),
+      throwOnReadError: true,
+    }), t.openFileFailed());
+    if (failures.length > 0) {
+      const message = `${t.batchOpenFailed({ count: failures.length })}\n${failures.map(({ path, message }) => `${path}: ${message}`).join('\n')}`;
+      showVisibleError(new Error(message), t.openFileFailed());
     }
   }
 
@@ -2283,9 +2292,9 @@
     return result;
   }
 
-  function openTargetWithBehavior(target: OpenTarget) {
+  function openTargetWithBehavior(target: OpenTarget, preferCurrentWindow = false) {
     if (workspaceInteractionDisabled) {
-      queueDeferredOpenTarget(target);
+      queueDeferredOpenTarget(target, preferCurrentWindow);
       return Promise.resolve();
     }
     return enqueueOpenTargetOperation(() =>
@@ -2318,7 +2327,7 @@
           openDefaultBehavior = behavior;
           await updateAppSetting('openDefaultBehavior', behavior).catch(() => undefined);
         },
-      }),
+      }, preferCurrentWindow),
     );
   }
 
@@ -4205,7 +4214,7 @@
       while (!workspaceInteractionDisabled && (deferredOpenTargets.length || deferredWorkspaceOperations.length)) {
         try {
           const target = deferredOpenTargets.shift();
-          if (target) await openTargetWithBehavior(target);
+          if (target) await openTargetWithBehavior(target, target.preferCurrentWindow);
           else await deferredWorkspaceOperations.shift()!();
         }
         catch (error) { showVisibleError(error, t.openFileFailed()); }
@@ -4213,9 +4222,9 @@
     } finally { drainingDeferredWorkspaceOperations = false; }
   }
 
-  function queueDeferredOpenTarget(target: OpenTarget) {
+  function queueDeferredOpenTarget(target: OpenTarget, preferCurrentWindow = false) {
     deferredOpenTargets.push(target.kind === 'documents'
-      ? { kind: 'documents', paths: [...target.paths] } : { ...target });
+      ? { kind: 'documents', paths: [...target.paths], preferCurrentWindow } : { ...target });
     if (transferredOpenTargetWindowLabel) {
       void forwardDeferredOpenTargets().catch((error) => showVisibleError(error, t.openFileFailed()));
     }
@@ -5446,7 +5455,7 @@
 
   function openDocumentPath(
     path: string,
-    options: { message: string; fallbackMessage: string },
+    options: { message: string; fallbackMessage: string; throwOnReadError?: boolean },
   ): Promise<boolean> {
     if (workspaceInteractionDisabled) {
       queueDeferredOpenTarget({ kind: 'documents', paths: [path] });
@@ -5459,7 +5468,7 @@
   }
   async function performOpenDocumentPath(
     path: string,
-    options: { message: string; fallbackMessage: string },
+    options: { message: string; fallbackMessage: string; throwOnReadError?: boolean },
   ): Promise<boolean> {
     if (!(await requestMarkdownMiniReturn({ showExternalChange: false }))) return false;
     invalidatePendingPreviewOpen();
@@ -5488,6 +5497,7 @@
 
     if (routed.documentKind === 'markdown') {
       if (routed.value.error) {
+        if (options.throwOnReadError) throw new Error(routed.value.error);
         statusMessage = routed.value.error;
         return false;
       }
@@ -5512,15 +5522,19 @@
     return true;
   }
 
-  async function openDroppedMarkdown(paths: string[]) {
-    if (workspaceInteractionDisabled) {
-      const path = findDroppedDocumentPath(paths);
-      if (path) queueDeferredOpenTarget({ kind: 'documents', paths: [path] });
-      return;
-    }
-    const target = findDroppedDocumentPath(paths);
+  async function openDroppedTarget(paths: string[]) {
+    const target = await resolveDroppedOpenTarget(desktopEnabled, paths);
     if (!target) {
       statusMessage = t.dragDropNoMarkdown();
+      return;
+    }
+    // 延迟处理仍保留拖入窗口的选择，不回退到全局打开偏好。
+    if (workspaceInteractionDisabled) {
+      queueDeferredOpenTarget(target, target.kind === 'documents');
+      return;
+    }
+    if (target.kind === 'folder') {
+      await openFolderWithBehavior(target.path);
       return;
     }
     const activeTab = tabs.find((tab) => tab.id === activeTabId);
@@ -5529,12 +5543,7 @@
       statusMessage = t.dragOpenBlockedUnsaved();
       return;
     }
-    await openDocumentPath(target, {
-      message: t.openedByDragDrop(),
-      fallbackMessage: t.dragOpenFailed(),
-    }).catch((error) => {
-      showVisibleError(error, t.dragOpenFailed());
-    });
+    await openTargetWithBehavior(target, true);
   }
 
   async function openFileDialog() {
@@ -5546,11 +5555,13 @@
     if (isMarkdownTab(activeTab) && activeTab.dirty) {
       writeRecoveryDraft('open-dialog');
     }
-    const path = await pickDocumentPathWithDialog();
-    if (!path) return;
-    await openTargetWithBehavior({ kind: 'documents', paths: [path] }).catch((error) => {
-      showVisibleError(error, t.openFileFailed());
-    });
+    try {
+      const paths = await pickDocumentPathsWithDialog();
+      if (paths.length === 0) return;
+      await openTargetWithBehavior({ kind: 'documents', paths });
+    } catch (error) {
+      showVisibleError(error instanceof Error ? error : new Error(String(error)), t.openFileFailed());
+    }
   }
 
   async function openFilePathInCurrentWindow(path: string) {
@@ -6689,22 +6700,9 @@
         await loadReadingPositions();
 
         // 先读取待处理的外部打开路径和文件夹，再决定如何恢复工作区
-        const pendingExternalOpenSetting = settings.find(
-          (s) => s.key === `pendingExternalOpen:${windowLabel}`,
-        );
-        if (pendingExternalOpenSetting) {
-          try {
-            const paths = JSON.parse(pendingExternalOpenSetting.valueJson);
-            if (Array.isArray(paths)) {
-              const validPaths = paths.filter((path): path is string => typeof path === 'string');
-              logInfo('ExternalOpen', '读取冷启动待打开文件', { paths: validPaths });
-              queuePendingExternalOpenPaths(validPaths);
-            }
-            await updateAppSetting(`pendingExternalOpen:${windowLabel}`, '').catch(() => undefined);
-          } catch {
-            // ignore
-          }
-        }
+        const startupPaths = await takePendingExternalOpen();
+        logInfo('ExternalOpen', '读取冷启动待打开文件', { paths: startupPaths });
+        queuePendingExternalOpenPaths(startupPaths);
 
         let pendingFolderPath = '';
         const pendingFolderSetting = settings.find((s) => s.key === `pendingFolder:${windowLabel}`);
@@ -7490,13 +7488,13 @@
           return;
         }
         if (windowLabel) {
-          updateAppSetting(`pendingExternalOpen:${windowLabel}`, '').catch(() => undefined);
+          void takePendingExternalOpen(paths).catch((error) => showVisibleError(error, t.openFileFailed()));
         }
         if (appBootState !== 'ready') {
           queuePendingExternalOpenPaths(paths);
           return;
         }
-        openExternalMarkdownPaths(paths).catch(() => undefined);
+        openExternalMarkdownPaths(paths).catch((error) => showVisibleError(error, t.openFileFailed()));
       }).catch(() => null),
     ]);
 
@@ -7545,7 +7543,7 @@
         executeDesktopCommand(command);
       }).catch(() => null),
       listenDesktopFileDrops((paths) => {
-        openDroppedMarkdown(paths);
+        void openDroppedTarget(paths).catch((error) => showVisibleError(error, t.dragOpenFailed()));
       }).catch(() => null),
       listen<SettingsUpdatedPayload>(SETTINGS_UPDATED_EVENT, (event) => {
         if (workspaceInteractionDisabled) { deferredWorkspaceOperations.push(() => handleSettingsUpdated(event.payload)); return; }
@@ -7617,9 +7615,7 @@
       await rememberNativeFolder(parentDir).catch(() => undefined);
     }
 
-    for (const path of supportedPaths) {
-      await openFilePathInCurrentWindow(path);
-    }
+    await openTargetInCurrentWindow({ kind: 'documents', paths: supportedPaths });
   }
 
   function executeDesktopCommand(command: string) {

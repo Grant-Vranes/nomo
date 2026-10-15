@@ -2,25 +2,46 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
-import { activateDocumentWindow, prepareOpenTargetWindow } from './desktopWindow';
+import {
+  activateDocumentWindow,
+  prepareOpenTargetWindow,
+  resolveDroppedOpenTarget,
+} from './desktopWindow';
 
 beforeEach(() => {
   vi.resetAllMocks();
 });
 
-it('正式打开默认复用目录窗口，文件树预览可以保持原有行为', async () => {
+it.each([undefined, false, true])('目录复用默认关闭，显式选项 %s 原样传递', async (reuseDirectoryWindow) => {
   const target = { kind: 'documents' as const, paths: ['D:/notes/b.md'] };
-  await prepareOpenTargetWindow(true, target, false);
+  await prepareOpenTargetWindow(true, target, false,
+    reuseDirectoryWindow === undefined ? undefined : { reuseDirectoryWindow });
   expect(invoke).toHaveBeenLastCalledWith('prepare_open_target_window', {
     target,
     createIfMissing: false,
-    reuseDirectoryWindow: true,
+    reuseDirectoryWindow: reuseDirectoryWindow ?? false,
   });
-  await prepareOpenTargetWindow(true, target, false, { reuseDirectoryWindow: false });
-  expect(invoke).toHaveBeenLastCalledWith('prepare_open_target_window', {
-    target,
-    createIfMissing: false,
-    reuseDirectoryWindow: false,
+});
+
+describe('resolveDroppedOpenTarget', () => {
+  it('将原始拖放顺序交给原生分类，并返回目录目标', async () => {
+    const paths = ['D:/notes/image.png', 'D:/中文 工作目录/example.md', 'D:/notes/file.txt'];
+    const target = { kind: 'folder', path: paths[1] };
+    invoke.mockResolvedValue(target);
+    await expect(resolveDroppedOpenTarget(true, paths)).resolves.toEqual(target);
+    expect(invoke).toHaveBeenCalledWith('resolve_dropped_open_target', { paths });
+  });
+
+  it('空批次或浏览器环境不调用 IPC', async () => {
+    await expect(resolveDroppedOpenTarget(true, [])).resolves.toBeNull();
+    await expect(resolveDroppedOpenTarget(false, ['D:/notes'])).resolves.toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('保留无目标结果，并将读取错误交给拖放入口显示', async () => {
+    invoke.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('permission denied'));
+    await expect(resolveDroppedOpenTarget(true, ['D:/image.png'])).resolves.toBeNull();
+    await expect(resolveDroppedOpenTarget(true, ['D:/private'])).rejects.toThrow('permission denied');
   });
 });
 

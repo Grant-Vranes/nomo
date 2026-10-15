@@ -656,10 +656,10 @@ export const JA_JP_EXTRA_TRANSLATIONS = {
   footnoteContentPlaceholder: '脚注の内容を入力してください',
   unavailableSuffix: '(利用不可)',
   dragDropNoMarkdown:
-    'ドロップされたファイルにはマークダウン ファイルやテキスト ファイルは含まれません',
+    'ドロップされた項目にフォルダー、Markdown ファイル、テキスト ファイルが含まれていません',
   dragOpenBlockedUnsaved:
     '現在のドキュメントには保存されていない変更があります。リカバリ コピーが保存されていました。ドロップしたファイルを開く前に保存してください。',
-  dragOpenFailed: 'ドロップされたファイルを開けませんでした',
+  dragOpenFailed: 'ドロップされた項目を開けませんでした',
   openedByDragDrop: 'ドラッグアンドドロップからMarkdownファイルを開いた',
   openedByTauri: 'Tauri で Markdown ファイルを開いた',
   localBrowserFile: 'ローカルブラウザファイル: {name}',
@@ -692,6 +692,7 @@ export const JA_JP_EXTRA_TRANSLATIONS = {
   autoSaveFailed: '自動保存に失敗しました: {error}',
   saved: '保存されました',
   openFileFailed: 'ファイルを開けませんでした',
+  batchOpenFailed: '{count} 件のドキュメントを開けませんでした',
   saveFileFailed: 'ファイルの保存に失敗しました',
   fileStatusCheckFailed: 'ファイルステータスの確認に失敗しました',
   externalFileDeleted:

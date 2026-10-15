@@ -56,7 +56,9 @@ pub fn run() {
             );
             let should_restore_window =
                 targets.markdown_paths.is_empty() && targets.folder_paths.is_empty();
-            let _ = crate::window::external_open::route_external_open_targets(app, targets);
+            if let Err(error) = crate::window::external_open::queue_external_open_targets(app, targets) {
+                crate::app_logger::error("ExternalOpen", &error);
+            }
             if should_restore_window {
                 crate::window::tray::show_main_window(app);
             }
@@ -374,6 +376,8 @@ pub fn run() {
             crate::window::tab_drag::cancel_native_tab_drag,
             crate::window::open_targets::open_documents_in_directory_window,
             crate::window::open_targets::prepare_open_target_window,
+            crate::window::open_targets::resolve_dropped_open_target,
+            crate::window::external_open::take_pending_external_open,
             crate::window::open_targets::release_open_target_reservation,
             crate::window::commands::open_settings_window,
             crate::window::commands::mark_settings_close_handler_ready,

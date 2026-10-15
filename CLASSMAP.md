@@ -30,8 +30,9 @@
 | 窗口状态持久化 | `src-tauri/src/window/state.rs` | `src-tauri/src/lib.rs`, `src-tauri/src/models.rs` | 窗口位置/尺寸/最大化状态恢复逻辑变更 |
 | Markdown 文档小窗 | `src/app/App.svelte` | `src/app/components/AppShell.svelte`, `src/app/components/AppTitleBar.svelte`, `src/app/components/MarkdownMiniLargePreview.svelte`, `src/app/styles/markdown-mini.css`, `src/app/services/markdownMiniTransition.ts`, `src/app/services/desktopWindow.ts`, `src-tauri/src/window/state.rs` | 修改小窗进入/返回、置顶、只读降级、快捷键、过渡就绪与阅读位置恢复或原生窗口几何切换 |
 | 全局滚动条显隐 | `src/app/services/scrollbarVisibility.ts` | `src/main.ts`, `src/app/styles/global.css`, `src/app/styles/app-layout.css`, `src/app/styles/editor-segmented.css` | 修改滚动时显示、边缘触发、延时隐藏或局部滚动容器覆盖 |
-| 外部打开路由 | `src-tauri/src/window/external_open.rs` | `src-tauri/src/lib.rs` | 单实例/启动参数/macOS open 事件 |
+| 外部打开路由 | `src-tauri/src/window/external_open.rs` | `src-tauri/src/lib.rs` | 单实例/启动参数/macOS open 事件、连续请求短暂合并、追加暂存及按窗口原子消费 |
 | 跨窗口打开目标去重 | `src-tauri/src/window/open_targets.rs` | `src/app/services/openTargetRouting.ts`, `src/app/App.svelte`, `src/app/services/desktopWindow.ts`, `src-tauri/src/window/external_open.rs` | 修改文件/文件夹打开优先级、空窗口复用、窗口聚焦或目标预留 |
+| 系统文件与文件夹拖放打开 | `src/app/App.svelte`, `src-tauri/src/window/open_targets.rs` | `src/app/services/desktopWindow.ts`, `src/lib/desktop/tauriStorage.ts`, `src/app/services/openTargetRouting.ts` | 修改元数据识别、按首个有效目标类型选择单目录或整批文档、文档固定在拖入窗口打开并保留文件去重、延迟打开或目录复用现有打开方式与未保存确认 |
 
 ### 编辑器核心（ProseMirror）
 
@@ -128,7 +129,7 @@
 | 图片 Markdown 路径 | `src/app/services/imageMarkdown.ts` | `src/app/services/imageInsertion.ts` | 图片文件过滤、路径/Markdown 语法生成 |
 | 文件存储与文档仓库接口 | `src/lib/services/storage.ts` | `src/lib/desktop/tauriStorage.ts` | FileStorage、DocumentRepository、Markdown 源编码契约变更 |
 | 渲染服务类型接口 | `src/lib/services/render.ts` | `src/lib/services/shikiCodeTokenizer.ts`, `katexMathRenderer.ts`, `mermaidDiagramRenderer.ts` | ImageLoader、CodeTokenizer、MathRenderer、DiagramRenderer 接口变更 |
-| 文档文件 IO | `src/app/services/documentFiles.ts` | `src/lib/desktop/tauriStorage.ts` | 文件读取/保存/最近文件/目录树前端调用 |
+| 文档文件 IO | `src/app/services/documentFiles.ts` | `src/lib/desktop/tauriStorage.ts` | 文件选择框多选、串行批次打开失败收集及文件读取/保存/最近文件/目录树前端调用 |
 | 文件夹资源管理 | `src/app/services/folderExplorerController.ts` | `src/app/services/folderTree.ts`, `explorerRows.ts` | 目录树按需加载/展开/串行刷新已加载目录 |
 | 目录树纯函数 | `src/app/services/folderTree.ts` | — | 树的归一化/查找/更新 |
 | 资源管理器展示 | `src/app/services/explorerRows.ts` | — | 树形拍平为可渲染行 |
@@ -266,7 +267,7 @@
 |---|---|---|---|
 | 原生菜单 | `src-tauri/src/window/menu.rs` | `src-tauri/src/i18n.rs` | 菜单构建/快捷键/事件处理 |
 | 系统托盘与平台图标 | `src-tauri/src/window/tray.rs` | `src-tauri/src/window/commands.rs` | 托盘安装/刷新/关闭到托盘；仅 macOS 随主题替换窗口和 Dock 图标，其他平台保留打包图标 |
-| 外部打开路由 | `src-tauri/src/window/external_open.rs` | `src-tauri/src/lib.rs` | 单实例/启动参数/macOS open 事件 |
+| 外部打开路由 | `src-tauri/src/window/external_open.rs` | `src-tauri/src/lib.rs` | 单实例/启动参数/macOS open 事件、连续请求短暂合并、追加暂存及按窗口原子消费 |
 | Windows 文件关联 | `src-tauri/src/window/file_association.rs` | — | 注册/注销默认打开方式和右键菜单 |
 | 平台适配 | `src-tauri/src/window/os/macos.rs`, `os/windows.rs` | `src-tauri/src/window/os/mod.rs` | macOS/Windows 窗口行为差异与 Windows 无边框/阴影设置 |
 | 外部链接与附件安全 | `src-tauri/src/external_link.rs` | `src/lib/desktop/tauriStorage.ts` | 打开外部链接、白名单本地附件或文件管理器定位 |
@@ -2174,7 +2175,7 @@
 
 **Kind:** service
 
-**Owns:** 文件与文件夹打开策略的调用顺序；确定使用当前窗口或显示询问框后才激活接收窗口；显式选择目录窗口后继续处理混合批次中的剩余目标。
+**Owns:** 文件与文件夹打开策略的调用顺序；确定使用当前窗口或显示询问框后才激活接收窗口；当前窗口已打开的目录仅激活，不重新恢复工作区；显式选择目录窗口后继续处理混合批次中的剩余目标。
 
 **Does not own:** 不改变路径归属、初始空窗口判定、启动队列或原生窗口创建流程。
 
@@ -2199,6 +2200,7 @@
 - 文件只自动匹配实际已打开路径；已登记的直接父目录窗口作为询问时的显式候选，不覆盖打开偏好
 - 规范化绝对路径，原子判断目标归属并聚焦已有窗口或生成唯一新窗口标签
 - 提供同步目标、准备打开窗口、显式目录窗口打开和创建失败释放预留的 IPC
+- 提供拖放路径识别 IPC：读取元数据、跳过不存在或不支持的路径，首个有效目标为文件夹时返回单目录，为文档时收集全部支持的文档并去重；读取异常明确上报
 
 **Does not own:**
 - 不拥有具体文件、文件夹加载与标签定位逻辑（在 `src/app/App.svelte` 中）
@@ -2211,7 +2213,7 @@
 **Change this when:**
 - 修改跨窗口目标匹配、预留超时、已有窗口激活或新窗口标签规则
 
-**Related tests:** 同文件 Rust 测试（文件优先、直接父目录匹配和批次目标划分）
+**Related tests:** 同文件 Rust 测试（文件优先、直接父目录匹配、批次目标划分和拖放路径识别）
 
 **Confidence:** high
 

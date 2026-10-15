@@ -175,6 +175,70 @@ pub(crate) fn route_external_open(app: &AppHandle, paths: Vec<String>) -> Result
     Ok(())
 }
 
+// 传统 Explorer 菜单会逐文件启动进程；先合并短时间内的请求，再按整批选择窗口。
+// 仅在有请求时创建任务；静默 150ms 后发送，连续请求最多等待 1s。
+#[derive(Default)]
+struct ExternalOpenBatch {
+    paths: Vec<String>,
+    started: Option<std::time::Instant>,
+    last_received: Option<std::time::Instant>,
+}
+impl ExternalOpenBatch {
+    fn push(&mut self, paths: Vec<String>, now: std::time::Instant) -> bool {
+        let start = self.started.is_none();
+        self.started.get_or_insert(now);
+        self.last_received = Some(now);
+        for path in paths {
+            if !self.paths.contains(&path) { self.paths.push(path); }
+        }
+        start
+    }
+
+    fn take_ready(&mut self, now: std::time::Instant) -> Option<Vec<String>> {
+        let quiet = self.last_received.is_some_and(|time| now.duration_since(time).as_millis() >= 150);
+        let expired = self.started.is_some_and(|time| now.duration_since(time).as_millis() >= 1000);
+        if !quiet && !expired { return None; }
+        self.started = None;
+        self.last_received = None;
+        Some(std::mem::take(&mut self.paths))
+    }
+}
+static EXTERNAL_OPEN_BATCH: OnceLock<Mutex<ExternalOpenBatch>> = OnceLock::new();
+
+pub(crate) fn queue_external_open_targets(app: &AppHandle, targets: ExternalOpenTargets) -> Result<(), String> {
+    if !targets.folder_paths.is_empty() {
+        return route_external_open_targets(app, targets);
+    }
+    if targets.markdown_paths.is_empty() { return Ok(()); }
+    let should_start = {
+        let mut batch = EXTERNAL_OPEN_BATCH.get_or_init(Default::default).lock()
+            .map_err(|_| "锁定外部打开批次失败".to_string())?;
+        batch.push(targets.markdown_paths, std::time::Instant::now())
+    };
+    if should_start {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                let paths = {
+                    let Ok(mut batch) = EXTERNAL_OPEN_BATCH.get().unwrap().lock() else {
+                        crate::app_logger::error("ExternalOpen", "读取外部打开批次失败");
+                        return;
+                    };
+                    let Some(paths) = batch.take_ready(std::time::Instant::now()) else { continue; };
+                    paths
+                };
+                crate::app_logger::info("ExternalOpen", &format!("合并外部打开批次：files={}", paths.len()));
+                if let Err(error) = route_external_open(&app, paths) {
+                    crate::app_logger::error("ExternalOpen", &error);
+                }
+                break;
+            }
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn route_external_open_targets(
     app: &AppHandle,
     targets: ExternalOpenTargets,
@@ -258,14 +322,60 @@ pub(crate) fn persist_pending_external_open(
     }
 
     let key = pending_external_open_key(label);
-    crate::config::commands::update_app_setting(
-        app.clone(),
-        SettingInput {
-            key,
-            value_json: serde_json::to_string(paths)
-                .map_err(|error| format!("序列化待外部打开路径失败：{error}"))?,
-        },
-    )
+    crate::config::with_manager(app, |manager| {
+        manager.update(|config| {
+            update_pending_paths(config, &key, paths, false);
+        })
+    })
+}
+
+// 读改写由 ConfigManager 的同一个写锁保护，Explorer 连续逐文件启动不能互相覆盖。
+fn update_pending_paths(
+    config: &mut crate::config::AppConfig,
+    key: &str,
+    paths: &[String],
+    consume: bool,
+) -> Vec<String> {
+    let mut pending: Vec<String> = config.app.settings.get(key)
+        .and_then(|record| serde_json::from_str(&record.value_json).ok())
+        .unwrap_or_default();
+    let mut taken = Vec::new();
+    if consume {
+        pending.retain(|path| {
+            if paths.is_empty() || paths.contains(path) {
+                taken.push(path.clone());
+                false
+            } else { true }
+        });
+    } else {
+        for path in paths {
+            if !pending.contains(path) { pending.push(path.clone()); }
+        }
+    }
+    config.app.settings.insert(key.to_string(), crate::models::SettingRecord {
+        key: key.to_string(),
+        // Vec<String> 序列化不会失败。
+        value_json: serde_json::to_string(&pending).expect("serialize pending paths"),
+        updated_at: crate::config::now_ts(),
+    });
+    taken
+}
+
+/// 不传路径时原子取走启动队列；传路径时只确认该事件，不能清掉随后到达的文件。
+#[tauri::command]
+pub(crate) fn take_pending_external_open(
+    app: AppHandle,
+    window: WebviewWindow,
+    paths: Option<Vec<String>>,
+) -> Result<Vec<String>, String> {
+    let key = pending_external_open_key(window.label());
+    let mut taken = Vec::new();
+    crate::config::with_manager(&app, |manager| {
+        manager.update(|config| {
+            taken = update_pending_paths(config, &key, &paths.unwrap_or_default(), true);
+        })
+    })?;
+    Ok(taken)
 }
 
 pub(crate) fn persist_pending_external_folder_open(
@@ -334,7 +444,7 @@ fn is_supported_external_folder(path: &Path, exe_path: Option<&Path>) -> bool {
     path.is_dir()
 }
 
-fn has_supported_extension(path: &Path) -> bool {
+pub(super) fn has_supported_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| {
@@ -387,6 +497,37 @@ mod tests {
             vec!["/tmp/first.md".to_string(), "/tmp/second.md".to_string()]
         );
         assert!(take_early_external_open_paths().unwrap().is_empty());
+    }
+
+    #[test]
+    fn external_burst_batches_until_quiet_with_a_bounded_delay() {
+        use std::time::{Duration, Instant};
+        let mut batch = super::ExternalOpenBatch::default();
+        let now = Instant::now();
+        assert!(batch.push(vec!["a.md".into()], now));
+        assert!(!batch.push(vec!["a.md".into(), "b.md".into()], now + Duration::from_millis(100)));
+        assert!(batch.take_ready(now + Duration::from_millis(150)).is_none());
+        assert_eq!(batch.take_ready(now + Duration::from_millis(250)), Some(vec!["a.md".into(), "b.md".into()]));
+        assert!(batch.push(vec!["c.md".into()], now + Duration::from_millis(300)));
+        for offset in (400..=1300).step_by(100) {
+            batch.push(vec![format!("{offset}.md")], now + Duration::from_millis(offset));
+        }
+        assert_eq!(batch.take_ready(now + Duration::from_millis(1300)).unwrap().len(), 11);
+        assert!(batch.paths.is_empty());
+    }
+
+    #[test]
+    fn pending_requests_accumulate_and_acknowledgements_preserve_later_files() {
+        let mut config = crate::config::AppConfig::default();
+        let key = "pendingExternalOpen:main";
+        let first = vec!["a.md".to_string()];
+        let second = vec!["b.md".to_string(), "c.txt".to_string()];
+        super::update_pending_paths(&mut config, key, &first, false);
+        super::update_pending_paths(&mut config, key, &second, false);
+        super::update_pending_paths(&mut config, key, &first, false);
+        assert_eq!(super::update_pending_paths(&mut config, key, &first, true), first);
+        assert_eq!(super::update_pending_paths(&mut config, key, &[], true), second);
+        assert!(super::update_pending_paths(&mut config, key, &[], true).is_empty());
     }
 
     #[test]

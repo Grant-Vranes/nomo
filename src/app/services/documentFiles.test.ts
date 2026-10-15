@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { t } from '../i18n';
-import { findDroppedDocumentPath, resolveExternalFileChange } from './documentFiles';
+import { findDroppedDocumentPath, openDocumentBatch, resolveExternalFileChange } from './documentFiles';
 
 describe('findDroppedDocumentPath', () => {
   it('routes only the four supported document extensions', () => {
@@ -88,5 +88,35 @@ describe('resolveExternalFileChange', () => {
         status: { exists: true, modifiedAt: 120 },
       }).type,
     ).toBe('none');
+  });
+});
+
+describe('openDocumentBatch', () => {
+  it('waits for each read and continues after a failed document', async () => {
+    let release!: () => void;
+    const firstRead = new Promise<void>((resolve) => { release = resolve; });
+    const open = vi.fn(async (path: string) => {
+      if (path === 'a.md') await firstRead;
+      if (path === 'b.txt') throw new Error('permission denied');
+    });
+    const pending = openDocumentBatch(['a.md', 'b.txt', 'c.json'], open, 'failed');
+    expect(open.mock.calls).toEqual([['a.md']]);
+    release();
+    expect(await pending).toEqual([{ path: 'b.txt', message: 'permission denied' }]);
+    expect(open.mock.calls).toEqual([['a.md'], ['b.txt'], ['c.json']]);
+  });
+
+  it('collects all failures including native string errors', async () => {
+    const open = vi.fn().mockRejectedValueOnce('missing file').mockRejectedValueOnce(null);
+    expect(await openDocumentBatch(['a.md', 'b.json'], open, 'failed')).toEqual([
+      { path: 'a.md', message: 'missing file' },
+      { path: 'b.json', message: 'failed' },
+    ]);
+  });
+
+  it('does no work for an empty selection', async () => {
+    const open = vi.fn();
+    expect(await openDocumentBatch([], open, 'failed')).toEqual([]);
+    expect(open).not.toHaveBeenCalled();
   });
 });

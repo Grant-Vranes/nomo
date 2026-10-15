@@ -152,6 +152,15 @@ export async function activateDocumentWindow(desktopEnabled: boolean): Promise<v
   await invoke('activate_document_window');
 }
 
+export async function resolveDroppedOpenTarget(
+  desktopEnabled: boolean,
+  paths: string[],
+): Promise<OpenTarget | null> {
+  if (!desktopEnabled || paths.length === 0) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<OpenTarget | null>('resolve_dropped_open_target', { paths });
+}
+
 export async function prepareOpenTargetWindow(
   desktopEnabled: boolean,
   target: OpenTarget,

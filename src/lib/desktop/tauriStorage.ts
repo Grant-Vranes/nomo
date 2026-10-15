@@ -192,8 +192,13 @@ export async function openMarkdownWithDialog(): Promise<NativeDocument | null> {
 /**
  * 只选择文档路径，不读取正文。TXT/JSON 必须先经过类型路由，避免误入 Markdown 全量读取链路。
  */
-export async function pickDocumentPathWithDialog(): Promise<string | null> {
-  return pickPathWithDialog('Documents', ['md', 'markdown', 'txt', 'json']);
+export async function pickDocumentPathsWithDialog(): Promise<string[]> {
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const selected = await open({
+    multiple: true,
+    filters: [{ name: 'Documents', extensions: ['md', 'markdown', 'txt', 'json'] }],
+  });
+  return typeof selected === 'string' ? [selected] : selected ?? [];
 }
 
 async function pickPathWithDialog(name: string, extensions: string[]): Promise<string | null> {
@@ -553,6 +558,11 @@ export async function listenDesktopFileDrops(
 ): Promise<UnlistenFn> {
   const { listen, TauriEvent } = await import('@tauri-apps/api/event');
   return listen<{ paths: string[] }>(TauriEvent.DRAG_DROP, (event) => handler(event.payload.paths));
+}
+
+export async function takePendingExternalOpen(paths?: string[]): Promise<string[]> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<string[]>('take_pending_external_open', { paths: paths ?? null });
 }
 
 export async function listenDesktopOpenDocuments(
