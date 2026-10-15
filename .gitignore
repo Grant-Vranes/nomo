@@ -8,6 +8,7 @@ build/
 .vite/
 .tauri/
 src-tauri/target/
+src-tauri/gen
 src-tauri/windows-shell-extension/bin/
 src-tauri/windows-shell-extension/obj/
 src-tauri/windows-shell-extension/obj-tests/
