@@ -3,6 +3,7 @@ import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { getMathRenderer } from '../renderers';
 import { registerActiveEdit, unregisterActiveEdit } from './activeEditRegistry';
+import { createInlineMathInput, createInlineMathPreview } from './inlineMathUi';
 
 export class MathInlineNodeView {
   private static nextKeyboardCursorSide: 'start' | 'end' | null = null;
@@ -184,28 +185,20 @@ export class MathInlineNodeView {
     this.dom.classList.remove('ProseMirror-selectednode');
 
     // 步骤1：原位替换为 input
-    this.input = document.createElement('input');
-    this.input.type = 'text';
-    this.input.className = 'math-inline-input';
-    this.input.contentEditable = 'true';
-    this.input.value = this.originalTex;
+    this.input = createInlineMathInput(document, this.originalTex);
     this.updateInputWidth();
     this.dom.textContent = '';
     this.dom.appendChild(this.input);
 
     // 步骤2：创建浮动预览卡片（挂 document.body，fixed 定位）
-    this.previewCard = document.createElement('div');
-    this.previewCard.className = 'math-inline-preview';
-    this.previewCard.style.position = 'fixed';
-    this.previewCard.style.zIndex = '1000';
+    const preview = createInlineMathPreview(document);
+    this.previewCard = preview.card;
     this.previewCard.addEventListener('mousedown', (e) => {
       e.preventDefault(); // 阻止焦点离开 input
       this.input?.focus();
     });
 
-    this.previewContent = document.createElement('div');
-    this.previewContent.className = 'math-inline-preview-content';
-    this.previewCard.appendChild(this.previewContent);
+    this.previewContent = preview.content;
     this.previewCard.style.visibility = 'hidden'; // 定位前隐藏，避免闪烁
     document.body.appendChild(this.previewCard);
 

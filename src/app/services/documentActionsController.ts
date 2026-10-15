@@ -711,6 +711,10 @@ export function createDocumentActionsController(options: DocumentActionsOptions)
 
     saveTimers[tabId] = setTimeout(async () => {
       delete saveTimers[tabId];
+      if (getDocumentEditor(tabId)?.hasPendingMathInlineDraft?.()) {
+        debouncedAutoSave(tabId);
+        return;
+      }
       await trackPendingSave(() => autoSaveLatestTab(tabId));
     }, options.getAutoSaveDelayMs());
   }
@@ -835,6 +839,7 @@ export function createDocumentActionsController(options: DocumentActionsOptions)
     const targetTab = options.getTabs().find((tab) => tab.id === tabId);
     if (!isMarkdownTab(targetTab)) return;
     const path = targetTab.nativePath;
+    if (!options.getDesktopEnabled() || !path || getDocumentEditor(tabId)?.hasPendingMathInlineDraft?.()) return;
     if (options.isPathChanging?.(path)) return;
     flushDocumentRuntime(tabId);
     const nextChange = await getExternalFileChange(

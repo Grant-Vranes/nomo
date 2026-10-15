@@ -85,6 +85,7 @@ function insertSelected(view: EditorView, getOptions: () => QuickInsertOptions):
       );
   } else {
     inserted = insertQuickInsertContent(view, session.from, session.to, command);
+    if (inserted && command.type === 'insertMathInline') dismissQuickInsert(view);
   }
   if (!inserted) changeMenu(view, { type: 'unavailable' });
   return inserted;

@@ -26,6 +26,7 @@ import { CommentBlockNodeView } from './nodeViews/CommentBlockNodeView';
 import { CommentInlineNodeView } from './nodeViews/CommentInlineNodeView';
 import { MermaidBlockNodeView } from './nodeViews/MermaidBlockNodeView';
 import { MathBlockNodeView } from './nodeViews/MathBlockNodeView';
+import { startMathInlineDraft } from './plugins/mathInlineDraft';
 import { createLinkAttrs } from './link';
 import { t } from '../../app/i18n';
 import type { QuickInsertEditorCommand } from './quickInsert';
@@ -744,6 +745,7 @@ export function insertQuickInsertContent(
   to: number,
   command: QuickInsertEditorCommand,
 ): boolean {
+  if (command.type === 'insertMathInline') return startMathInlineDraft(view, { from, to });
   const { state, dispatch } = view;
   const tr = state.tr.delete(from, to);
   tr.setSelection(TextSelection.create(tr.doc, from));
@@ -906,6 +908,8 @@ export function executeEditorCommand(
       dispatch(closeHistory(view.state.tr).setMeta('addToHistory', false));
       return true;
     }
+    case 'insertMathInline':
+      return startMathInlineDraft(view);
     case 'toggleBold':
       return run(toggleInlineSourceFormat('strong'));
     case 'toggleItalic':

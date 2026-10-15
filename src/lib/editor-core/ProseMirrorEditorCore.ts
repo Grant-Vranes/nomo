@@ -61,6 +61,7 @@ import { paragraphSelectionGutterPlugin } from './plugins/paragraphSelectionGutt
 import { codeBlockNavigationPlugin } from './plugins/codeBlockNavigation';
 import { displayMathInputPlugin } from './plugins/displayMathInput';
 import { mathInlineInputPlugin } from './plugins/mathInlineInput';
+import { mathInlineDraftPlugin, mathInlineDraftKey, canInsertMathInline, cancelMathInlineDraft } from './plugins/mathInlineDraft';
 import { linkInteractionPlugin } from './plugins/linkInteraction';
 import {
   inlineSourceEditingPlugin,
@@ -330,6 +331,10 @@ export class ProseMirrorEditorCore implements EditorCore {
     this.flushPendingMarkdownSync();
   }
 
+  hasPendingMathInlineDraft(): boolean {
+    return !!this.view && !!mathInlineDraftKey.getState(this.view.state);
+  }
+
   private normalizeLegacyInlineState(state: EditorState): EditorState {
     const converted = materializeInlineSourceWithMapping(state.doc);
     if (converted.doc === state.doc) return state;
@@ -366,6 +371,7 @@ export class ProseMirrorEditorCore implements EditorCore {
 
   unmount(): void {
     this.assertActive();
+    if (this.view) cancelMathInlineDraft(this.view);
     this.commitPendingEdits();
     this.clearPlainTextPasteRequest();
     if (!this.view) return;
@@ -1382,6 +1388,10 @@ export class ProseMirrorEditorCore implements EditorCore {
     if (this.destroyed || this.runtime.readonly) {
       return false;
     }
+    if (command.type === 'insertMathInline') {
+      return this.runtime.mode === 'semantic' && !!this.view && this.isEditable() &&
+        !isActiveEditComposing(this.view) && canInsertMathInline(this.view.state);
+    }
     if (command.type === 'insertText') {
       return !!this.view && this.isEditable() && !isActiveEditComposing(this.view) &&
         this.view.state.selection instanceof TextSelection && this.view.state.selection.$from.parent.inlineContent;
@@ -1445,6 +1455,10 @@ export class ProseMirrorEditorCore implements EditorCore {
     this.view?.setProps({
       editable: () => this.isEditable(),
     });
+    // A forced hide during composition must not leave a stale draft to revive later.
+    if (this.view && (this.runtime.readonly || this.runtime.mode !== 'semantic')) {
+      cancelMathInlineDraft(this.view);
+    }
     if (this.view && this.runtime.readonly) {
       cancelActiveEdit(this.view);
       for (const finish of [...this.compositionWaiters]) finish();
@@ -1517,6 +1531,7 @@ export class ProseMirrorEditorCore implements EditorCore {
         history(),
         taskListPlugin(),
         mathInlineInputPlugin(() => this.view),
+        mathInlineDraftPlugin(),
         inlineSourceEditingPlugin({ readonly: () => !this.isEditable() }),
         linkInteractionPlugin({ openLink: this.options.onOpenLink }),
         codeHighlightPlugin(),

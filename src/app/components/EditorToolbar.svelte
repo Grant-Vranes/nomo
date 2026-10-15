@@ -66,6 +66,7 @@
   export let openEmojiPicker: (event: MouseEvent) => void = () => undefined;
   export let emojiInsertionDisabled = false;
   export let emojiPickerOpen = false;
+  export let mathInlineInsertionDisabled = true;
 
   const tableRows = [1, 2, 3, 4, 5];
   const tableColumns = [1, 2, 3, 4, 5, 6];
@@ -73,8 +74,10 @@
   let previewColumns = 4;
   let diagramPickerOpen = false;
   let widthPickerOpen = false;
+  let mathPickerOpen = false;
 
   $: if (inactive) {
+    mathPickerOpen = false;
     diagramPickerOpen = false;
     widthPickerOpen = false;
   }
@@ -139,9 +142,21 @@
   }
 
   function closeResponsivePickers() {
+    mathPickerOpen = false;
     closeTablePicker();
     closeDiagramPicker();
     closeWidthPicker();
+  }
+
+  function toggleMathPicker() {
+    const open = !mathPickerOpen;
+    closeResponsivePickers();
+    mathPickerOpen = open;
+  }
+
+  function insertMath(command: EditorCommand) {
+    mathPickerOpen = false;
+    runCommand(command);
   }
 
   function insertBlankDiagram() {
@@ -346,13 +361,26 @@
       >
         <Code2 size={17} />
       </button>
-      <button
-        title={t.mathFormula()}
-        aria-label={t.insertMathFormula()}
-        on:click={() => runCommand({ type: 'insertMathBlock', tex: 'E = mc^2' })}
-      >
-        <Sigma size={17} />
-      </button>
+      <div class="diagram-picker-anchor" use:clickOutside={() => mathPickerOpen = false}>
+        <button title={t.mathFormula()} aria-label={t.insertMathFormula()} aria-haspopup="menu"
+          aria-expanded={mathPickerOpen} class:active={mathPickerOpen} on:mousedown|preventDefault
+          on:click|stopPropagation={toggleMathPicker}>
+          <Sigma size={17} />
+        </button>
+        {#if mathPickerOpen}
+          <div class="diagram-picker-popover" role="menu" aria-label={t.insertMathFormula()} tabindex="-1"
+            on:keydown={(event) => { if (event.key === 'Escape') { event.preventDefault(); mathPickerOpen = false; } }}>
+            <button type="button" role="menuitem" disabled={mathInlineInsertionDisabled || mode === 'source'}
+              on:mousedown|preventDefault on:click={() => insertMath({ type: 'insertMathInline' })}>
+              <span>{t.mathInline()}</span><small>$…$</small>
+            </button>
+            <button type="button" role="menuitem" on:mousedown|preventDefault
+              on:click={() => insertMath({ type: 'insertMathBlock', tex: 'E = mc^2' })}>
+              <span>{t.mathBlock()}</span><small>$$…$$</small>
+            </button>
+          </div>
+        {/if}
+      </div>
       <div class="diagram-picker-anchor" use:clickOutside={closeDiagramPicker}>
         <button
           title={t.diagram()}

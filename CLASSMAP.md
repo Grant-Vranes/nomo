@@ -80,6 +80,7 @@
 | 代码块导航 | `src/lib/editor-core/plugins/codeBlockNavigation.ts` | — | 代码块内外光标移动 |
 | 代码高亮装饰 | `src/lib/editor-core/plugins/codeHighlight.ts` | `src/lib/services/shikiCodeTokenizer.ts` | 语法高亮装饰逻辑 |
 | 公式输入规则 | `src/lib/editor-core/plugins/displayMathInput.ts`, `mathInlineInput.ts`, `mathBlock.ts` | — | 公式快捷输入 |
+| 行内公式插入草稿 | `src/lib/editor-core/plugins/mathInlineDraft.ts` | `editorCommands.ts`, `ProseMirrorEditorCore.ts`, `nodeViews/inlineMathUi.ts`, `nodeViews/activeEditRegistry.ts`, `src/app/services/documentActionsController.ts`, `src/app/App.svelte` | 临时输入与预览、空内容/Esc 取消、选区映射、确认历史与保存/IME/只读生命周期；hasPendingMathInlineDraft 防止后台轮询、自动保存及工作区持久化提前确认；共享 UI 原件也供 MathInlineNodeView 使用 |
 | 八类行内原文与投影 | `src/lib/editor-core/InlineSourceCodec.ts`, `inlineSourceCommands.ts` | `markdownTokenizer.ts`, `markdown.ts`, `markdownSerialization.ts`, `schema.ts`, `ProseMirrorEditorCore.ts` | 原文/格式与位置映射、上下标语法与投影、代码字面粘贴和清除、外层格式组合、HTML 导入与输出语义 |
 | 八类行内显隐与组字 | `src/lib/editor-core/plugins/inlineSourceEditing.ts` | `src/app/styles/editor-document.css`, `plugins/typography.ts` | 光标/选区所在格式局部展开、单击与实际拖选区分、拖选保持、IME 冻结、真实符号装饰与空模板追踪 |
 | 当前标题层级角标 | `src/lib/editor-core/plugins/headingLevelIndicator.ts` | `src/app/styles/editor-document.css` | H1-H6 当前标题角标的定位、显隐或 GSAP 动效 |
@@ -1573,6 +1574,7 @@
 - 将应用层 `EditorCommand` 转换为 ProseMirror transaction
 - 以单个事务移动章节顶层节点切片并调整后代标题层级
 - 快捷插入以单个事务删除触发符号并插入或转换内容，复用表格生成、图表模板、列表/引用包装规则和公式/注释编辑入口
+- 行内公式命令委托 `plugins/mathInlineDraft.ts`；快捷插入的行内公式仅在确认草稿时替换触发符，取消保留原文
 
 **Does not own：**
 - 不拥有表格命令细节（在 tableCommands.ts 中）

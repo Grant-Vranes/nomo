@@ -63,6 +63,7 @@
   export let closeCurrentFile: () => void;
   export let closeCurrentWindow: () => void;
   export let runCommand: (command: EditorCommand) => void;
+  export let mathInlineInsertionDisabled = true;
   export let openTablePicker: () => void;
   export let openLinkPicker: () => void;
   export let editFrontMatter: () => void;
@@ -716,8 +717,11 @@
                 <button
                   on:click={() =>
                     finish(() => runCommand({ type: 'insertMathBlock', tex: '' }), 'paragraph')}
-                  >{t.insertMathBlock()} <span class="shortcut">Ctrl + Shift + M</span></button
+                  >{t.mathBlock()} <span class="shortcut">Ctrl + Shift + M</span></button
                 >
+                <button disabled={mathInlineInsertionDisabled || mode === 'source'} on:mousedown|preventDefault
+                  on:click={() => finish(() => runCommand({ type: 'insertMathInline' }), 'paragraph')}
+                  >{t.mathInline()}</button>
                 <div class="divider"></div>
                 <button
                   on:click={() =>

@@ -23,6 +23,7 @@ export type QuickInsertEditorCommand = Extract<
       | 'insertCallout'
       | 'insertHorizontalRule'
       | 'insertMathBlock'
+      | 'insertMathInline'
       | 'insertDiagramBlock'
       | 'insertCommentInline'
       | 'insertCommentBlock';
@@ -128,7 +129,10 @@ export const QUICK_INSERT_CATEGORIES: QuickInsertCategory[] = [
     id: 'math',
     label: () => t.quickInsertMath(),
     icon: 'math',
-    variants: [{ label: () => '', command: { type: 'insertMathBlock', tex: '' } }],
+    variants: [
+      { label: () => t.mathBlock(), command: { type: 'insertMathBlock', tex: '' } },
+      { label: () => t.mathInline(), command: { type: 'insertMathInline' } },
+    ],
   },
   {
     id: 'diagram',

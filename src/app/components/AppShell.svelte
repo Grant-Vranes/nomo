@@ -184,6 +184,7 @@
   export let saveMarkdownFile: (saveAs?: boolean) => void;
   export let runCommand: (command: EditorCommand) => void;
   export let pendingInlineMarks: InlinePendingMarks;
+  export let mathInlineInsertionDisabled = true;
   export let openTablePicker: () => void;
   export let openLinkPicker: () => void;
   export let openEmojiPicker: (event: MouseEvent) => void = () => undefined;
@@ -383,6 +384,7 @@
       {closeCurrentFile}
       {closeCurrentWindow}
       {runCommand}
+      {mathInlineInsertionDisabled}
       {openTablePicker}
       {openLinkPicker}
       {editFrontMatter}
@@ -525,6 +527,7 @@
                   {toolbarShortcut}
                   {runCommand}
                   {pendingInlineMarks}
+                  {mathInlineInsertionDisabled}
                   {tablePickerOpen}
                   {openTablePicker}
                   {closeTablePicker}

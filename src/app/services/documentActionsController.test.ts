@@ -4,7 +4,7 @@ import type { MarkdownTabState, Tab } from '../types';
 import { createEmptyExternalFileChange } from '../types';
 import { createDocumentActionsController } from './documentActionsController';
 import { confirmAction } from './confirmAction';
-import { saveNativeMarkdownFile } from './documentFiles';
+import { saveNativeMarkdownFile, getExternalFileChange } from './documentFiles';
 import { createMarkdownTab, createSegmentedTextTab, isMarkdownTab } from './tabs';
 
 vi.mock('./confirmAction', () => ({
@@ -175,6 +175,40 @@ afterEach(() => {
 });
 
 describe('documentActionsController', () => {
+  it('background external-file polling does not flush an inline formula draft', async () => {
+    const { options, getMarkdown } = createOptions([createTab()]);
+    let drafting = true;
+    const core = { ...options.getEditor(), hasPendingMathInlineDraft: () => drafting };
+    options.getEditor = () => core;
+    const controller = createDocumentActionsController(options as any);
+    await controller.checkExternalFileChange();
+    expect(getMarkdown).not.toHaveBeenCalled();
+    expect(getExternalFileChange).not.toHaveBeenCalled();
+    drafting = false;
+    await controller.checkExternalFileChange();
+    expect(getMarkdown).toHaveBeenCalled();
+    expect(getExternalFileChange).toHaveBeenCalled();
+  });
+
+  it('does not flush browser-only documents for external-file polling', async () => {
+    const { options, getMarkdown } = createOptions([createTab({ nativePath: null })]);
+    const controller = createDocumentActionsController(options as any);
+    await controller.checkExternalFileChange();
+    expect(getMarkdown).not.toHaveBeenCalled();
+  });
+
+  it('defers an automatic save while an inline formula draft is active', async () => {
+    vi.useFakeTimers();
+    const { options, getMarkdown } = createOptions([createTab()]);
+    const core = { ...options.getEditor(), hasPendingMathInlineDraft: () => true };
+    options.getEditor = () => core;
+    const controller = createDocumentActionsController(options as any);
+    controller.debouncedAutoSave('tab-1');
+    await vi.advanceTimersByTimeAsync(150);
+    expect(getMarkdown).not.toHaveBeenCalled();
+    expect(saveNativeMarkdownFile).not.toHaveBeenCalled();
+    controller.cancelPendingAutoSaves();
+  });
   it('打开同目录新文件增加标签，保留旧标签内容和脏状态，重复打开不增加标签', async () => {
     const oldTab = createTab();
     const before = { ...oldTab };

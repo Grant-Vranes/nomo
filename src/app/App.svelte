@@ -531,6 +531,14 @@
   }
 
   let pendingInlineMarks: InlinePendingMarks = createEmptyPendingInlineMarks();
+  let mathInlineInsertionDisabled = true;
+  $: {
+    // Selection-only transactions also refresh command availability.
+    version;
+    pendingInlineMarks;
+    mathInlineInsertionDisabled = readonlyDocumentMode || largeDocumentMode || mode === 'source' ||
+      !editor.canExecute({ type: 'insertMathInline' });
+  }
   let frontMatterEditing = false;
   let frontMatterFocusRequest = 0;
   let scrollDebounceTimer: number | null = null;
@@ -854,6 +862,7 @@
 
     _persistTimer = window.setTimeout(() => {
       _persistTimer = null;
+      if (editor.hasPendingMathInlineDraft?.()) { persistWorkspaceState(); return; }
       persistWorkspaceStateNow().catch(() => undefined);
     }, WORKSPACE_PERSIST_DEBOUNCE_MS);
   }
@@ -885,6 +894,10 @@
     const writeStamp = await takeWorkspaceWriteStamp();
     await workspaceRestorePreparation;
     await deferredWorkspaceRestore;
+    if (options?.ensureDraftIds !== false && editor.hasPendingMathInlineDraft?.()) {
+      persistWorkspaceState();
+      return;
+    }
     syncActiveTabMarkdownFromEditor();
     if (options?.ensureDraftIds !== false) {
       await persistWorkspaceDraftsNow('missing-only');
@@ -939,6 +952,7 @@
     }
     _workspaceDraftTimer = window.setTimeout(() => {
       _workspaceDraftTimer = null;
+      if (editor.hasPendingMathInlineDraft?.()) { schedulePersistWorkspaceDrafts(); return; }
       persistWorkspaceDraftsNow('changed')
         .then((result) => {
           if (result.changedDraftIds) {
@@ -3350,7 +3364,8 @@
         disabled: readonlyDocumentMode,
         action: chooseImageForContextMenu,
       },
-      commandMenuItem(t.mathFormula(), { type: 'insertMathBlock', tex: 'E = mc^2' }, 'formula'),
+      commandMenuItem(t.mathInline(), { type: 'insertMathInline' }, 'formula'),
+      commandMenuItem(t.mathBlock(), { type: 'insertMathBlock', tex: 'E = mc^2' }, 'formula'),
       commandMenuItem(t.mermaidDiagram(), { type: 'insertMermaidBlock' }, 'diagram'),
       commandMenuItem(t.horizontalRule(), { type: 'insertHorizontalRule' }, 'separator'),
     ];
@@ -8031,6 +8046,7 @@
   {saveMarkdownFile}
   {runCommand}
   {pendingInlineMarks}
+  {mathInlineInsertionDisabled}
   {openTablePicker}
   {openLinkPicker}
   {openEmojiPicker}
