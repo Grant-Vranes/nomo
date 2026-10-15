@@ -11,13 +11,21 @@
   border: 1px solid color-mix(in srgb, var(--md-editor-border) 82%, transparent);
   border-radius: var(--md-editor-radius-md);
   background: color-mix(in srgb, var(--md-editor-surface) 64%, transparent);
-  box-shadow: var(--md-editor-shadow-raised);
+  box-shadow:
+    0 0 24px rgba(22, 32, 44, 0.06),
+    0 6px 16px rgba(22, 32, 44, 0.05);
   backdrop-filter: blur(10px);
   color: var(--md-editor-muted-fg);
   font-size: var(--md-editor-ui-font-size-sm);
   will-change: transform, opacity;
   -webkit-user-select: none;
   user-select: none;
+}
+
+:root[data-theme='dark'] .content-outline {
+  box-shadow:
+    0 0 24px rgba(0, 0, 0, 0.2),
+    0 6px 16px rgba(0, 0, 0, 0.16);
 }
 
 .editor-grid.split-view > .content-outline,
