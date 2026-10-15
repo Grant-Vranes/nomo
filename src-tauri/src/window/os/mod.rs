@@ -8,19 +8,7 @@ mod windows;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn window_decorations() -> bool {
-    true
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn setup_window<R: tauri::Runtime>(
-    _window: &tauri::WebviewWindow<R>,
-) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn system_theme() -> &'static str {
-    "light"
-}
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub(crate) use linux::*;

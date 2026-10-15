@@ -257,7 +257,7 @@
 | 更新前端 IPC 适配 | `src/lib/desktop/tauriUpdater.ts` | `src/app/services/softwareUpdate.ts` | 检查/下载/安装/共享快照 IPC 契约变更 |
 | 更新后端 | `src-tauri/src/software_update.rs` | `src-tauri/src/window/tray.rs` | GitHub Release、安装形态、共享状态、下载/校验/安装器 |
 | 升级后首次启动日志 | `src-tauri/src/software_update.rs`, `src/app/components/SoftwareUpdateSuccessDialog.svelte` | `src-tauri/src/lib.rs`, `src/app/App.svelte`, `src/lib/desktop/tauriUpdater.ts` | 内置日志、最高版本与待展示记录、跨窗口领取、实际挂载确认及启动时序 |
-| 版本发布与 Pages 同步 | `.github/workflows/release.yml` | `.github/workflows/sync-pages-notes.yml`, `.github/release-notes/` | 安装包发布、MD5 生成、发布说明维护、Cloudflare/GitHub Pages 重建与线上校验 |
+| 版本发布与 Pages 同步 | `.github/workflows/release.yml` | `.github/workflows/backfill-linux-release.yml`, `.github/workflows/sync-pages-notes.yml`, `.github/release-notes/` | 安装包发布、已有稳定版的 Linux 补发、MD5 生成、发布说明维护、Cloudflare/GitHub Pages 重建与线上校验 |
 
 ### 原生系统集成
 
@@ -276,6 +276,7 @@
 
 | Responsibility | Primary code | Related code | Change when |
 |---|---|---|---|
+| Linux 本地构建与安装 | `scripts/build-linux.sh` | `src-tauri/tauri.conf.json` | 修改 DEB/RPM 构建、产物定位或安装；DEB 优先通过 apt-get 解析依赖，失败时保留错误 |
 | SVG 图标与平台资源生成 | `scripts/generate-icons.mjs` | `src-tauri/icons/nomo/source/nomo-app-light.svg`, `scripts/compile-macos-appicon.sh`, `src-tauri/src/window/tray.rs` | 修改应用 Logo、浅深色配色、平台边距、多尺寸位图或托盘图标；浅色 SVG 为造型母版，桌面与系统文件图标单独派生描边，应用内 Logo 和移动端保持母版造型 |
 | Windows Store MSIX 构建与校验 | `scripts/msix/Build-Msix.ps1` | `scripts/msix/Build-IconResources.ps1`, `.github/workflows/msix.yml`, `src-tauri/msix/`, `src-tauri/tauri.conf.json` | 修改 Store 包身份、版本映射、生产前端嵌入校验、图标 PRI 生成、Shell 扩展封装或上传产物 |
 
