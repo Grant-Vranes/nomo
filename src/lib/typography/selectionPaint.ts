@@ -156,7 +156,15 @@ export function createLineSelectionPaint(root: HTMLElement) {
           fullRects.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
       }
       const fullRows = mergeRows(fullRects);
-      const rows = mergeRows(info.rectangles);
+      const rows = mergeRows(info.rectangles).flatMap((row) => {
+        const full = fullRows.find((line) => Math.min(line.bottom, row.bottom) - Math.max(line.top, row.top) > 1);
+        if (!full) return [];
+        // 跨块 Range 会包含整段容器，单行列表项尤其容易被误当成整行文字。
+        // 用段内实际内容限制宽度，仍保留行内对象和显式空格占用的范围。
+        const left = Math.max(row.left, full.left);
+        const right = Math.min(row.right, full.right);
+        return left < right ? [{ ...row, left, right, full }] : [];
+      });
       if (!rows.length) continue;
       const layoutWidth = parseFloat(info.style.width) + (info.style.boxSizing === 'border-box' ? 0 : (parseFloat(info.style.paddingLeft) || 0) + (parseFloat(info.style.paddingRight) || 0) + (parseFloat(info.style.borderLeftWidth) || 0) + (parseFloat(info.style.borderRightWidth) || 0));
       const scale = layoutWidth > 0 ? info.bounds.width / layoutWidth : 1;
@@ -164,7 +172,7 @@ export function createLineSelectionPaint(root: HTMLElement) {
       const positions: string[] = [];
       const sizes: string[] = [];
       for (const row of rows) {
-        const full = fullRows.find((line) => Math.min(line.bottom, row.bottom) - Math.max(line.top, row.top) > 1) ?? row;
+        const { full } = row;
         // Range 返回字形框，原生选区和光标使用含行距的行框。保留上下半行距，
         // 避免首帧原生背景在下一帧被字形高度替换后突然变矮。
         const lineStart = Math.max(info.bounds.left, full.left);
