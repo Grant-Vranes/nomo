@@ -1865,8 +1865,6 @@
 
 .prosemirror-host .ProseMirror[data-nomo-selection-active] .pm-inline-selection-bridge {
   background: var(--md-editor-text-selection-bg);
-  color: inherit;
-  line-height: inherit;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -1898,34 +1896,9 @@
 .prosemirror-host .ProseMirror[data-nomo-selection-active] code.inline-code:has(.pm-inline-code-selection-bridge),
 .prosemirror-host .ProseMirror[data-nomo-selection-active] .pm-inline-source-code.pm-inline-code-selection-bridge,
 .prosemirror-host .ProseMirror[data-nomo-selection-active] .pm-inline-source-code:has(.pm-inline-code-selection-bridge) {
-  padding-block: 0;
-  padding-inline: 0;
+  /* Paint selection without changing code metrics or its border/padding footprint. */
   border-color: transparent;
-  border-block-width: 0;
-  border-inline-width: 0;
-  border-radius: 0;
   background: transparent;
-  color: var(--md-editor-fg);
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-}
-
-.prosemirror-host
-  .ProseMirror[data-nomo-selection-active]
-  code.inline-code:has(.pm-inline-code-selection-bridge)
-  .pm-inline-code-selection-bridge,
-.prosemirror-host
-  .ProseMirror[data-nomo-selection-active]
-  code.inline-code:has(.pm-inline-code-selection-bridge)
-  .inline-code-token,
-.prosemirror-host .ProseMirror[data-nomo-selection-active] .pm-inline-source-code .pm-inline-code-selection-bridge {
-  color: inherit;
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
 }
 
 .prosemirror-host

@@ -20,7 +20,7 @@ const atomRangesByDoc = new WeakMap<ProseMirrorNode, CodeRange[]>();
  * 正文、行内代码与原子对象的选区背景桥接插件。
  *
  * 浏览器原生选区只绘制字形区域，行内 code 的 padding/border 会把选区切断。
- * 这里给真实选区加一层可控背景，并在选区碰到 code 时临时移除 code 胶囊外观。
+ * 这里给真实选区加一层可控背景，选中 code 时只调整背景和边框颜色，保留字体及尺寸。
  * 原子对象使用外层背景包住自身外边距，避免选中时改变对象尺寸或正文位置。
  * 绘制器以 data-nomo-selection-active 统一控制桥接和行背景；失焦时保留模型选区供工具栏使用。
  */
