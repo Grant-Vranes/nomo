@@ -9,7 +9,7 @@
 #   bash scripts/build-linux.sh -i --bundles deb # 仅构建 deb 并安装
 #
 # 环境要求: Linux，已安装 gtk3、webkit2gtk-4.1、Node、pnpm、Rust、GNU coreutils。
-#           安装 rpm 需要 rpm 包管理器；安装 deb 需要 dpkg。
+#           安装 rpm 需要 rpm 包管理器；安装 deb 需要 dpkg，优先由 apt-get 处理依赖。
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -176,12 +176,13 @@ if [[ "$INSTALL" == "true" ]]; then
       installed="$(rpm -q "$PACKAGE_NAME" --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' 2>/dev/null || true)"
       ;;
     deb)
-      $SUDO dpkg -i "$path"
-      # 修复可能缺失的依赖。
+      # 让 APT 在安装本地包时解析依赖，避免 dpkg 缺依赖失败后被 set -e 提前中断。
       if command -v apt-get >/dev/null 2>&1; then
-        $SUDO apt-get install -f -y >/dev/null 2>&1 || true
+        $SUDO apt-get install -y "$path"
+      else
+        $SUDO dpkg -i "$path"
       fi
-      installed="$(dpkg-query -W -f='${Version}' "$PACKAGE_NAME" 2>/dev/null || true)"
+      installed="$(dpkg-query -W -f='${Version}' "$PACKAGE_NAME")"
       ;;
   esac
   echo "    Installed: $PACKAGE_NAME-$installed"
