@@ -1651,7 +1651,7 @@ export class ProseMirrorEditorCore implements EditorCore {
             deleteTaskListItemBeforeCursor,
             removeEmptyCalloutOnBackspace,
             deleteCodeBlockBeforeCursor,
-            joinBackward,
+            joinTaskListBackward,
             selectNodeBackward,
           ),
           Delete: chainCommands(deleteSelection, joinForward, selectNodeForward),
@@ -2111,6 +2111,40 @@ function splitTaskListItem(itemType: typeof schema.nodes.list_item) {
     }
     return true;
   };
+}
+
+function joinTaskListBackward(
+  state: EditorState,
+  dispatch?: (tr: Transaction) => void,
+  view?: EditorView,
+): boolean {
+  const { $from, empty } = state.selection;
+  if (!empty || $from.parent.type !== schema.nodes.paragraph || $from.parent.content.size !== 0) {
+    return joinBackward(state, dispatch, view);
+  }
+
+  const previousList = state.doc.resolve($from.before()).nodeBefore;
+  const lastParagraph = previousList?.lastChild?.firstChild;
+  if (
+    !previousList ||
+    (previousList.type !== schema.nodes.bullet_list && previousList.type !== schema.nodes.ordered_list) ||
+    !lastParagraph || !readTaskListMarker(lastParagraph)
+  ) {
+    return joinBackward(state, dispatch, view);
+  }
+
+  // 复用原有列表恢复事务，只给新恢复的空列表项补上未勾选任务标记。
+  return joinBackward(state, dispatch ? (tr) => {
+    const next = tr.selection.$from;
+    if (
+      next.depth >= 2 && next.parent.type === schema.nodes.paragraph &&
+      next.parent.content.size === 0 && next.node(-1).type === schema.nodes.list_item &&
+      next.index(-1) === 0
+    ) {
+      tr.insertText('[ ] ', next.pos);
+    }
+    dispatch(tr.scrollIntoView());
+  } : undefined, view);
 }
 
 function deleteTaskListItemBeforeCursor(

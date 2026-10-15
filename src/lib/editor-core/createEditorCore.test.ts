@@ -1037,6 +1037,79 @@ describe('createEditorCore', () => {
     editor.destroy();
   });
 
+  it.each(['- [ ] 待办事项', '- [x] 已完成', '1. [x] 已完成'])(
+    'restores an unchecked task with Backspace after exiting the list: %s',
+    (markdown) => {
+      const editor = createEditorCore({ markdown, target: document.createElement('div') });
+      const view = (editor as unknown as { view: EditorView }).view;
+      const paragraph = findNodeByText(view.state.doc, 'paragraph', markdown.slice(markdown.indexOf('[')));
+      view.dispatch(view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, paragraph.pos + paragraph.node.nodeSize - 1),
+      ));
+      expect(pressEditorKey(view, 'Enter')).toBe(true);
+      expect(pressEditorKey(view, 'Enter')).toBe(true);
+      expect(view.state.selection.$from.depth).toBe(1);
+      view.dispatch(closeHistory(view.state.tr));
+      const before = view.state.doc;
+
+      expect(pressEditorKey(view, 'Backspace')).toBe(true);
+      expect(view.state.selection.$from.parent.textContent).toBe('[ ] ');
+      expect(view.state.selection.$from.parentOffset).toBe(4);
+      const restored = view.state.doc;
+      expect(editor.execute({ type: 'undo' })).toBe(true);
+      expect(view.state.doc.eq(before)).toBe(true);
+      expect(editor.execute({ type: 'redo' })).toBe(true);
+      expect(view.state.doc.eq(restored)).toBe(true);
+
+      view.dispatch(view.state.tr.insertText('下一项'));
+      expect(editor.getMarkdown()).toBe(`${markdown}\n${markdown.startsWith('1.') ? '2.' : '-'} [ ] 下一项`);
+      editor.destroy();
+    },
+  );
+
+  it.each(['- 普通项', '- [ ] 任务\n- 普通项', '- 普通项\n  - [ ] 子任务'])(
+    'keeps ordinary list restoration without a task marker: %s',
+    (markdown) => {
+      const editor = createEditorCore({
+        markdown: `${markdown}\n\n正文`,
+        target: document.createElement('div'),
+      });
+      const view = (editor as unknown as { view: EditorView }).view;
+      const paragraph = findNodeByText(view.state.doc, 'paragraph', '正文');
+      view.dispatch(view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, paragraph.pos + 1, paragraph.pos + paragraph.node.nodeSize - 1),
+      ).deleteSelection());
+
+      expect(pressEditorKey(view, 'Backspace')).toBe(true);
+      expect(view.state.selection.$from.depth).toBe(3);
+      expect(view.state.selection.$from.parent.textContent).toBe('');
+      view.dispatch(view.state.tr.insertText('下一项'));
+      expect(editor.getMarkdown()).toContain('- 下一项');
+      editor.destroy();
+    },
+  );
+
+  it('restores a task at the previous list level while preserving its nested tasks', () => {
+    const editor = createEditorCore({
+      markdown: '- [x] 外层\n  - [ ] 子任务\n\n正文',
+      target: document.createElement('div'),
+    });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const paragraph = findNodeByText(view.state.doc, 'paragraph', '正文');
+    view.dispatch(view.state.tr.setSelection(
+      TextSelection.create(view.state.doc, paragraph.pos + 1, paragraph.pos + paragraph.node.nodeSize - 1),
+    ).deleteSelection());
+
+    expect(pressEditorKey(view, 'Backspace')).toBe(true);
+    expect(view.state.selection.$from.depth).toBe(3);
+    expect(view.state.selection.$from.parent.textContent).toBe('[ ] ');
+    const list = view.state.doc.firstChild!;
+    expect(list.childCount).toBe(2);
+    expect(list.firstChild!.lastChild!.type.name).toBe('bullet_list');
+    expect(list.firstChild!.lastChild!.textContent).toBe('[ ] 子任务');
+    editor.destroy();
+  });
+
   it('deletes the task item with Backspace at the start of a task item', () => {
     const target = document.createElement('div');
     const editor = createEditorCore({ markdown: '- [ ] 待办事项', target });
