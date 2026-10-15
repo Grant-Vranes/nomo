@@ -69,5 +69,18 @@ body.nomo-print-document { padding: 0; }
 .nomo-export.nomo-print p { orphans: 2; widows: 2; }
 @media print {
   html, body { padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html { background: var(--md-editor-document-bg); }
+  /* 原生打印保留正文页边距；用分页边距盒补齐纸张底色，避免正文底色止于版心。
+     中间盒铺满整条边，角盒补齐四角；不占正文空间，也不改变分页高度。 */
+  @page {
+    @top-left-corner { content: ''; background: var(--md-editor-document-bg); }
+    @top-center { content: ''; width: 100%; background: var(--md-editor-document-bg); }
+    @top-right-corner { content: ''; background: var(--md-editor-document-bg); }
+    @left-middle { content: ''; height: 100%; background: var(--md-editor-document-bg); }
+    @right-middle { content: ''; height: 100%; background: var(--md-editor-document-bg); }
+    @bottom-left-corner { content: ''; background: var(--md-editor-document-bg); }
+    @bottom-center { content: ''; width: 100%; background: var(--md-editor-document-bg); }
+    @bottom-right-corner { content: ''; background: var(--md-editor-document-bg); }
+  }
   .nomo-export { max-width: none; }
 }
