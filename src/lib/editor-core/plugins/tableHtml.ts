@@ -6,8 +6,8 @@ import { isInlineSourceText } from '../InlineSourceCodec';
 
 const tableHtmlKey = new PluginKey('tableHtml');
 
-export function tableHtmlBlockPlugin(): Plugin {
-  return new Plugin({
+export function tableHtmlBlockPlugin(): Plugin<DecorationSet> {
+  return new Plugin<DecorationSet>({
     key: tableHtmlKey,
     state: {
       init(_, state) {
@@ -15,7 +15,7 @@ export function tableHtmlBlockPlugin(): Plugin {
       },
       apply(tr, oldSet, _oldState, newState) {
         if (!tr.docChanged) return oldSet;
-        return buildTableHtmlDecorations(newState.doc);
+        return buildTableHtmlDecorations(newState.doc, oldSet.map(tr.mapping, newState.doc));
       },
     },
     props: {
@@ -26,33 +26,42 @@ export function tableHtmlBlockPlugin(): Plugin {
   });
 }
 
-function buildTableHtmlDecorations(doc: ProseMirrorNode): DecorationSet {
+function buildTableHtmlDecorations(
+  doc: ProseMirrorNode,
+  previousSet: DecorationSet = DecorationSet.empty,
+): DecorationSet {
   const decorations: Decoration[] = [];
-  const blocks: Array<{ node: ProseMirrorNode; pos: number }> = [];
-  doc.forEach((node, offset) => {
-    blocks.push({ node, pos: offset });
-  });
-  let i = 0;
-  while (i < blocks.length) {
-    const htmlResult = tryParseHtmlBlock(blocks[i]);
-    if (htmlResult) {
-      const { pos, node, safeHtml } = htmlResult;
-      const widget = document.createElement('span');
-      widget.className = 'html-widget';
-      widget.setAttribute('contenteditable', 'false');
-      renderHtmlPreview(widget, safeHtml);
-      decorations.push(Decoration.widget(pos, widget, { side: 0 }));
-      decorations.push(
-        Decoration.inline(
-          pos + 1,
-          pos + node.nodeSize - 1,
-          { style: 'display: none' },
-          { inclusiveStart: false, inclusiveEnd: false },
-        ),
-      );
-    }
-    i += 1;
+  const previousWidgets = new Map<number, Decoration>();
+  for (const decoration of previousSet.find()) {
+    if (decoration.spec.htmlNode) previousWidgets.set(decoration.from, decoration);
   }
+
+  doc.forEach((node, pos) => {
+    let widget = previousWidgets.get(pos);
+    // 复用映射后的 widget，避免普通正文输入替换未变化的 HTML 和图片 DOM。
+    if (!widget || !widget.spec.htmlNode.eq(node)) {
+      const htmlResult = tryParseHtmlBlock({ node, pos });
+      if (!htmlResult) return;
+      const { safeHtml } = htmlResult;
+      widget = Decoration.widget(pos, () => {
+        // EditorState 可以跨挂载保留；构造函数只捕获 HTML，不持有旧视图的 DOM。
+        const preview = document.createElement('span');
+        preview.className = 'html-widget';
+        preview.setAttribute('contenteditable', 'false');
+        renderHtmlPreview(preview, safeHtml);
+        return preview;
+      }, { side: 0, htmlNode: node });
+    }
+    decorations.push(
+      widget,
+      Decoration.inline(
+        pos + 1,
+        pos + node.nodeSize - 1,
+        { style: 'display: none' },
+        { inclusiveStart: false, inclusiveEnd: false },
+      ),
+    );
+  });
   return decorations.length > 0 ? DecorationSet.create(doc, decorations) : DecorationSet.empty;
 }
 

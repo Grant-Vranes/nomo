@@ -86,7 +86,7 @@
 | 正文外侧整段选择 | `src/lib/editor-core/plugins/paragraphSelectionGutter.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts`, `src/app/styles/editor-document.css`, `src/app/i18n.ts`, `src/app/i18n.ja.ts` | 顶层普通段落与标题左侧的悬停短竖线、真实整段选区、缩放命中和浮层生命周期；不接管列表、表格、代码块或正文拖选 |
 | 表格控件 | `src/lib/editor-core/plugins/tableControls.ts` | `src/lib/editor-core/plugins/tableControlDom.ts`, `tableCommands.ts`, `markdownSerialization.ts` | 表格行列控制 UI、共用行增删事务内的列对齐与首行表头归一化、单元格内容保存 |
 | 表格自动列宽与局部滚动 | `src/lib/table-layout/widths.ts`, `src/lib/table-layout/dom.ts` | `src/lib/editor-core/nodeViews/TableNodeView.ts`, `src/lib/table-layout/export.ts`, `src/lib/table-layout/table-layout.css`, `plugins/tableControls.ts`, `plugins/typography.ts` | 语义内容度量、合并格约束、按需列宽、视图级调度与缓存、精细排版失效、HTML/PDF 目标宽度重排；自动宽度不写入 Markdown |
-| 不可编辑 HTML 回退展示 | `src/lib/editor-core/plugins/tableHtml.ts` | `html/htmlClassifier.ts`, `utils/html.ts`, `src/app/services/export/render.ts` | 原始 HTML widget 展示；编辑器与导出共用对齐段落和 HTML 空白处理；Markdown 表格由统一 parser 与 schema 渲染 |
+| 不可编辑 HTML 回退展示 | `src/lib/editor-core/plugins/tableHtml.ts` | `html/htmlClassifier.ts`, `utils/html.ts`, `plugins/tableHtml.test.ts`, `src/app/services/export/render.ts` | 原始 HTML widget 展示、未变化预览的 DOM 复用与事务位置映射；编辑器与导出共用对齐段落和 HTML 空白处理；Markdown 表格由统一 parser 与 schema 渲染 |
 | 任务列表 | `src/lib/editor-core/plugins/taskList.ts` | `src/lib/editor-core/InlineSourceCodec.ts`, `editorCommands.ts`, `ProseMirrorEditorCore.ts`, `markdownSerialization.ts` | 修改任务首段标记识别、列表切换/续行、只读复选框或保存边界 |
 | 链接交互 | `src/lib/editor-core/plugins/linkInteraction.ts` | `src/app/components/LinkQuickEditor.svelte` | 链接点击/悬浮/编辑 |
 | 六类行内字符命令 | `src/lib/editor-core/inlineSourceCommands.ts` | `editorCommands.ts`, `ProseMirrorEditorCore.ts` | 工具栏/快捷键包裹、局部取消、清除格式与空模板；pendingInlineMarks 为兼容派生接口 |
