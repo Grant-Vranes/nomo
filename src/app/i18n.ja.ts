@@ -364,6 +364,8 @@ export const JA_JP_EXTRA_TRANSLATIONS = {
   toggleUnderline: '下線の切り替え',
   highlight: 'ハイライト',
   toggleHighlight: 'ハイライトの切り替え',
+  superscript: '上付き文字', toggleSuperscript: '上付き文字の切り替え',
+  subscript: '下付き文字', toggleSubscript: '下付き文字の切り替え',
   link: 'リンク',
   inlineComment: 'インラインコメント',
   insertInlineComment: 'インラインコメントを挿入',

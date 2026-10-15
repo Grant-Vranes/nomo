@@ -14,6 +14,7 @@ export const EDITABLE_INLINE_TAGS: ReadonlySet<string> = new Set([
   'img',
   'mark',
   'sup',
+  'sub',
   'a',
   'code',
   's',
@@ -57,4 +58,6 @@ export const INLINE_TAG_TO_MARK: Record<string, string> = {
   strike: 'strikethrough',
   u: 'underline',
   mark: 'highlight',
+  sup: 'superscript',
+  sub: 'subscript',
 };

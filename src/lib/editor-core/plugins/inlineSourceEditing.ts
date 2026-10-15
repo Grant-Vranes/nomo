@@ -10,7 +10,9 @@ export type InlineSourceFormat =
   | 'code'
   | 'strikethrough'
   | 'underline'
-  | 'highlight';
+  | 'highlight'
+  | 'superscript'
+  | 'subscript';
 
 /** Commands describe ranges in the resulting document, never DOM/widget positions. */
 export const INLINE_SOURCE_TEMPLATE_META = 'inlineSourceTemplate';
@@ -77,6 +79,11 @@ if (!registeredSteps[stepRegistration]) {
 
 function isTemplateOriginStep(step: Step): step is TemplateOriginStep {
   return 'inlineTemplateOrigin' in step && step.inlineTemplateOrigin === true;
+}
+
+/** 替换空格式前记录旧模板，确保切换格式与撤销恢复共享同一历史事务。 */
+export function removeInlineSourceTemplateOrigin(tr: Transaction, template: EmptyInlineSourceTemplate): void {
+  tr.step(new TemplateOriginStep({ ...template, openTo: template.cursor, closeFrom: template.cursor }, 'remove'));
 }
 
 function mapTemplate(template: TrackedTemplate, mapping: Mappable): TrackedTemplate {

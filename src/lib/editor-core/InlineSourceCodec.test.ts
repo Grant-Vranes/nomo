@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { schema } from './schema';
+import { DOMSerializer } from 'prosemirror-model';
 import { parseMarkdown, serializeMarkdown } from './markdown';
 import {
   analyzeInlineSource,
@@ -13,6 +14,55 @@ import {
 } from './InlineSourceCodec';
 
 describe('inline source codec', () => {
+  it('projects scripts with exact source offsets and preserves repeated saves', () => {
+    const source = 'x^2^ H~2~O ^中文^ ^**bold**^';
+    const analysis = analyzeInlineSourceText(source);
+    expect(analysis.visibleText).toBe('x2 H2O 中文 bold');
+    expect(analysis.spans[0]).toEqual({ type: 'superscript', from: 2, to: 3, openFrom: 1, openTo: 2, closeFrom: 3, closeTo: 4 });
+    let doc = parseMarkdown(source);
+    for (let i = 0; i < 3; i++) doc = parseMarkdown(serializeMarkdown(doc));
+    expect(serializeMarkdown(doc)).toBe(source);
+    const projected = projectInlineSource(doc);
+    expect(projected.textContent).toBe(analysis.visibleText);
+    expect(projected.firstChild!.child(1).marks[0].type.name).toBe('superscript');
+  });
+
+  it('supports escaped whitespace and HTML scripts in editable blocks', () => {
+    expect(analyzeInlineSourceText('^a\\ b^').visibleText).toBe('a b');
+    expect(analyzeInlineSourceText('~a\\~b~').visibleText).toBe('a~b');
+    const doc = parseMarkdown('<div>x<sup>2</sup> H<sub>2</sub>O</div>');
+    expect(doc.firstChild!.type.name).toBe('html_block');
+    expect(doc.firstChild!.textContent).toBe('x2 H2O');
+    expect(serializeMarkdown(doc)).toContain('<sup>2</sup>');
+    expect(serializeMarkdown(doc)).toContain('<sub>2</sub>');
+  });
+
+  it('projects scripts in headings, tasks and tables to semantic HTML', () => {
+    const source = '# x^2^\n\n- [ ] H~2~O\n\n| x^2^ |\n| :--- |\n| H~2~O |';
+    const doc = parseMarkdown(source);
+    const projected = projectInlineSource(doc);
+    const container = document.createElement('div');
+    container.append(DOMSerializer.fromSchema(schema).serializeFragment(projected.content));
+    expect(container.querySelectorAll('sup')).toHaveLength(2);
+    expect(container.querySelectorAll('sub')).toHaveLength(2);
+    expect(projectInlineSource(parseMarkdown(serializeMarkdown(doc))).toJSON()).toEqual(projected.toJSON());
+    expect(escapeInlineSourceLiteral('x^2^ H~2~O')).toBe('x\\^2\\^ H\\~2\\~O');
+  });
+
+  it.each(['^not closed', '~not closed', '^a b^', '~a\nb~', '^^', '~~', '\\^literal\\^', '`x^2^ H~2~O`'])('does not recognize scripts in %s', (source) => {
+    expect(analyzeInlineSourceText(source).spans.filter((span) => ['superscript', 'subscript'].includes(span.type))).toEqual([]);
+  });
+
+  it('keeps deletion, footnotes, math and structured links separate', () => {
+    const doc = parseMarkdown('~~deleted~~ [^note] $x^2$ [x^2^](https://example.com)');
+    const projected = projectInlineSource(doc);
+    const nodes: string[] = [];
+    projected.descendants((node) => { nodes.push(node.type.name); });
+    expect(nodes).toContain('footnote_ref');
+    expect(nodes).toContain('math_inline');
+    expect(projected.firstChild!.firstChild!.marks[0].type.name).toBe('strikethrough');
+    expect(serializeMarkdown(doc)).toContain('[x^2^](https://example.com)');
+  });
   it.each([
     '**粗体**',
     '__粗体__',
@@ -20,6 +70,8 @@ describe('inline source codec', () => {
     '_斜体_',
     '***粗斜***',
     '~~删除~~',
+    'x^2^ H~2~O ^中文^',
+    '<sup>上 标</sup> <sub>下 标</sub>',
     '<u>下划线</u>',
     '<mark>高亮</mark>',
     '<b>加粗</b> <i>斜体</i>',

@@ -101,6 +101,16 @@ function applyHistory(state: EditorState, command: typeof undo) {
 }
 
 describe('inlineSourceEditingPlugin', () => {
+  it('shows script delimiters at the caret and hides them on leaving', () => {
+    let state = createState(['x^2^ H~2~O', 'next']);
+    const formats = inlineSourceEditingPluginKey.getState(state)!.decorations.find().map((d) => d.spec.format).filter(Boolean);
+    expect(new Set(formats)).toEqual(new Set(['superscript', 'subscript']));
+    state = apply(state, state.tr.setSelection(TextSelection.create(state.doc, 3)));
+    expect(visibleMarkers(state)).toHaveLength(2);
+    state = apply(state, state.tr.setSelection(TextSelection.create(state.doc, blockStart(state, 1))));
+    expect(visibleMarkers(state)).toHaveLength(0);
+    expect(hiddenMarkers(state)).toHaveLength(4);
+  });
   it('decorates all six source formats while keeping unrelated syntax hidden', () => {
     const text = 'before **bold** *em* `code` ~~del~~ <u>under</u> <mark>hi</mark> after';
     let state = createState([text, '**resting**']);

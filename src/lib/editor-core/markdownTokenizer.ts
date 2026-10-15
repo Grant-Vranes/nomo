@@ -143,6 +143,55 @@ export function recordInlineSourceRanges(markdown: MarkdownIt): void {
 export function createMarkdownTokenizer(options: { inlineSource?: boolean; literalHtmlCode?: boolean } = {}): MarkdownIt {
   const markdownIt = MarkdownIt('commonmark', { html: true }).enable(['table', 'strikethrough']);
   markdownIt.validateLink = (url: string) => normalizeLinkHref(url) !== null;
+  let scriptDepth = 0;
+  markdownIt.inline.ruler.before('escape', 'script_space', (state, silent) => {
+    if (!scriptDepth || state.src[state.pos] !== '\\' || !/[ \t]/.test(state.src[state.pos + 1] ?? '')) return false;
+    if (!silent) {
+      const token = state.push('text_special', '', 0);
+      token.content = state.src[state.pos + 1];
+      token.info = 'escape';
+    }
+    state.pos += 2;
+    return true;
+  });
+
+  // 单字符定界符不消费删除线的 ~~；范围直接记录，避免嵌套解析后反推偏移。
+  markdownIt.inline.ruler.before('strikethrough', 'script_format', (state, silent) => {
+    const start = state.pos;
+    const marker = state.src[start];
+    if (marker !== '^' && marker !== '~') return false;
+    if (state.src[start + 1] === marker) return false;
+    let end = start + 1;
+    for (; end < state.posMax; end++) {
+      const char = state.src[end];
+      if (char === '\n' || char === '\r') return false;
+      if (char === '\\' && end + 1 < state.posMax) {
+        if (/[\r\n]/.test(state.src[end + 1])) return false;
+        end++;
+        continue;
+      }
+      if (/\s/.test(char)) return false;
+      if (char === marker) break;
+    }
+    if (end === start + 1 || end >= state.posMax || state.src[end + 1] === marker) return false;
+    if (silent) { state.pos = end + 1; return true; }
+    const type = marker === '^' ? 'superscript' : 'subscript';
+    const tag = marker === '^' ? 'sup' : 'sub';
+    const open = state.push(`${type}_open`, tag, 1);
+    open.markup = marker;
+    open.meta = { ...open.meta, inlineSourceRange: { from: start, to: start + 1 } };
+    const max = state.posMax;
+    state.pos = start + 1;
+    state.posMax = end;
+    scriptDepth++;
+    try { state.md.inline.tokenize(state); }
+    finally { state.posMax = max; scriptDepth--; }
+    const close = state.push(`${type}_close`, tag, -1);
+    close.markup = marker;
+    close.meta = { ...close.meta, inlineSourceRange: { from: end, to: end + 1 } };
+    state.pos = end + 1;
+    return true;
+  });
 
   if (options.inlineSource || options.literalHtmlCode) {
     // HTML code 与反引号代码使用同一字面内容边界，内部不再生成公式、链接或格式 token。

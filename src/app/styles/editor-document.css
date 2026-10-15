@@ -2350,3 +2350,15 @@
   outline: 2px solid var(--md-editor-accent);
   /* outline-offset: 1px; */
 }
+
+.prosemirror-host .ProseMirror .pm-inline-source-superscript {
+  font-size: 0.75em;
+  line-height: 0;
+  vertical-align: super;
+}
+
+.prosemirror-host .ProseMirror .pm-inline-source-subscript {
+  font-size: 0.75em;
+  line-height: 0;
+  vertical-align: sub;
+}

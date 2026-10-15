@@ -1395,6 +1395,7 @@ export class ProseMirrorEditorCore implements EditorCore {
       const formats = {
         toggleBold: 'strong', toggleItalic: 'em', toggleCode: 'code',
         toggleStrikethrough: 'strikethrough', toggleUnderline: 'underline', toggleHighlight: 'highlight',
+        toggleSuperscript: 'superscript', toggleSubscript: 'subscript',
       } as const;
       return toggleInlineSourceFormat(formats[command.type as keyof typeof formats])(this.view.state);
     }
@@ -1490,6 +1491,8 @@ export class ProseMirrorEditorCore implements EditorCore {
       strikethrough: this.isPendingMarkActive('strikethrough'),
       underline: this.isPendingMarkActive('underline'),
       highlight: this.isPendingMarkActive('highlight'),
+      superscript: this.isPendingMarkActive('superscript'),
+      subscript: this.isPendingMarkActive('subscript'),
     };
   }
 
@@ -1983,7 +1986,9 @@ function isPendingInlineMarkCommand(command: EditorCommand): boolean {
     command.type === 'toggleCode' ||
     command.type === 'toggleStrikethrough' ||
     command.type === 'toggleUnderline' ||
-    command.type === 'toggleHighlight'
+    command.type === 'toggleHighlight' ||
+    command.type === 'toggleSuperscript' ||
+    command.type === 'toggleSubscript'
   );
 }
 

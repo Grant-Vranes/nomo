@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EditorState, TextSelection, type Command, type Transaction } from 'prosemirror-state';
-import { history, redo, undo } from 'prosemirror-history';
+import { closeHistory, history, redo, undo } from 'prosemirror-history';
 import { schema } from './schema';
 import { parseMarkdown, serializeMarkdown } from './markdown';
 import { analyzeInlineSource, projectInlineSource } from './InlineSourceCodec';
@@ -40,6 +40,43 @@ function run(state: EditorState, command: Command): EditorState {
 }
 
 describe('real inline Markdown commands', () => {
+  it('switches an empty script template without nesting and restores it on undo', () => {
+    let state = rawState('ab', 1).reconfigure({ plugins: [history(), inlineSourceEditingPlugin()] });
+    const apply = (command: Command) => {
+      expect(command(state, (tr) => { state = state.applyTransaction(tr).state; })).toBe(true);
+    };
+    apply(toggleInlineSourceFormat('subscript'));
+    expect(state.doc.textContent).toBe('a~~b');
+    state = state.apply(closeHistory(state.tr));
+    apply(toggleInlineSourceFormat('superscript'));
+    expect(state.doc.textContent).toBe('a^^b');
+    expect(getEmptyInlineSourceTemplates(state).map((t) => t.type)).toEqual(['superscript']);
+    apply(undo);
+    expect(state.doc.textContent).toBe('a~~b');
+    expect(getEmptyInlineSourceTemplates(state).map((t) => t.type)).toEqual(['subscript']);
+    apply(redo);
+    expect(state.doc.textContent).toBe('a^^b');
+    expect(getEmptyInlineSourceTemplates(state).map((t) => t.type)).toEqual(['superscript']);
+    apply(toggleInlineSourceFormat('superscript'));
+    expect(state.doc.textContent).toBe('ab');
+  });
+  it('switches scripts only within the selection and supports undo', () => {
+    const state = rawState('~abc~', 2, 3);
+    const next = run(state, toggleInlineSourceFormat('superscript'));
+    const projected = projectInlineSource(next.doc).firstChild!;
+    expect(projected.textContent).toBe('abc');
+    expect(projected.child(0).marks[0].type.name).toBe('subscript');
+    expect(projected.child(1).marks[0].type.name).toBe('superscript');
+    expect(projected.child(2).marks[0].type.name).toBe('subscript');
+    expect(run(next, undo).doc.eq(state.doc)).toBe(true);
+  });
+
+  it('switches the script at the caret and preserves whitespace through HTML', () => {
+    expect(run(rawState('~abc~', 2), toggleInlineSourceFormat('superscript')).doc.textContent).toBe('^abc^');
+    const next = run(rawState('a b', 0, 3), toggleInlineSourceFormat('superscript'));
+    expect(next.doc.textContent).toBe('<sup>a b</sup>');
+    expect(projectInlineSource(parseMarkdown(serializeMarkdown(next.doc))).textContent).toBe('a b');
+  });
   it.each<[InlineSourceFormat, string]>([
     ['strong', '**文字**'],
     ['em', '*文字*'],
@@ -47,6 +84,8 @@ describe('real inline Markdown commands', () => {
     ['strikethrough', '~~文字~~'],
     ['underline', '<u>文字</u>'],
     ['highlight', '<mark>文字</mark>'],
+    ['superscript', '^文字^'],
+    ['subscript', '~文字~'],
   ])('%s wraps real text rather than creating a semantic mark', (type, expected) => {
     const next = run(rawState('文字', 0, 2), toggleInlineSourceFormat(type));
     expect(next.doc.textContent).toBe(expected);
@@ -56,7 +95,7 @@ describe('real inline Markdown commands', () => {
     expect(getActiveInlineSourceFormats(next).has(type)).toBe(true);
   });
 
-  it.each<InlineSourceFormat>(['strong', 'em', 'code', 'strikethrough', 'underline', 'highlight'])(
+  it.each<InlineSourceFormat>(['strong', 'em', 'code', 'strikethrough', 'underline', 'highlight', 'superscript', 'subscript'])(
     '%s inserts an explicitly tracked, editable empty template',
     (type) => {
       const state = rawState('前后', 1);

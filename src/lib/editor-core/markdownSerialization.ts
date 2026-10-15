@@ -265,6 +265,8 @@ const tableMarkdownSerializer = new MarkdownSerializer(
       mixable: true,
       expelEnclosingWhitespace: true,
     },
+    superscript: { open: '<sup>', close: '</sup>', mixable: true },
+    subscript: { open: '<sub>', close: '</sub>', mixable: true },
     highlight: {
       open: '<mark>',
       close: '</mark>',

@@ -87,6 +87,8 @@ export async function buildWordDocument(input: WordDocument): Promise<ArrayBuffe
         text, bold: marks.has('strong'), italics: marks.has('em'), strike: marks.has('strikethrough'),
         underline: marks.has('underline') ? { type: UnderlineType.SINGLE } : undefined,
         highlight: marks.has('highlight') ? 'yellow' : undefined,
+        superScript: marks.has('superscript'),
+        subScript: marks.has('subscript'),
         ...(marks.has('code') ? { font: { ...FONT, ascii: 'Consolas', hAnsi: 'Consolas' }, size: 18,
           shading: { type: ShadingType.CLEAR, fill: 'F3F4F6' } } : {}),
       };

@@ -24,6 +24,7 @@
     Sigma,
     Strikethrough,
     Superscript,
+    Subscript,
     Table2,
     TableOfContents,
     Underline,
@@ -218,6 +219,24 @@
         on:click={() => runCommand({ type: 'toggleHighlight' })}
       >
         <Highlighter size={17} />
+      </button>
+      <button
+        title={t.superscript()}
+        aria-label={t.toggleSuperscript()}
+        class:active={pendingInlineMarks.superscript}
+        on:mousedown|preventDefault
+        on:click={() => runCommand({ type: 'toggleSuperscript' })}
+      >
+        <Superscript size={17} />
+      </button>
+      <button
+        title={t.subscript()}
+        aria-label={t.toggleSubscript()}
+        class:active={pendingInlineMarks.subscript}
+        on:mousedown|preventDefault
+        on:click={() => runCommand({ type: 'toggleSubscript' })}
+      >
+        <Subscript size={17} />
       </button>
       <button
         title={t.link()}

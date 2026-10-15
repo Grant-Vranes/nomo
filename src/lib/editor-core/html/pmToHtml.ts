@@ -75,6 +75,12 @@ function wrapWithMarks(node: ProseMirrorNode, content: string): string {
       case 'underline':
         content = '<u>' + content + '</u>';
         break;
+      case 'superscript':
+        content = '<sup>' + content + '</sup>';
+        break;
+      case 'subscript':
+        content = '<sub>' + content + '</sub>';
+        break;
       case 'highlight':
         content = '<mark>' + content + '</mark>';
         break;

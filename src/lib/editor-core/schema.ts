@@ -439,6 +439,16 @@ export const schema = new Schema({
           return ['u', 0];
         },
       },
+      superscript: {
+        excludes: 'subscript',
+        parseDOM: [{ tag: 'sup:not(.footnote-ref)' }],
+        toDOM() { return ['sup', 0]; },
+      },
+      subscript: {
+        excludes: 'superscript',
+        parseDOM: [{ tag: 'sub' }],
+        toDOM() { return ['sub', 0]; },
+      },
       highlight: {
         parseDOM: [{ tag: 'mark' }],
         toDOM() {

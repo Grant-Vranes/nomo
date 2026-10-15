@@ -7878,6 +7878,8 @@
       strikethrough: false,
       underline: false,
       highlight: false,
+      superscript: false,
+      subscript: false,
     };
   }
 </script>

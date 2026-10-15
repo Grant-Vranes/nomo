@@ -98,6 +98,8 @@ const CLEAR_INLINE_MARK_NAMES = [
   'em',
   'underline',
   'highlight',
+  'superscript',
+  'subscript',
   'strikethrough',
   'link',
   'code',
@@ -914,6 +916,10 @@ export function executeEditorCommand(
       return run(toggleInlineSourceFormat('strikethrough'));
     case 'toggleUnderline':
       return run(toggleInlineSourceFormat('underline'));
+    case 'toggleSuperscript':
+      return run(toggleInlineSourceFormat('superscript'));
+    case 'toggleSubscript':
+      return run(toggleInlineSourceFormat('subscript'));
     case 'toggleHighlight':
       return run(toggleInlineSourceFormat('highlight'));
     case 'clearInlineStyles':

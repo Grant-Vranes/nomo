@@ -80,8 +80,8 @@
 | 代码块导航 | `src/lib/editor-core/plugins/codeBlockNavigation.ts` | — | 代码块内外光标移动 |
 | 代码高亮装饰 | `src/lib/editor-core/plugins/codeHighlight.ts` | `src/lib/services/shikiCodeTokenizer.ts` | 语法高亮装饰逻辑 |
 | 公式输入规则 | `src/lib/editor-core/plugins/displayMathInput.ts`, `mathInlineInput.ts`, `mathBlock.ts` | — | 公式快捷输入 |
-| 六类行内原文与投影 | `src/lib/editor-core/InlineSourceCodec.ts`, `inlineSourceCommands.ts` | `markdownTokenizer.ts`, `markdown.ts`, `markdownSerialization.ts`, `schema.ts`, `ProseMirrorEditorCore.ts` | 原文/格式与位置映射、代码字面粘贴和清除、外层格式组合、HTML 导入与输出语义 |
-| 六类行内显隐与组字 | `src/lib/editor-core/plugins/inlineSourceEditing.ts` | `src/app/styles/editor-document.css`, `plugins/typography.ts` | 光标/选区所在格式局部展开、单击与实际拖选区分、拖选保持、IME 冻结、真实符号装饰与空模板追踪 |
+| 八类行内原文与投影 | `src/lib/editor-core/InlineSourceCodec.ts`, `inlineSourceCommands.ts` | `markdownTokenizer.ts`, `markdown.ts`, `markdownSerialization.ts`, `schema.ts`, `ProseMirrorEditorCore.ts` | 原文/格式与位置映射、上下标语法与投影、代码字面粘贴和清除、外层格式组合、HTML 导入与输出语义 |
+| 八类行内显隐与组字 | `src/lib/editor-core/plugins/inlineSourceEditing.ts` | `src/app/styles/editor-document.css`, `plugins/typography.ts` | 光标/选区所在格式局部展开、单击与实际拖选区分、拖选保持、IME 冻结、真实符号装饰与空模板追踪 |
 | 当前标题层级角标 | `src/lib/editor-core/plugins/headingLevelIndicator.ts` | `src/app/styles/editor-document.css` | H1-H6 当前标题角标的定位、显隐或 GSAP 动效 |
 | 正文外侧整段选择 | `src/lib/editor-core/plugins/paragraphSelectionGutter.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts`, `src/app/styles/editor-document.css`, `src/app/i18n.ts`, `src/app/i18n.ja.ts` | 顶层普通段落与标题左侧的悬停短竖线、真实整段选区、缩放命中和浮层生命周期；不接管列表、表格、代码块或正文拖选 |
 | 表格控件 | `src/lib/editor-core/plugins/tableControls.ts` | `src/lib/editor-core/plugins/tableControlDom.ts`, `tableCommands.ts`, `markdownSerialization.ts` | 表格行列控制 UI、共用行增删事务内的列对齐与首行表头归一化、单元格内容保存 |
@@ -89,7 +89,7 @@
 | 不可编辑 HTML 回退展示 | `src/lib/editor-core/plugins/tableHtml.ts` | `html/htmlClassifier.ts`, `utils/html.ts`, `plugins/tableHtml.test.ts`, `src/app/services/export/render.ts` | 原始 HTML widget 展示、未变化预览的 DOM 复用与事务位置映射；编辑器与导出共用对齐段落和 HTML 空白处理；Markdown 表格由统一 parser 与 schema 渲染 |
 | 任务列表 | `src/lib/editor-core/plugins/taskList.ts` | `src/lib/editor-core/InlineSourceCodec.ts`, `editorCommands.ts`, `ProseMirrorEditorCore.ts`, `markdownSerialization.ts` | 修改任务首段标记识别、列表切换/续行、只读复选框或保存边界 |
 | 链接交互 | `src/lib/editor-core/plugins/linkInteraction.ts` | `src/app/components/LinkQuickEditor.svelte` | 链接点击/悬浮/编辑 |
-| 六类行内字符命令 | `src/lib/editor-core/inlineSourceCommands.ts` | `editorCommands.ts`, `ProseMirrorEditorCore.ts` | 工具栏/快捷键包裹、局部取消、清除格式与空模板；pendingInlineMarks 为兼容派生接口 |
+| 八类行内字符命令 | `src/lib/editor-core/inlineSourceCommands.ts` | `editorCommands.ts`, `ProseMirrorEditorCore.ts` | 工具栏/快捷键包裹、上下标互斥切换、局部取消、清除格式与空模板；pendingInlineMarks 为兼容派生接口 |
 | 搜索高亮 | `src/lib/editor-core/plugins/searchHighlight.ts` | `src/app/services/searchReplace.ts` | 搜索/替换高亮 |
 | 尾部段落补全 | `src/lib/editor-core/plugins/trailingParagraph.ts` | — | 非段落块插入后自动追加空段落 |
 | 正文目录事务同步 | `src/lib/editor-core/plugins/tocSync.ts` | `src/lib/toc/tocService.ts` | 标题变化后的 TOC 派生更新与撤销历史保持 |
@@ -148,7 +148,7 @@
 
 | Responsibility | Primary code | Related code | Change when |
 |---|---|---|---|
-| 大纲服务 | `src/lib/outline/outlineService.ts` | `src/lib/outline/writingStats.ts`, `src/lib/editor-core/InlineSourceCodec.ts` | 标题语义内容与 slug、六类行内符号排除、大纲与同步统计兼容入口 |
+| 大纲服务 | `src/lib/outline/outlineService.ts` | `src/lib/outline/writingStats.ts`, `src/lib/editor-core/InlineSourceCodec.ts` | 标题语义内容与 slug、八类行内符号排除、大纲与同步统计兼容入口 |
 | 正文统计与范围索引 | `src/lib/outline/writingStats.ts` | `sourceTokenPositions.ts`, `writingStatsEngine.ts`, `writingStatsProtocol.ts` | 中英计数、可见字数、源码/语义选区上下文和索引查询 |
 | 后台统计调度 | `src/app/services/writingStatsController.ts` | `src/lib/outline/writingStats.worker.ts`, `src/app/App.svelte` | 120 ms 防抖、单 Worker、快照缓存、失效门禁及统计状态 |
 | 章节结构重排 | `src/lib/outline/outlineReorder.ts` | `src/lib/editor-core/editorCommands.ts` | 计算章节子树、落点、层级变化、Markdown 重排与标题索引映射 |

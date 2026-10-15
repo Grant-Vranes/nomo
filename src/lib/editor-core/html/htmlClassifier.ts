@@ -110,7 +110,7 @@ function isRepresentableInline(tag: string, attrs: Record<string, string>): bool
     return createHtmlAnchorAttrs(attrs.href ?? null, attrs.title ?? null, attrs.id ?? null, attrs.name ?? null) !== null;
   }
   // span 无属性时只承载文字；带属性的 wrapper 不能无声扁平化。
-  return tag !== 'img' && tag !== 'br' && tag !== 'sup' && Object.keys(attrs).length === 0;
+  return tag !== 'img' && tag !== 'br' && Object.keys(attrs).length === 0;
 }
 
 /** 逐个消费属性，引号内的 >/< 不属于标签边界；重复属性遵循 HTML 的首个值语义。 */

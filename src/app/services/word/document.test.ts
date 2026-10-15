@@ -6,6 +6,14 @@ import { tryParseMarkdown } from '../../../lib/editor-core/markdown';
 import type { WordDocument } from './protocol';
 
 const PNG = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBFAAAAAASUVORK5CYII='), (char) => char.charCodeAt(0));
+it('exports native superscript and subscript without source delimiters', async () => {
+  const { document } = await model('x^2^ H~2~O <sup>中文</sup>');
+  const { xml } = await unpack(document);
+  expect(xml).toContain('w:vertAlign w:val="superscript"');
+  expect(xml).toContain('w:vertAlign w:val="subscript"');
+  expect(xml).not.toContain('^2^');
+  expect(xml).not.toContain('~2~');
+});
 async function model(markdown: string) {
   const warnings = new Set<string>();
   const document = await createWordModel(markdown, '中文文档', new AbortController().signal, async () => null, warnings);

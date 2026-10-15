@@ -9,7 +9,9 @@ export type InlineFormatName =
   | 'code'
   | 'strikethrough'
   | 'underline'
-  | 'highlight';
+  | 'highlight'
+  | 'superscript'
+  | 'subscript';
 
 export interface InlineSourceSpan {
   type: InlineFormatName;
@@ -38,6 +40,8 @@ const formatNames = new Set<InlineFormatName>([
   'strikethrough',
   'underline',
   'highlight',
+  'superscript',
+  'subscript',
 ]);
 const htmlFormats: Record<string, InlineFormatName> = {
   strong: 'strong',
@@ -50,6 +54,8 @@ const htmlFormats: Record<string, InlineFormatName> = {
   strike: 'strikethrough',
   u: 'underline',
   mark: 'highlight',
+  sup: 'superscript',
+  sub: 'subscript',
 };
 const tokenizer = createMarkdownTokenizer({ inlineSource: true });
 const blockAnalysis = new WeakMap<ProseMirrorNode, InlineSourceAnalysis>();
@@ -89,12 +95,18 @@ export function inlineFormatDelimiters(
       /^`|`$/.test(text) || (/^ [\s\S]* $/.test(text) && /[^ ]/.test(text)) ? ' ' : '';
     return { open: fence + padding, close: padding + fence };
   }
+  if ((type === 'superscript' || type === 'subscript') && /[\s^~\\<>]/.test(text)) {
+    const tag = type === 'superscript' ? 'sup' : 'sub';
+    return { open: `<${tag}>`, close: `</${tag}>` };
+  }
   const pair: Record<Exclude<InlineFormatName, 'code'>, [string, string]> = {
     strong: ['**', '**'],
     em: ['*', '*'],
     strikethrough: ['~~', '~~'],
     underline: ['<u>', '</u>'],
     highlight: ['<mark>', '</mark>'],
+    superscript: ['^', '^'],
+    subscript: ['~', '~'],
   };
   const [open, close] = pair[type];
   return { open, close };
@@ -103,7 +115,7 @@ export function inlineFormatDelimiters(
 /** 纯文本粘贴显式转义，避免在新模型里意外变成 Markdown 格式。 */
 export function escapeInlineSourceLiteral(text: string): string {
   return text.replace(
-    /[\\`*_~<>\[\]$]|&(?=#(?:x[\da-f]+|\d+);|[a-z][a-z\d]+;)/gi,
+    /[\\`*_~^<>\[\]$]|&(?=#(?:x[\da-f]+|\d+);|[a-z][a-z\d]+;)/gi,
     (character) => `\\${character}`,
   );
 }
@@ -247,7 +259,7 @@ function analyzeSource(source: string, syntaxSource: string): InlineSourceAnalys
     const name = token.type.replace(/_(open|close)$/, '');
     const type = name === 's' ? 'strikethrough' : name;
     if (
-      (type === 'strong' || type === 'em' || type === 'strikethrough') &&
+      (type === 'strong' || type === 'em' || type === 'strikethrough' || type === 'superscript' || type === 'subscript') &&
       /_(open|close)$/.test(token.type)
     ) {
       const opening = token.type.endsWith('_open');
@@ -498,7 +510,7 @@ function materializeSourceNode(
         const escaped = literal
           ? new Set(
               Array.from(
-                raw.matchAll(/[\\`*_~<>\[\]$]|&(?=#(?:x[\da-f]+|\d+);|[a-z][a-z\d]+;)/gi),
+                raw.matchAll(/[\\`*_~^<>\[\]$]|&(?=#(?:x[\da-f]+|\d+);|[a-z][a-z\d]+;)/gi),
                 (match) => match.index,
               ),
             )

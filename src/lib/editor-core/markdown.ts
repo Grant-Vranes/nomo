@@ -70,6 +70,8 @@ const tableMarkdownParser = new MarkdownParser(schema, markdownIt, {
     }),
   },
   ...calloutParserTokens,
+  superscript: { mark: 'superscript' },
+  subscript: { mark: 'subscript' },
   s: { mark: 'strikethrough' },
   s_open: { mark: 'strikethrough' },
   s_close: { mark: 'strikethrough' },
@@ -309,6 +311,8 @@ const INLINE_MARK_MAP: Record<string, string> = {
   strike: 'strikethrough',
   u: 'underline',
   mark: 'highlight',
+  sup: 'superscript',
+  sub: 'subscript',
 };
 
 const htmlInlineStack: Array<{ tag: string; markName: string }> = [];

@@ -13,7 +13,9 @@ export type InlinePendingMarkName =
   | 'code'
   | 'strikethrough'
   | 'underline'
-  | 'highlight';
+  | 'highlight'
+  | 'superscript'
+  | 'subscript';
 export type InlinePendingMarks = Record<InlinePendingMarkName, boolean>;
 
 export interface EditorRuntimeOptions {
@@ -148,6 +150,8 @@ export type EditorCommand =
   | { type: 'toggleStrikethrough' }
   | { type: 'toggleUnderline' }
   | { type: 'toggleHighlight' }
+  | { type: 'toggleSuperscript' }
+  | { type: 'toggleSubscript' }
   | { type: 'clearInlineStyles' }
   | { type: 'setHeading'; level: 1 | 2 | 3 | 4 | 5 | 6 }
   | { type: 'setParagraph' }

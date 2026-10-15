@@ -10,6 +10,7 @@ import {
 import {
   findEmptyInlineSourceTemplate,
   getEmptyInlineSourceTemplates,
+  removeInlineSourceTemplateOrigin,
 } from './plugins/inlineSourceEditing';
 
 export type InlineSourceFormat =
@@ -18,7 +19,9 @@ export type InlineSourceFormat =
   | 'code'
   | 'strikethrough'
   | 'underline'
-  | 'highlight';
+  | 'highlight'
+  | 'superscript'
+  | 'subscript';
 
 const FORMATS: readonly InlineSourceFormat[] = [
   'strong',
@@ -27,6 +30,8 @@ const FORMATS: readonly InlineSourceFormat[] = [
   'strikethrough',
   'underline',
   'highlight',
+  'superscript',
+  'subscript',
 ];
 type SourceSpan = ReturnType<typeof analyzeInlineSource>['spans'][number];
 type TextEdit = {
@@ -97,6 +102,25 @@ export function toggleInlineSourceFormat(type: InlineSourceFormat): Command {
       (block) => type !== 'code' || state.selection.empty || hasSelectedCodeText(block),
     );
     if (!blocks.length) return false;
+    const oppositeTemplateType = type === 'superscript' ? 'subscript' : type === 'subscript' ? 'superscript' : null;
+    const oppositeTemplate = state.selection.empty && oppositeTemplateType
+      ? findEmptyInlineSourceTemplate(state, oppositeTemplateType) : undefined;
+    if (oppositeTemplate) {
+      if (dispatch) {
+        const pair = inlineFormatDelimiters(type);
+        const { from, to } = oppositeTemplate;
+        const tr = state.tr;
+        removeInlineSourceTemplateOrigin(tr, oppositeTemplate);
+        tr.replaceWith(from, to, state.schema.text(pair.open + pair.close, sourceMarksAt(state, from)));
+        const cursor = from + pair.open.length;
+        tr.setSelection(TextSelection.create(tr.doc, cursor));
+        tr.setMeta('inlineSourceTemplate', { action: 'add', template: {
+          from, to: from + pair.open.length + pair.close.length, cursor, type,
+        } });
+        dispatch(tr.scrollIntoView());
+      }
+      return true;
+    }
     if (type !== 'code') {
       const aligned = blocks.map((block) => alignSelectionWithCode(block, type));
       if (aligned.some((block) => block === null)) return false;
@@ -124,6 +148,22 @@ export function toggleInlineSourceFormat(type: InlineSourceFormat): Command {
 
     if (state.selection.empty) {
       const block = blocks[0];
+      const opposite = type === 'superscript' ? 'subscript' : type === 'subscript' ? 'superscript' : null;
+      const other = opposite && block.spans.find((span) =>
+        span.type === opposite && block.from > span.openFrom && block.from < span.closeTo);
+      if (other) {
+        if (dispatch) {
+          const pair = inlineFormatDelimiters(type, block.source.slice(other.from, other.to));
+          const tr = state.tr;
+          applyEdits(state, tr, [
+            { from: block.start + other.openFrom, to: block.start + other.openTo, text: pair.open },
+            { from: block.start + other.closeFrom, to: block.start + other.closeTo, text: pair.close },
+          ]);
+          restoreSelection(state, tr);
+          dispatch(tr.scrollIntoView());
+        }
+        return true;
+      }
       const span = block.spans
         .filter(
           (candidate) =>
@@ -170,8 +210,12 @@ export function toggleInlineSourceFormat(type: InlineSourceFormat): Command {
     }
 
     const remove = blocks.every((block) => isSelectionFormatted(block, type));
+    const opposite = type === 'superscript' ? 'subscript' : type === 'subscript' ? 'superscript' : null;
     const edits = blocks.flatMap((block) =>
-      remove ? removeFormatEdits(block, type) : applyFormatEdits(block, type),
+      remove ? removeFormatEdits(block, type) : [
+        ...(opposite ? removeFormatEdits(block, opposite) : []),
+        ...applyFormatEdits(block, type),
+      ],
     );
     if (!edits.length) return false;
     if (dispatch) {
@@ -522,7 +566,7 @@ function wrapEdits(
 ): TextEdit[] {
   if (type === 'code') return wrapCodeEdits(block, from, to, removedSpans, preserveCodeBody);
   let { open, close } = inlineFormatDelimiters(type, block.source.slice(from, to));
-  if (type === 'strong' || type === 'em' || type === 'strikethrough') {
+  if (type === 'strong' || type === 'em' || type === 'strikethrough' || type === 'superscript' || type === 'subscript') {
     const candidate =
       block.source.slice(0, from) +
       open +
@@ -539,7 +583,7 @@ function wrapEdits(
           span.closeFrom === to + open.length,
       );
     if (!valid) {
-      const tag = type === 'strong' ? 'strong' : type === 'em' ? 'em' : 'del';
+      const tag = type === 'superscript' ? 'sup' : type === 'subscript' ? 'sub' : type === 'strong' ? 'strong' : type === 'em' ? 'em' : 'del';
       open = `<${tag}>`;
       close = `</${tag}>`;
     }
