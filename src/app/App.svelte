@@ -2403,7 +2403,7 @@
   async function clearRecentEntriesList() {
     if (
       !desktopEnabled ||
-      !(await confirmAction(t.clearRecentConfirm(), { okLabel: t.clearRecentFiles() }))
+      !(await confirmAction(t.clearRecentConfirm(), { okLabel: t.clearRecentConfirmAction() }))
     )
       return;
     try {

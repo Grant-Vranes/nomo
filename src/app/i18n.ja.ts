@@ -437,6 +437,7 @@ export const JA_JP_EXTRA_TRANSLATIONS = {
   pathInvalidRemove: 'パスが利用できません。クリックして削除します',
   noRecentFiles: '最近の記録はありません',
   clearRecentFiles: '最近の内容をクリア',
+  clearRecentConfirmAction: '最近の内容をクリア',
   save: '保存',
   saveAs: '名前を付けて保存...',
   closeCurrentFile: '現在のファイルを閉じる',
