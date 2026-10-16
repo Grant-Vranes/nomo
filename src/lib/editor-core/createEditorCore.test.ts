@@ -1124,6 +1124,177 @@ describe('createEditorCore', () => {
     expect(editor.getMarkdown()).toBe('');
   });
 
+  it.each([false, true])('keeps repeated Left presses out of a task prefix with KP %s', async (enabled) => {
+    setTypographyOptions({ enabled });
+    const target = document.body.appendChild(document.createElement('div'));
+    const editor = createEditorCore({ markdown: '- [ ] 待办事项', target });
+    const view = (editor as unknown as { view: EditorView }).view;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const paragraph = findNodeByText(view.state.doc, 'paragraph', '[ ] 待办事项');
+    const start = paragraph.pos + 5;
+    expect(view.state.selection.head).toBe(start);
+    const doc = view.state.doc;
+    const dispatch = vi.spyOn(view, 'dispatch');
+
+    for (let i = 0; i < 8; i++) {
+      expect(pressEditorKey(view, 'ArrowLeft')).toBe(true);
+      expect(view.state.selection.head).toBe(start);
+    }
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(view.state.doc).toBe(doc);
+    expect(editor.getMarkdown()).toBe('- [ ] 待办事项');
+    editor.destroy();
+    target.remove();
+  });
+
+  it.each([false, true])('moves Right directly into task text before native cursor movement with KP %s', async (enabled) => {
+    setTypographyOptions({ enabled });
+    for (const [markdown, previousText, taskText] of [
+      ['- [ ] 前项\n- [x] 后项', '[ ] 前项', '[x] 后项'],
+      ['正文\n\n1. [ ] 后项', '正文', '[ ] 后项'],
+      ['- 外层\n  - [ ] 子任务', '外层', '[ ] 子任务'],
+      ['正文\n\n- [ ]', '正文', '[ ]'],
+    ]) {
+      const target = document.body.appendChild(document.createElement('div'));
+      const editor = createEditorCore({ markdown, target });
+      const view = (editor as unknown as { view: EditorView }).view;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const previous = findNodeByText(view.state.doc, 'paragraph', previousText);
+      const task = findNodeByText(view.state.doc, 'paragraph', taskText);
+      const previousEnd = previous.pos + 1 + previous.node.content.size;
+      const taskStart = task.pos + 1 + (taskText === '[ ]' ? 3 : 4);
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, previousEnd)));
+      view.focus();
+      const doc = view.state.doc;
+      const scrolledTo: number[] = [];
+      view.setProps({ handleScrollToSelection(current) {
+        scrolledTo.push(current.state.selection.head);
+        return true;
+      } });
+      const dispatch = vi.spyOn(view, 'dispatch');
+      const event = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+      view.dom.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch.mock.calls[0][0].selection.head).toBe(taskStart);
+      expect(view.state.selection.head).toBe(taskStart);
+      expect(scrolledTo).toEqual([taskStart]);
+      expect(view.state.doc).toBe(doc);
+
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, previousEnd)));
+      expect(pressEditorKey(view, 'ArrowRight', { shiftKey: true })).toBe(true);
+      expect(view.state.selection.anchor).toBe(previousEnd);
+      expect(view.state.selection.head).toBe(taskStart);
+      editor.destroy();
+      target.remove();
+    }
+  });
+
+  it('keeps Right navigation native when the next block is not a task', async () => {
+    const target = document.createElement('div');
+    const editor = createEditorCore({ markdown: '- [ ] 前项\n- 普通项\n- [ ] 后项', target });
+    const view = (editor as unknown as { view: EditorView }).view;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const previous = findNodeByText(view.state.doc, 'paragraph', '[ ] 前项');
+    const previousEnd = previous.pos + 1 + previous.node.content.size;
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, previousEnd)));
+    expect(pressEditorKey(view, 'ArrowRight')).toBe(false);
+    expect(view.state.selection.head).toBe(previousEnd);
+    editor.destroy();
+  });
+
+  it('moves Left directly to the preceding textblock and preserves Shift selection across tasks', async () => {
+    const target = document.createElement('div');
+    const editor = createEditorCore({ markdown: '- [x] 第一项\n  - [ ] 子任务', target });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const first = findNodeByText(view.state.doc, 'paragraph', '[x] 第一项');
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const nested = findNodeByText(view.state.doc, 'paragraph', '[ ] 子任务');
+    const start = nested.pos + 5;
+    const previousEnd = first.pos + 1 + first.node.content.size;
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, start)));
+
+    expect(pressEditorKey(view, 'ArrowLeft')).toBe(true);
+    expect(view.state.selection.head).toBe(previousEnd);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, start)));
+    expect(pressEditorKey(view, 'ArrowLeft', { shiftKey: true })).toBe(true);
+    expect(view.state.selection.anchor).toBe(start);
+    expect(view.state.selection.head).toBe(previousEnd);
+    expect(editor.getClipboardPayload()?.text).toBeTruthy();
+    expect(editor.getMarkdown()).toBe('- [x] 第一项\n  - [ ] 子任务');
+    editor.destroy();
+  });
+
+  it.each(['- [ ] 待办', '1. [x] 已完成', '- [ ]', '- [ ] '])(
+    'normalizes hidden task carets before scrolling without adding history: %s', async (markdown) => {
+      const target = document.body.appendChild(document.createElement('div'));
+      const editor = createEditorCore({ markdown, target });
+      const view = (editor as unknown as { view: EditorView }).view;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      view.focus();
+      const paragraph = findFirstNode(view.state.doc, 'paragraph');
+      const start = paragraph.pos + 1 + (/^\[([ xX])\]\s?/.exec(paragraph.node.textContent)?.[0].length ?? 0);
+      const scrolledTo: number[] = [];
+      view.setProps({
+        handleScrollToSelection(current) {
+          scrolledTo.push(current.state.selection.head);
+          return true;
+        },
+      });
+      const dom = target.innerHTML;
+      for (let pos = paragraph.pos + 1; pos < start; pos++) {
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)).scrollIntoView());
+        expect(view.state.selection.head).toBe(start);
+        expect(target.innerHTML).toBe(dom);
+      }
+      expect(scrolledTo.length).toBeGreaterThan(0);
+      expect(scrolledTo.every((pos) => pos === start)).toBe(true);
+      const caret = view.domAtPos(start);
+      const caretElement = caret.node instanceof Element ? caret.node : caret.node.parentElement;
+      expect(caretElement?.closest('[style*="display: none"]')).toBeNull();
+      expect(editor.execute({ type: 'undo' })).toBe(false);
+      editor.destroy();
+      target.remove();
+    },
+  );
+
+  it('preserves full task selections, checkbox toggling and readonly navigation', async () => {
+    const target = document.createElement('div');
+    const editor = createEditorCore({ markdown: '- [ ] 待办', target });
+    const view = (editor as unknown as { view: EditorView }).view;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    view.dispatch(view.state.tr.setSelection(new AllSelection(view.state.doc)));
+    expect(editor.getClipboardPayload()?.text).toBe('- [ ] 待办');
+    const checkbox = target.querySelector<HTMLInputElement>('.task-checkbox-widget input')!;
+    checkbox.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    expect(editor.getMarkdown()).toBe('- [x] 待办');
+    editor.updateOptions({ readonly: true });
+    expect(pressEditorKey(view, 'ArrowLeft')).toBe(false);
+    expect(target.querySelector<HTMLInputElement>('.task-checkbox-widget input')?.disabled).toBe(true);
+    editor.destroy();
+  });
+
+  it('leaves task composition navigation to IME and restores the visible caret after composition', async () => {
+    const target = document.body.appendChild(document.createElement('div'));
+    const editor = createEditorCore({ markdown: '- [ ] 待办', target });
+    const view = (editor as unknown as { view: EditorView }).view;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const paragraph = findFirstNode(view.state.doc, 'paragraph');
+    view.dom.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    expect(pressEditorKey(view, 'ArrowLeft', { isComposing: true })).toBe(false);
+    view.dispatch(view.state.tr
+      .setSelection(TextSelection.create(view.state.doc, paragraph.pos + 2))
+      .setMeta('composition', 1));
+    expect(view.state.selection.head).toBe(paragraph.pos + 2);
+    view.dom.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(view.state.selection.head).toBe(paragraph.pos + 5);
+    expect(editor.getMarkdown()).toBe('- [ ] 待办');
+    editor.destroy();
+    target.remove();
+  });
+
   it('deletes only the current task item when Backspace is pressed in a multi-item task list', () => {
     const target = document.createElement('div');
     const editor = createEditorCore({

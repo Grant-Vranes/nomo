@@ -1,7 +1,7 @@
-import type { Node as ProseMirrorNode } from 'prosemirror-model';
+import type { Node as ProseMirrorNode, ResolvedPos } from 'prosemirror-model';
 import { schema } from '../schema';
 import { readTaskListMarker } from '../InlineSourceCodec';
-import { Plugin, PluginKey } from 'prosemirror-state';
+import { Plugin, PluginKey, Selection, TextSelection, type EditorState } from 'prosemirror-state';
 import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 
 const taskListPluginKey = new PluginKey('taskList');
@@ -9,8 +9,14 @@ const taskListPluginKey = new PluginKey('taskList');
 type TaskMarkerRange = { from: number; to: number; checked: boolean };
 
 export function taskListPlugin(): Plugin {
+  let composing = false;
   return new Plugin({
     key: taskListPluginKey,
+    appendTransaction(transactions, _oldState, state) {
+      if (composing || transactions.some((tr) => tr.getMeta('composition') !== undefined)) return null;
+      // 在 EditorView 更新和滚动定位前修正隐藏字符中的光标，不改变范围选区与文档。
+      return normalizeTaskCursor(state);
+    },
     state: {
       init(_, state) {
         return buildTaskDecorations(state.doc);
@@ -22,13 +28,30 @@ export function taskListPlugin(): Plugin {
     },
     view(view) {
       let editable = view.editable;
+      let pending = false;
+      const normalizeRestoredCursor = () => {
+        if (pending || !view.editable || view.composing || !normalizeTaskCursor(view.state)) return;
+        pending = true;
+        // 初始化和缓存状态恢复不一定经过事务；避免在构造/更新视图时嵌套 dispatch。
+        queueMicrotask(() => {
+          pending = false;
+          if (view.isDestroyed || !view.editable || view.composing) return;
+          const tr = normalizeTaskCursor(view.state);
+          if (tr) view.dispatch(tr);
+        });
+      };
+      normalizeRestoredCursor();
       return {
         update() {
+          normalizeRestoredCursor();
           if (editable === view.editable) return;
           editable = view.editable;
           for (const input of view.dom.querySelectorAll<HTMLInputElement>('.task-checkbox-widget input')) {
             input.disabled = !editable;
           }
+        },
+        destroy() {
+          composing = false;
         },
       };
     },
@@ -36,7 +59,50 @@ export function taskListPlugin(): Plugin {
       decorations(state) {
         return this.getState(state);
       },
+      handleKeyDown(view, event) {
+        if (
+          !view.editable || view.composing || event.isComposing ||
+          event.ctrlKey || event.metaKey || event.altKey ||
+          !['ArrowLeft', 'ArrowRight'].includes(event.key)
+        ) return false;
+        const { selection } = view.state;
+        if (!(selection instanceof TextSelection) || (!selection.empty && !event.shiftKey)) return false;
+        if (event.key === 'ArrowRight') {
+          const { $head } = selection;
+          if (!$head.parent.isTextblock || $head.parentOffset !== $head.parent.content.size) return false;
+          const next = Selection.findFrom(view.state.doc.resolve($head.after()), 1);
+          if (!(next instanceof TextSelection)) return false;
+          const nextStart = taskContentStart(next.$head);
+          if (nextStart === null) return false;
+          // 阻止原生光标先进入方框前再由 selectionchange 纠正，直接落到可见正文。
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(
+            view.state.doc, event.shiftKey ? selection.anchor : nextStart, nextStart,
+          )).scrollIntoView());
+          return true;
+        }
+        const start = taskContentStart(selection.$head);
+        if (start === null || selection.head > start) return false;
+        const previous = Selection.findFrom(
+          view.state.doc.resolve(selection.$head.before()), -1, event.shiftKey,
+        );
+        if (previous) {
+          const target = event.shiftKey
+            ? TextSelection.create(view.state.doc, selection.anchor, previous.head)
+            : previous;
+          view.dispatch(view.state.tr.setSelection(target).scrollIntoView());
+        }
+        // 文档开头保持原位，不向隐藏标记移动，也不重复请求滚动。
+        return true;
+      },
       handleDOMEvents: {
+        compositionstart() {
+          composing = true;
+          return false;
+        },
+        compositionend() {
+          composing = false;
+          return false;
+        },
         mousedown(view, event) {
           const widget = findTaskWidget(event);
           if (!widget) return false;
@@ -77,6 +143,26 @@ export function taskListPlugin(): Plugin {
       },
     },
   });
+}
+
+function taskContentStart($pos: ResolvedPos): number | null {
+  if (
+    $pos.depth < 2 ||
+    $pos.node($pos.depth - 1).type !== schema.nodes.list_item ||
+    $pos.index($pos.depth - 1) !== 0
+  ) return null;
+  const marker = readTaskListMarker($pos.parent);
+  return marker ? $pos.start() + marker.text.length : null;
+}
+
+function normalizeTaskCursor(state: EditorState) {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const start = taskContentStart(selection.$head);
+  if (start === null || selection.head >= start) return null;
+  return state.tr
+    .setSelection(TextSelection.create(state.doc, start))
+    .setMeta('addToHistory', false);
 }
 
 function findTaskWidget(event: Event): HTMLElement | null {
@@ -126,8 +212,10 @@ function buildTaskDecorations(doc: ProseMirrorNode): DecorationSet {
     // 仅装饰当前 item 的直接首段；继续遍历以保留真正的嵌套任务项。
     const bracketStart = pos + 2;
     const bracketEnd = bracketStart + 3;
-    decorations.push(Decoration.widget(bracketStart, (view) =>
+    // 挂在隐藏括号之后，让无正文/无分隔空格的任务项也有可见控件后的光标落点。
+    decorations.push(Decoration.widget(bracketEnd, (view) =>
       createTaskCheckboxWidget(marker.checked, bracketStart, bracketEnd, view),
+      { side: -1 },
     ));
     decorations.push(
       Decoration.inline(
