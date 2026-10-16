@@ -1,6 +1,6 @@
 import { serializeClipboardText } from './markdownSerialization';
 import { typographyPlugin, isTypographyTransaction } from './plugins/typography';
-import { TypographyBreakNodeView } from './nodeViews/TypographyBreakNodeView';
+import { typographyBreaksPlugin } from './nodeViews/TypographyBreakNodeView';
 import katex from 'katex';
 import {
   chainCommands,
@@ -46,7 +46,7 @@ import {
 } from './nodeViews/activeEditRegistry';
 import {
   executeEditorCommand,
-  insertSoftLineBreak,
+  insertParagraphLineBreak,
   splitBlockExitHeading,
   toggleList,
   toggleTaskListAtCursor,
@@ -287,7 +287,6 @@ export class ProseMirrorEditorCore implements EditorCore {
       },
       nodeViews: {
         table: (node, view) => new TableNodeView(node, view),
-        hard_break: (node, view, getPos) => new TypographyBreakNodeView(node, view, getPos),
         code_block: (node, view, getPos) =>
           new CodeBlockNodeView(node, view, getPos as () => number, this.isRestoringNodeSelection(getPos)),
         image: (node, view) =>
@@ -1615,7 +1614,7 @@ export class ProseMirrorEditorCore implements EditorCore {
             return true;
           },
           'Shift-Enter': chainCommands(
-            insertSoftLineBreak,
+            insertParagraphLineBreak,
             newlineInCode,
             (state, dispatch) =>
               state.selection.$from.parent.type === schema.nodes.footnote_def &&
@@ -1758,6 +1757,7 @@ export class ProseMirrorEditorCore implements EditorCore {
           prepareMathKeyboardEntry: (caret) => MathBlockNodeView.prepareKeyboardEntry(caret, this.view ?? undefined),
         }),
         // Format boundaries and editable atoms handle arrows before KP's text navigation.
+        typographyBreaksPlugin(),
         typographyPlugin(),
         contextMenuPlugin({
           onOpen: (event) => this.options.onContextMenuOpen?.(event),

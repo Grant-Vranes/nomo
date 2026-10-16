@@ -6,6 +6,7 @@ import { getTypographyOptions, setTypographyOptions } from '../typography/option
 import { cleanEditorArtifacts } from '../../app/services/exportService';
 import type { EditorChangeEvent } from './types';
 import { schema } from './schema';
+import { parseMarkdown, serializeMarkdown } from './markdown';
 import {
   inlineSourceEditingPlugin,
   inlineSourceEditingPluginKey,
@@ -63,6 +64,155 @@ it('typography toggles preserve exact Markdown, dirty state and semantic export'
   expect(doc.querySelector('strong')?.textContent).toBe('粗体');
   expect(doc.querySelector('.math-inline .katex')).not.toBeNull();
   expect(doc.querySelector('.kp-unit,[data-kp-owned]')).toBeNull();
+});
+
+it('uses native breaks outside KP projection and only rebuilds soft breaks on toggles', () => {
+  setTypographyOptions({ enabled: false });
+  const original = 'hello\nworld\n\nhard  \nbreak\n\n- 列表\n  换行\n\n```text\nkeep this node\n```\n';
+  const host = document.body.appendChild(document.createElement('div'));
+  core = createEditorCore({ target: host, markdown: original });
+  const view = (core as unknown as { view: EditorView }).view;
+  const doc = view.state.doc;
+  const selection = view.state.selection;
+  const before = core.getSnapshot();
+  const hardBreak = host.querySelector('[data-nomo-break="hard"]');
+  const codeBlock = host.querySelector('.code-card');
+  expect(hardBreak?.nodeName).toBe('BR');
+  expect(codeBlock).not.toBeNull();
+  expect([...host.querySelectorAll('[data-nomo-break="soft"]')].map((node) => node.nodeName))
+    .toEqual(['BR', 'BR']);
+  for (const enabled of [true, false, true, false]) {
+    setTypographyOptions({ enabled });
+    const breaks = [...host.querySelectorAll('[data-nomo-break="soft"]')];
+    expect(breaks.map((node) => node.nodeName)).toEqual(enabled ? ['SPAN', 'SPAN'] : ['BR', 'BR']);
+    if (enabled) expect(breaks[0].textContent).toBe(' ');
+    expect(host.querySelector('[data-nomo-break="hard"]')).toBe(hardBreak);
+    expect(host.querySelector('.code-card')).toBe(codeBlock);
+    expect(view.state.doc).toBe(doc);
+    expect(view.state.selection.eq(selection)).toBe(true);
+    expect(core.flushMarkdown()).toBe(original);
+    expect(core.getSnapshot().version).toBe(before.version);
+  }
+  expect(core.execute({ type: 'undo' })).toBe(false);
+  expect(core.getExportHtml!()).not.toContain('data-nomo-break-projection');
+});
+
+it.each([false, true])('defers break root changes until IME finishes when KP starts %s', async (enabled) => {
+  setTypographyOptions({ enabled });
+  const original = '- 测试\n  换行\n';
+  const host = document.body.appendChild(document.createElement('div'));
+  core = createEditorCore({ target: host, markdown: original });
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  const view = (core as unknown as { view: EditorView }).view;
+  const breakBefore = host.querySelector('[data-nomo-break="soft"]');
+  const doc = view.state.doc;
+  view.dom.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  expect(view.composing).toBe(true);
+  setTypographyOptions({ enabled: !enabled });
+  expect(host.querySelector('[data-nomo-break="soft"]')).toBe(breakBefore);
+  view.dom.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(host.querySelector('[data-nomo-break="soft"]')?.nodeName).toBe(enabled ? 'BR' : 'SPAN');
+  expect(view.state.doc).toBe(doc);
+  expect(core.flushMarkdown()).toBe(original);
+});
+
+it('releases pending break refreshes and subscriptions when the view is destroyed', async () => {
+  setTypographyOptions({ enabled: false });
+  const host = document.body.appendChild(document.createElement('div'));
+  core = createEditorCore({ target: host, markdown: 'hello\nworld\n' });
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  const view = (core as unknown as { view: EditorView }).view;
+  const dispatch = vi.spyOn(view, 'dispatch');
+  view.dom.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  expect(view.composing).toBe(true);
+  setTypographyOptions({ enabled: true });
+  view.dom.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+  core.destroy();
+  core = undefined;
+  const calls = dispatch.mock.calls.length;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  setTypographyOptions({ enabled: false });
+  expect(dispatch).toHaveBeenCalledTimes(calls);
+});
+
+it('refreshes cached break projection when remounting after a typography change', async () => {
+  setTypographyOptions({ enabled: false });
+  const original = 'hello\nworld\n';
+  const host = document.body.appendChild(document.createElement('div'));
+  core = createEditorCore({ target: host, markdown: original });
+  core.unmount();
+  setTypographyOptions({ enabled: true });
+  core.mount(host);
+  await Promise.resolve();
+  expect(host.querySelector('[data-nomo-break="soft"]')?.nodeName).toBe('SPAN');
+  expect(host.querySelector('[data-nomo-break="soft"]')?.textContent).toBe(' ');
+  expect(core.flushMarkdown()).toBe(original);
+  setTypographyOptions({ enabled: false });
+  expect(host.querySelector('[data-nomo-break="soft"]')?.nodeName).toBe('BR');
+});
+
+it.each([false, true])('keeps Shift+Enter explicit and saveable with KP enabled %s', async (enabled) => {
+  for (const markdown of ['测试', '- 测试', '1. 测试', '- [ ] 测试', '| 列 |\n| --- |\n| 测试 |']) {
+    setTypographyOptions({ enabled });
+    const host = document.body.appendChild(document.createElement('div'));
+    core = createEditorCore({ target: host, markdown });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const view = (core as unknown as { view: EditorView }).view;
+    let end = 1;
+    view.state.doc.descendants((node, pos) => {
+      if (node.isTextblock && node.textContent.includes('测试')) {
+        end = pos + 1 + node.content.size;
+        return false;
+      }
+    });
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, end)));
+    const paragraphCount = host.querySelectorAll('p').length;
+    const event = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true });
+    expect(view.someProp('handleKeyDown', (handle) => handle(view, event))).toBe(true);
+    const lineBreak = host.querySelector('[data-nomo-break="hard"]');
+    expect(lineBreak?.nodeName).toBe('BR');
+    expect(host.querySelectorAll('p')).toHaveLength(paragraphCount);
+    expect(core.flushMarkdown()).toContain('<br>');
+    view.dispatch(view.state.tr.insertText('中文'));
+    const saved = core.flushMarkdown();
+    const reopened = parseMarkdown(saved);
+    const breaks: boolean[] = [];
+    reopened.descendants((node) => {
+      if (node.type.name === 'hard_break') breaks.push(node.attrs.soft);
+    });
+    expect(breaks).toEqual([false]);
+    expect(serializeMarkdown(reopened)).toBe(saved);
+    setTypographyOptions({ enabled: !enabled });
+    expect(host.querySelector('[data-nomo-break="hard"]')).toBe(lineBreak);
+    expect(core.flushMarkdown()).toBe(saved);
+    expect(core.execute({ type: 'undo' })).toBe(true);
+    expect(core.flushMarkdown()).toBe(markdown);
+    expect(core.execute({ type: 'redo' })).toBe(true);
+    expect(core.flushMarkdown()).toBe(saved);
+    core.destroy();
+    core = undefined;
+    host.remove();
+  }
+});
+
+it('preserves existing source soft breaks next to a manual line break', async () => {
+  setTypographyOptions({ enabled: true });
+  const host = document.body.appendChild(document.createElement('div'));
+  core = createEditorCore({ target: host, markdown: '首行\n次行' });
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  const view = (core as unknown as { view: EditorView }).view;
+  view.dispatch(view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)));
+  const event = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true });
+  expect(view.someProp('handleKeyDown', (handle) => handle(view, event))).toBe(true);
+  view.dispatch(view.state.tr.insertText('末行'));
+  const saved = core.flushMarkdown();
+  expect(saved).toBe('首行\n次行\\\n末行');
+  const breaks: boolean[] = [];
+  parseMarkdown(saved).descendants((node) => {
+    if (node.type.name === 'hard_break') breaks.push(node.attrs.soft);
+  });
+  expect(breaks).toEqual([true, false]);
 });
 
 function typographyView(texts: string[]) {

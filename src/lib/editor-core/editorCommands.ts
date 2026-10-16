@@ -236,10 +236,10 @@ export function splitBlockExitHeading(
 }
 
 /**
- * 在当前段落内插入软换行。
- * 软换行用于语义模式的 Shift+Enter：视觉上换行，保存为源码普通单换行。
+ * Shift+Enter 表达显式段内换行，沿用 Markdown 硬换行的保存规则。
+ * 源码普通单换行仍由解析器标为 soft，允许 KP 合并；手动换行不能被合并。
  */
-export function insertSoftLineBreak(
+export function insertParagraphLineBreak(
   state: EditorState,
   dispatch?: (tr: Transaction) => void,
 ): boolean {
@@ -251,10 +251,10 @@ export function insertSoftLineBreak(
     return false;
   }
 
-  const softBreak = schema.nodes.hard_break.create({ soft: true });
+  const lineBreak = schema.nodes.hard_break.create();
   if (dispatch) {
-    // 步骤2：选区存在时直接用软换行替换选区，保持“段内换行”语义。
-    dispatch(state.tr.replaceSelectionWith(softBreak).scrollIntoView());
+    // 步骤2：替换选区后仍留在同一段落和列表项内，不拆分块。
+    dispatch(state.tr.replaceSelectionWith(lineBreak).scrollIntoView());
   }
   return true;
 }

@@ -2093,6 +2093,11 @@
 
 /* ---- 真实行内 Markdown：正文只装饰，语法仍是可逐字编辑的文本 ---- */
 
+/* Keep projected whitespace, without an empty atom box that restarts Chromium IME. */
+.prosemirror-host .ProseMirror span[data-nomo-break='soft'] {
+  display: contents;
+}
+
 .prosemirror-host .ProseMirror .pm-inline-source-marker {
   color: var(--md-editor-muted-fg);
   font-family: var(--md-editor-font-mono);

@@ -23,7 +23,11 @@ import type {
   TypographyOptions,
 } from '../../typography/types';
 import { logDebug } from '../../services/logger';
-import { refreshTypographyBreaks } from '../nodeViews/TypographyBreakNodeView';
+import {
+  isTypographyBreakTransaction,
+  refreshTypographyBreaks,
+  typographyBreakProjectionEnabled,
+} from '../nodeViews/TypographyBreakNodeView';
 import { analyzeInlineSource } from '../InlineSourceCodec';
 import { inlineSourceEditingPluginKey } from './inlineSourceEditing';
 import { TABLE_LAYOUT_EVENT } from '../../table-layout/dom';
@@ -38,7 +42,7 @@ const graphemeSegmenter =
     : null;
 const graphemeBoundaries = new WeakMap<ProseMirrorNode, number[]>();
 export const isTypographyTransaction = (transaction: Transaction) =>
-  transaction.getMeta(meta) !== undefined;
+  transaction.getMeta(meta) !== undefined || isTypographyBreakTransaction(transaction);
 export const flushEditorTypography = (view: EditorView) =>
   controllers.get(view)?.flush() ?? Promise.resolve();
 
@@ -252,6 +256,7 @@ function createViewController(view: EditorView) {
   const objectSizes = new WeakMap<Element, string>();
   const observedObjects = new Set<Element>();
   let cachedDoc = view.state.doc;
+  let cachedBreakProjection = typographyBreakProjectionEnabled(view.state);
   let cachedSourceGeometry = inlineSourceGeometrySnapshot(view);
   let pendingSourceLayout = false;
   let pendingContentLayout = false;
@@ -1311,6 +1316,12 @@ function createViewController(view: EditorView) {
   return {
     update() {
       if (!publishing) clearDisabledLayout();
+      const breakProjection = typographyBreakProjectionEnabled(view.state);
+      if (breakProjection !== cachedBreakProjection) {
+        cachedBreakProjection = breakProjection;
+        // A BR/span replacement invalidates bindings without changing the document.
+        schedule();
+      }
       if (
         !inlineSourceEditingPluginKey.getState(view.state) &&
         dragging &&
