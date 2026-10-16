@@ -61,6 +61,8 @@ export function tableConstraints(
       Math.max(
         policy.emptyEm * em,
         Math.min(natural, policy.minimumEm * em),
+        // Keep ordinary headers readable when body columns compete for space.
+        Math.min(header, policy.headerEm * em),
         maximum(own, 'atomic'),
       );
     return {
@@ -100,7 +102,10 @@ export function tableConstraints(
       cell.chrome +
       Math.max(
         policy.emptyEm * em * cell.span,
-        Math.min(cell.natural, policy.minimumEm * em * cell.span),
+        Math.min(
+          cell.natural,
+          (cell.header ? policy.headerEm : policy.minimumEm) * em * cell.span,
+        ),
         cell.atomic,
       );
     raise(cell.column, cell.span, 'minimum', minimum);

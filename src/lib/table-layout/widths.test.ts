@@ -70,6 +70,30 @@ describe('content-driven table widths', () => {
     expect(constraints[0].preferred).toBe(323);
     expect(constraints[1].minimum).toBe(65);
   });
+  it('preserves a header wider than its body when another column needs more space', () => {
+    const constraints = tableConstraints(
+      2,
+      [cell(0, 140, { header: true }), cell(0, 28), cell(1, 500)],
+      14,
+    );
+    const result = allocateTableWidths(constraints, 320);
+    expect(result.columns[0]).toBe(163);
+    expect(result.width).toBe(320);
+    expect(result.overflow).toBe(false);
+    expect(allocateTableWidths(constraints, 240).overflow).toBe(true);
+  });
+  it('protects merged headers during compression and still bounds very long headers', () => {
+    const constraints = tableConstraints(
+      3,
+      [cell(0, 280, { header: true, span: 2 }), cell(0, 28), cell(1, 28), cell(2, 500)],
+      14,
+    );
+    const result = allocateTableWidths(constraints, 430);
+    expect(result.columns[0] + result.columns[1]).toBeGreaterThanOrEqual(303);
+    expect(result.width).toBe(430);
+    const longHeader = tableConstraints(1, [cell(0, 900, { header: true })], 14);
+    expect(allocateTableWidths(longHeader, 300).columns).toEqual([191]);
+  });
   it('respects atomic objects and authored widths without modifying their data', () => {
     const explicit = [250, 0];
     const constraints = tableConstraints(
