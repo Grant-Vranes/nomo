@@ -269,7 +269,7 @@
 | 系统托盘与平台图标 | `src-tauri/src/window/tray.rs` | `src-tauri/src/window/commands.rs` | 托盘安装/刷新/关闭到托盘；仅 macOS 随主题替换窗口和 Dock 图标，其他平台保留打包图标 |
 | 外部打开路由 | `src-tauri/src/window/external_open.rs` | `src-tauri/src/lib.rs` | 单实例/启动参数/macOS open 事件、连续请求短暂合并、追加暂存及按窗口原子消费 |
 | Windows 文件关联 | `src-tauri/src/window/file_association.rs` | — | 注册/注销默认打开方式和右键菜单 |
-| 平台适配 | `src-tauri/src/window/os/macos.rs`, `os/windows.rs` | `src-tauri/src/window/os/mod.rs` | macOS/Windows 窗口行为差异与 Windows 无边框/阴影设置 |
+| 平台适配 | `src-tauri/src/window/os/macos.rs`, `os/windows.rs` | `src-tauri/src/window/os/mod.rs`, `src-tauri/src/lib.rs` | macOS/Windows 窗口行为差异、Windows 无边框/阴影设置与应用窗口浏览器默认快捷键禁用 |
 | 外部链接与附件安全 | `src-tauri/src/external_link.rs` | `src/lib/desktop/tauriStorage.ts` | 打开外部链接、白名单本地附件或文件管理器定位 |
 | 配置命令 IPC | `src-tauri/src/config/commands.rs` | `src-tauri/src/config/mod.rs` | 设置读写/最近文件/快照/应用设置 IPC |
 | 窗口命令 IPC | `src-tauri/src/window/commands.rs` | `src-tauri/src/window/menu.rs`, `src-tauri/src/window/tray.rs` | 窗口状态保存/设置窗口/菜单安装/强制关闭 IPC |
@@ -3830,18 +3830,19 @@
 **Owns:**
 - 校验 Windows 窗口是否已按平台配置创建为无装饰窗口，并在配置漂移时兜底关闭装饰、保留系统阴影。
 - 读取 Windows 应用主题，以及外部打开时将窗口带到前台。
+- 通过启动插件为主窗口、新窗口和设置窗口禁用浏览器默认快捷键，原生按键事件即时兜底首次导航，保留前端与编辑器按键分发。
 - 小窗切换时用一次 SetWindowPos 更新普通窗口的位置和客户区尺寸，保留系统阴影边距、焦点与 Z 序。
 
 **Does not own:**
 - 不拥有前端自绘按钮、标题栏布局或关闭业务。
 - 不复制 Tao 已负责的缩放命中、最大化工作区和普通 Snap 行为。
 
-**Called by:** `src-tauri/src/window/os/mod.rs`
+**Called by:** `src-tauri/src/window/os/mod.rs`, `src-tauri/src/lib.rs`（注册 Windows 浏览器快捷键插件）
 
-**Depends on:** `src-tauri/tauri.windows.conf.json`、Tauri window API、Windows Registry 与 WindowsAndMessaging API
+**Depends on:** `src-tauri/tauri.windows.conf.json`、Tauri window/plugin API、WebView2 COM、Windows Registry 与 WindowsAndMessaging API
 
 **Change this when:**
-- 修改 Windows 无边框、阴影、系统主题或窗口前置行为。
+- 修改 Windows 无边框、阴影、系统主题、窗口前置或浏览器默认快捷键行为。
 
 **Related tests:** `src/app/App.layout.test.ts`（源码接线断言）；真实行为需 Windows 实窗验证
 

@@ -1,9 +1,14 @@
+use webview2_com::AcceleratorKeyPressedEventHandler;
+use webview2_com::Microsoft::Web::WebView2::Win32::{
+    ICoreWebView2AcceleratorKeyPressedEventArgs2, ICoreWebView2Controller, ICoreWebView2Settings3,
+};
+use windows_core::Interface;
 use windows_sys::Win32::Foundation::RECT;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetClientRect, GetWindowRect, IsZoomed, SetForegroundWindow, SetWindowPos, ShowWindow,
-    HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SW_RESTORE, SW_SHOW,
+    HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE,
+    SW_SHOW,
 };
 
 pub(crate) fn window_decorations() -> bool {
@@ -28,6 +33,75 @@ pub(crate) fn setup_window<R: tauri::Runtime>(
     }
 
     Ok(())
+}
+
+/// 在每个应用 WebView 创建后安装一次，覆盖主窗口、新窗口和独立设置窗口。
+pub(crate) fn browser_shortcut_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("browser-shortcuts")
+        .on_webview_ready(|webview| {
+            let label = webview.label().to_string();
+            if !crate::window::external_open::is_document_window_label(&label)
+                && label != crate::window::commands::SETTINGS_WINDOW_LABEL
+            {
+                return;
+            }
+
+            let native_label = label.clone();
+            if let Err(error) =
+                webview.with_webview(move |native| {
+                    match disable_browser_shortcuts(&native.controller(), &native_label) {
+                        Ok(()) => crate::app_logger::info(
+                            "BrowserShortcuts",
+                            &format!("已禁用浏览器默认快捷键：label={native_label}"),
+                        ),
+                        Err(error) => report_browser_shortcut_error(&native_label, &error),
+                    }
+                })
+            {
+                report_browser_shortcut_error(&label, &error);
+            }
+        })
+        .build()
+}
+
+fn disable_browser_shortcuts(
+    controller: &ICoreWebView2Controller,
+    label: &str,
+) -> windows_core::Result<()> {
+    let label = label.to_string();
+    unsafe {
+        let settings = controller.CoreWebView2()?.Settings()?;
+        settings
+            .cast::<ICoreWebView2Settings3>()?
+            .SetAreBrowserAcceleratorKeysEnabled(false)?;
+
+        // Tauri 在创建 WebView 时已发起首次导航，全局设置可能到下次导航才生效。
+        // 逐次关闭浏览器处理立即生效；不设置 Handled，让 Nomo 和编辑器继续收到按键。
+        let handler = AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
+            let Some(args) = args else {
+                return Ok(());
+            };
+            let result = args
+                .cast::<ICoreWebView2AcceleratorKeyPressedEventArgs2>()
+                .and_then(|args| args.SetIsBrowserAcceleratorKeyEnabled(false));
+            if let Err(error) = &result {
+                report_browser_shortcut_error(&label, error);
+            }
+            result
+        }));
+        // Controller 持有监听器并随 WebView 一起释放；闭包不反向持有 Controller 或窗口。
+        let mut token = 0;
+        controller.add_AcceleratorKeyPressed(&handler, &mut token)?;
+    }
+    Ok(())
+}
+
+fn report_browser_shortcut_error(label: &str, error: &dyn std::fmt::Display) {
+    let message = format!("禁用浏览器默认快捷键失败：label={label} error={error}");
+    crate::app_logger::error("BrowserShortcuts", &message);
+    if !crate::app_logger::is_enabled() {
+        eprintln!("{message}");
+    }
 }
 
 /// 在已还原的窗口上一次更新位置和客户区尺寸，保持可见性、焦点与 Z 序。

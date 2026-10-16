@@ -46,7 +46,11 @@ pub fn run() {
         }
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(crate::window::os::browser_shortcut_plugin());
+
+    builder
         .manage(file_clipboard::FileClipboard::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             crate::app_logger::info("App", "收到单实例启动参数");
