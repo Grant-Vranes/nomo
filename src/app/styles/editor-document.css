@@ -1849,6 +1849,27 @@
   color: inherit;
 }
 
+/*
+ * 正文文本块的可见选区由行补色（selectionPaint）与桥接背景绘制，原生高亮常驻透明。
+ * WebKit 在选区覆盖的节点被装饰重绘后会丢失部分渲染对象的选中状态，选区移走后
+ * 原生高亮残留在旧位置（如三击过程中双击选中的分句）；透明后残留状态不再可见。
+ * 代码、图表和 HTML 组件不参与行补色，保留原生选区。
+ */
+.prosemirror-host
+  .ProseMirror[data-nomo-selection-root]
+  :is(p, li, h1, h2, h3, h4, h5, h6, td, th):not(
+    pre *,
+    figure *,
+    .code-card *,
+    .html-widget *
+  )::selection,
+.prosemirror-host
+  .ProseMirror[data-nomo-selection-root]
+  :is(p, li, h1, h2, h3, h4, h5, h6, td, th):not(pre *, figure *, .code-card *, .html-widget *)
+  :not(input):not(textarea)::selection {
+  background: transparent;
+}
+
 .prosemirror-host .ProseMirror input::selection,
 .prosemirror-host .ProseMirror textarea::selection {
   /* Native inputs own their selection; ProseMirror decorations cannot paint it. */

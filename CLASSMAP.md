@@ -102,6 +102,7 @@
 | Emoji 选择器与插入目标 | `src/app/components/EmojiPicker.svelte`, `src/app/services/emojiInsertion.ts` | `src/app/App.svelte`, `EditorToolbar.svelte`, `src/app/styles/editor-emoji.css` | 九类分类/虚拟网格、键盘选择、双栏/组合标签目标、修订校验与纯文本插入 |
 | 行内代码语法高亮装饰 | `src/lib/editor-core/plugins/codeHighlightDecorationPlugin.ts` | `InlineSourceCodec.ts`, `plugins/inlineCodeSelectionBridge.ts` | 派生代码范围的 token 着色与选区背景 |
 | 正文与行内对象选区背景 | `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | `src/lib/typography/selectionPaint.ts`, `src/app/styles/editor-document.css`, `plugins/typography.ts` | 修改正文/行内代码选区背景、原子对象及其外边距背景包裹；桥接样式与行绘制共享浏览器选区有效性，保留工具栏所需的模型选区 |
+| 三击选块 | `src/lib/editor-core/tripleClickSelection.ts` | `ProseMirrorEditorCore.ts`, `src/app/styles/editor-document.css` | 修改三击判定（按 event.detail 与系统连击一致）、选中目标块，或正文原生选区透明以遮蔽 WebKit 残留选中状态 |
 | 连续行选区绘制 | `src/lib/typography/selectionPaint.ts` | `dom.ts`, `src/lib/editor-core/plugins/inlineCodeSelectionBridge.ts` | 合并可见行矩形、按实际行内内容限制背景宽度，保持首帧行高与像素对齐；选区折叠、转移或原生输入聚焦时同步清理本编辑区补色，释放监听与共享 CSSOM；不改正文内容或导出快照 |
 | 旧语义块间距装饰（兼容） | `src/lib/editor-core/plugins/blockAlignment.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts` | 维护不入文档、不入 history 的旧 spacer 接口，双栏不再启用 |
 

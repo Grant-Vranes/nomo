@@ -121,6 +121,7 @@ import {
 } from './clipboardMarkdown';
 import { schema } from './schema';
 import { addTableRowAfter, addTableRowBefore, findTableContext } from './tableCommands';
+import { handleTripleClickByDetail } from './tripleClickSelection';
 import { updateTocBlocks } from '../toc/tocService';
 import type {
   EditorAnchorRect,
@@ -284,6 +285,8 @@ export class ProseMirrorEditorCore implements EditorCore {
           }
           return false;
         },
+        // 视图级属性先于插件运行：三击由此接管后，不再触发插件的按下/拖拽处理。
+        mousedown: (view, event) => handleTripleClickByDetail(view, event),
       },
       nodeViews: {
         table: (node, view) => new TableNodeView(node, view),
