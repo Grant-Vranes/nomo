@@ -162,14 +162,135 @@ type SidebarParams = {
   disabled?: boolean;
 };
 
+// 曲线与时长沿用原 GSAP 版本：power2.inOut，完整展开 280ms、收起 240ms；中途反向按剩余距离等比缩短。
+const SIDEBAR_EXPAND_MS = 280;
+const SIDEBAR_COLLAPSE_MS = 240;
+const SIDEBAR_EASING = 'cubic-bezier(0.45, 0, 0.55, 1)';
+
+// 正文定位锚点：各窗格 .document-layout 中决定文字水平位置的列。
+const CONTENT_ANCHOR_SELECTOR = ':scope > .prosemirror-host, :scope > .source-editor';
+
+type ContentShift = {
+  layout: HTMLElement;
+  /** 完全展开时需补偿的水平位移（px）= 正文在展开布局与铺满布局下相对编辑区左缘的位置差；位移随进度线性变化。 */
+  distance: number;
+};
+
+type SidebarSlide = {
+  animations: Animation[];
+  /** 侧栏动画，用于识别是否已被反向切换取代。 */
+  railAnimation: Animation;
+  /** 动画开始时测得的侧栏宽度（px），反向衔接时沿用。 */
+  railWidth: number;
+  shifts: ContentShift[];
+};
+
+/**
+ * 侧栏收展动画（推挤式）：收展期间网格列归零，侧栏浮于左侧、编辑区铺满，
+ * 两者用 Web Animations 同步平移 transform，编辑区左缘始终贴住侧栏右缘。
+ * 编辑区宽度只在动画起止各变一次，居中正文因此产生的位移由 .document-layout 的反向平移补偿，
+ * 使正文全程连续移动。全部为 transform 动画，由合成器执行，低电量模式下主线程被节流也不掉帧。
+ */
 export function workspaceSidebarMotion(node: HTMLElement, params: SidebarParams) {
   let currentParams = params;
-  let reducedMotion = false;
-  let tween: gsap.core.Tween | null = null;
-  const media = gsap.matchMedia();
+  let slide: SidebarSlide | null = null;
 
-  function finish() {
+  function getParts() {
+    const rail = node.querySelector<HTMLElement>(':scope > .rail');
+    const editor = node.querySelector<HTMLElement>(':scope > .editor-shell');
+    if (!rail || !editor || typeof rail.animate !== 'function') return null;
+    return { rail, editor };
+  }
+
+  // 撤销平移并回到静态布局；与删除 data-sidebar-animating 同步执行，避免中间帧错位。
+  function stopSlide() {
+    slide?.animations.forEach((animation) => animation.cancel());
+    slide = null;
     delete node.dataset.sidebarAnimating;
+    delete node.dataset.sidebarMeasureExpanded;
+  }
+
+  // 读取各窗格正文锚点相对编辑区左缘的水平位置；会强制同步布局，只在动画开始时调用。
+  function measureContentOffsets(editor: HTMLElement) {
+    const editorLeft = editor.getBoundingClientRect().left;
+    const offsets = new Map<HTMLElement, number>();
+    editor.querySelectorAll<HTMLElement>('.document-layout').forEach((layout) => {
+      const anchor = layout.querySelector<HTMLElement>(CONTENT_ANCHOR_SELECTOR) ?? layout;
+      const rect = anchor.getBoundingClientRect();
+      if (rect.width > 0) offsets.set(layout, rect.left - editorLeft);
+    });
+    return offsets;
+  }
+
+  // 展开进度：0 为收起，1 为展开。须在撤销旧动画前调用，读到的是侧栏当前动画帧的位置。
+  function readProgress(rail: HTMLElement, railWidth: number) {
+    const x = new DOMMatrixReadOnly(getComputedStyle(rail).transform).m41;
+    return Math.min(1, Math.max(0, 1 + x / railWidth));
+  }
+
+  /**
+   * 切到动画布局并测量侧栏宽度与正文补偿量。update 可能先于父级 focus-mode 类名生效，
+   * 所以不依赖当前布局：用 data-sidebar-measure-expanded 显式强制展开态测量，再切到铺满态测量。
+   * 共强制两次布局，仅在每次收展开始时发生。
+   */
+  function prepareLayout(rail: HTMLElement, editor: HTMLElement) {
+    node.dataset.sidebarMeasureExpanded = '';
+    const expandedOffsets = measureContentOffsets(editor);
+    delete node.dataset.sidebarMeasureExpanded;
+    node.dataset.sidebarAnimating = '';
+    const fullOffsets = measureContentOffsets(editor);
+    const shifts: ContentShift[] = [];
+    expandedOffsets.forEach((expandedOffset, layout) => {
+      const fullOffset = fullOffsets.get(layout);
+      if (fullOffset === undefined) return;
+      const distance = expandedOffset - fullOffset;
+      // 左对齐内容两种布局下位置一致，不必创建动画。
+      if (Math.abs(distance) >= 0.5) shifts.push({ layout, distance });
+    });
+    return { railWidth: rail.getBoundingClientRect().width, shifts };
+  }
+
+  function startSlide(expand: boolean) {
+    const parts = getParts();
+    if (!parts) {
+      stopSlide();
+      return;
+    }
+    const { rail, editor } = parts;
+    const previous = slide;
+    const { railWidth, shifts } = previous ?? prepareLayout(rail, editor);
+    if (railWidth <= 0) {
+      stopSlide();
+      return;
+    }
+    const from = previous ? readProgress(rail, railWidth) : expand ? 0 : 1;
+    const to = expand ? 1 : 0;
+    previous?.animations.forEach((animation) => animation.cancel());
+
+    const timing: KeyframeAnimationOptions = {
+      duration: (expand ? SIDEBAR_EXPAND_MS : SIDEBAR_COLLAPSE_MS) * Math.abs(to - from),
+      // 中途反向时已有速度，用 ease-out 衔接，避免再从静止加速。
+      easing: previous ? 'ease-out' : SIDEBAR_EASING,
+      fill: 'forwards',
+    };
+    const slideX = (element: HTMLElement, fromX: number, toX: number) =>
+      element.animate(
+        [{ transform: `translateX(${fromX}px)` }, { transform: `translateX(${toX}px)` }],
+        timing,
+      );
+
+    const railAnimation = slideX(rail, (from - 1) * railWidth, (to - 1) * railWidth);
+    const animations = [
+      railAnimation,
+      slideX(editor, from * railWidth, to * railWidth),
+      ...shifts.map(({ layout, distance }) => slideX(layout, from * distance, to * distance)),
+    ];
+    slide = { animations, railAnimation, railWidth, shifts };
+
+    railAnimation.onfinish = () => {
+      // 已被反向切换或撤销的旧动画不再处理。
+      if (slide?.railAnimation === railAnimation) stopSlide();
+    };
   }
 
   function sync(nextParams: SidebarParams, immediate = false) {
@@ -177,71 +298,30 @@ export function workspaceSidebarMotion(node: HTMLElement, params: SidebarParams)
     const disabledChanged = currentParams.disabled !== nextParams.disabled;
     currentParams = nextParams;
     node.toggleAttribute('data-sidebar-motion', !nextParams.disabled);
-    if (!tween) return;
 
-    const targetProgress = nextParams.focusMode ? 0 : 1;
     if (
       immediate ||
-      reducedMotion ||
+      prefersReducedMotion() ||
       nextParams.isResizing ||
       nextParams.disabled ||
       disabledChanged
     ) {
-      tween.pause().progress(targetProgress);
-      finish();
+      stopSlide();
       return;
     }
-
     if (!visibilityChanged) return;
-    if (tween.progress() === targetProgress) {
-      tween.pause();
-      finish();
-      return;
-    }
-
-    node.dataset.sidebarAnimating = '';
-    tween.timeScale(nextParams.focusMode ? 1.15 : 1);
-    if (nextParams.focusMode) tween.reverse();
-    else tween.play();
+    startSlide(!nextParams.focusMode);
   }
 
-  media.add(
-    {
-      motion: '(prefers-reduced-motion: no-preference)',
-      reduced: reducedMotionQuery,
-    },
-    (context) => {
-      reducedMotion = Boolean(context.conditions?.reduced);
-      // 同一进度驱动占位宽度和整块侧栏平移，反复切换时直接从当前位置反向播放。
-      tween = gsap.fromTo(
-        node,
-        { '--sidebar-reveal': 0 },
-        {
-          '--sidebar-reveal': 1,
-          duration: 0.28,
-          ease: 'power2.inOut',
-          paused: true,
-          onComplete: finish,
-          onReverseComplete: finish,
-        },
-      );
-      sync(currentParams, true);
-      return () => {
-        tween = null;
-        finish();
-      };
-    },
-    node,
-  );
+  sync(currentParams, true);
 
   return {
     update(nextParams: SidebarParams) {
       sync(nextParams);
     },
     destroy() {
-      media.revert();
+      stopSlide();
       delete node.dataset.sidebarMotion;
-      finish();
     },
   };
 }

@@ -100,21 +100,45 @@
   pointer-events: none;
 }
 
-/* GSAP 共用一个进度；侧栏保持实际宽度，避免收起时文件名和操作按钮被挤压。 */
-.app-layout .workspace[data-sidebar-motion] {
-  grid-template-columns:
-    minmax(0, calc(var(--md-editor-effective-sidebar-width) * var(--sidebar-reveal, 1)))
-    minmax(0, 1fr);
-}
-
+/* 侧栏保持实际宽度，收起时整体移出左侧，避免文件名和操作按钮被挤压。 */
 .workspace[data-sidebar-motion] > .rail {
   width: var(--md-editor-effective-sidebar-width);
-  transform: translateX(
-    calc(var(--md-editor-effective-sidebar-width) * (var(--sidebar-reveal, 1) - 1))
-  );
+  transform: translateX(0);
+}
+
+.app-layout.focus-mode .workspace[data-sidebar-motion] > .rail {
+  transform: translateX(-100%);
+}
+
+/*
+ * 收展期间网格列固定为 0：侧栏脱离网格浮于左侧，编辑区铺满整列，两者由
+ * workspaceSidebarMotion 以 Web Animations 同步平移（编辑区左缘始终贴住侧栏右缘）。
+ * 网格列只在动画起止各切换一次，逐帧只有合成层 transform；居中正文的位移由 .document-layout 平移补偿。
+ */
+.app-layout .workspace[data-sidebar-animating] {
+  grid-template-columns: 0px minmax(0, 1fr);
+}
+
+/*
+ * 收展开始时临时强制展开态列宽，供 workspaceSidebarMotion 测量正文位置；不依赖 focus-mode 类
+ * 是否已更新（action 的 update 可能先于父级类名生效），同一任务内即移除，不会渲染。
+ */
+.app-layout .workspace[data-sidebar-measure-expanded] {
+  grid-template-columns: minmax(0, var(--md-editor-effective-sidebar-width)) minmax(0, 1fr);
 }
 
 .workspace[data-sidebar-animating] > .rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  will-change: transform;
+}
+
+.workspace[data-sidebar-animating] > .editor-shell {
+  grid-column: 2;
+  grid-row: 1;
   will-change: transform;
 }
 

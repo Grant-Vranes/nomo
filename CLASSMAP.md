@@ -3026,7 +3026,7 @@
 **Owns:**
 - Svelte 过渡动画工具：`motionIn`、`transitionDuration`、`pulseOnChange`
 - 工具栏收展、侧边栏、标签/目录选中底板和模式切换的 GSAP 动画
-- 侧栏占位宽度与固定宽度滑动共用可反向播放进度，兼容拖拽、小窗与减少动态效果设置
+- 侧栏收展为推挤式：网格列只在起止各切换一次，期间侧栏与编辑区以 Web Animations 同步平移 transform（合成器执行），居中正文的重排位移由 .document-layout 反向平移补偿；兼容拖拽、小窗、中途反向与减少动态效果设置
 - 活动标签共用插值的几何通知，供工作区轮廓同步填充、描边和阴影
 - 统一的 fade/slide 动画配置与 reduced-motion 降级
 
