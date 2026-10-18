@@ -117,6 +117,10 @@ final class PreviewViewController: NSViewController, QLPreviewingController, WKN
             payload["lineHeight"] = try readSetting(settings, "lineHeight") as? Double ?? 1.75
             if let appearance = try readAppearancePreferences(settings) {
                 payload["appearance"] = appearance
+                if let themeId = appearance["colorThemeId"],
+                   let userTheme = readUserThemeSource(themeId) {
+                    payload["userTheme"] = userTheme
+                }
                 appearanceLogger.info(
                     "Loaded preferences: themeMode=\(appearance["themeMode"] ?? "<missing>", privacy: .public) colorThemeId=\(appearance["colorThemeId"] ?? "<missing>", privacy: .public) documentStyleId=\(appearance["documentStyleId"] ?? "<missing>", privacy: .public)"
                 )
@@ -237,7 +241,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController, WKN
     private func readAppearancePreferences(_ settings: [String: Any]) throws -> [String: String]? {
 
         var appearance: [String: String] = [:]
-        for key in ["themeMode", "colorThemeId", "documentStyleId"] {
+        let keys = [
+            "themeMode", "colorThemeId", "documentStyleId",
+            "uiFontFamily", "documentFontFamily", "monoFontFamily",
+        ]
+        for key in keys {
             guard
                 let record = settings[key] as? [String: Any],
                 let encodedValue = record["value_json"] as? String,
@@ -252,6 +260,30 @@ final class PreviewViewController: NSViewController, QLPreviewingController, WKN
             appearance[key] = value
         }
         return appearance.isEmpty ? nil : appearance
+    }
+
+    /// 读取当前用户主题的 JSON 源文，供内嵌渲染器注册后解析配色。
+    ///
+    /// 只接受与主应用一致的 `user-` 主题 ID 形状，避免把配置值当作路径片段穿越目录；
+    /// 文件缺失、过大或不可读时返回 `nil`，渲染器随后回退默认主题。
+    ///
+    /// - Parameter themeId: 配置中的 `colorThemeId`。
+    /// - Returns: UTF-8 源文；非用户主题或不可读时为 `nil`。
+    private func readUserThemeSource(_ themeId: String) -> String? {
+        let pattern = "^user-[a-z0-9]+(-[a-z0-9]+)*$"
+        guard themeId.count <= 64,
+              themeId.range(of: pattern, options: .regularExpression) != nil,
+              let themeUrl = try? resolveUserHomeDirectory()
+                  .appendingPathComponent("Library/Application Support/com.nomo.desktop/themes", isDirectory: true)
+                  .appendingPathComponent("\(themeId).json", isDirectory: false),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: themeUrl.path),
+              let size = attributes[.size] as? NSNumber,
+              size.intValue <= 256 * 1024,
+              let data = try? Data(contentsOf: themeUrl)
+        else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     /// 获取 App Sandbox 容器外的真实用户主目录。

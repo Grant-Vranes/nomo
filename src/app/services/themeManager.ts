@@ -2,12 +2,15 @@ import type {
   AppearancePreferences,
   ColorScheme,
   EditorThemeOptions,
+  FontPreferences,
   ThemeColorTokens,
   ThemeMode,
   ThemeStyleProfile,
   ThemeStyleTokens,
 } from '../../lib/theme/types';
 import { logError } from '../../lib/services/logger';
+import { applyFontPreferences, normalizeFontPreferences } from '../../lib/theme/fonts';
+import { requestTypographyGeometryChange } from '../../lib/typography/interaction';
 import { getDesktopSystemTheme, setDesktopIconTheme } from './desktopWindow';
 import {
   DEFAULT_COLOR_THEME_ID,
@@ -18,6 +21,7 @@ import {
   isRegisteredThemeId,
   themeRegistry,
 } from './themeRegistry';
+import { isUserThemeId, parseUserTheme, serializeUserTheme } from './userThemeDefinition';
 
 export const THEME_BOOT_SNAPSHOT_KEY = 'nomo.themeBootSnapshot.v2';
 export const LEGACY_THEME_BOOT_SNAPSHOT_KEY = 'nomo.themeBootSnapshot.v1';
@@ -28,17 +32,29 @@ const THEME_TRANSITION_CLASS = 'theme-transitioning';
 const THEME_TRANSITION_MS = 180;
 let themeTransitionTimer: number | null = null;
 
+/** 主题解析的完整输入：配色与文档样式选择，加上叠加在样式令牌上的字体覆盖。 */
+export type ThemeRuntimePreferences = AppearancePreferences & FontPreferences;
+
+/** 会改变正文排版几何的字体样式令牌；变化时须经排版交互通道写入以保留阅读锚点。 */
+const FONT_STYLE_TOKEN_NAMES = ['fontUi', 'fontDocument', 'fontMono'] as const;
+
 export interface ResolvedTheme {
   preferences: AppearancePreferences;
+  fonts: FontPreferences;
   effectiveScheme: ColorScheme;
   themeVersion: string;
   tokens: ThemeColorTokens;
   styleProfile: ThemeStyleProfile;
+  /** 已叠加字体覆盖的样式令牌，即实际写入根节点的值。 */
   styleTokens: ThemeStyleTokens;
   editorTheme: EditorThemeOptions;
 }
 
-export interface ThemeBootSnapshot {
+/**
+ * 首屏同步应用的主题快照。字体字段可缺省：早于字体覆盖写入的 v2 快照按“跟随主题”解析，
+ * 其 `styleTokens` 与当前解析结果仍一致，因此无需提升 schema 版本。
+ */
+export interface ThemeBootSnapshot extends Partial<FontPreferences> {
   schemaVersion: 2;
   themeVersion: string;
   themeMode: ThemeMode;
@@ -48,6 +64,11 @@ export interface ThemeBootSnapshot {
   tokens: ThemeColorTokens;
   styleProfile: ThemeStyleProfile;
   styleTokens: ThemeStyleTokens;
+  /**
+   * 当前配色为用户主题时的完整主题源文（紧凑 JSON）。首屏在读取主题目录前用它注册主题，
+   * 避免启动时先闪回默认主题；目录加载完成后以文件内容为准。
+   */
+  userThemeSource?: string;
 }
 
 interface LegacyThemeBootSnapshot {
@@ -129,10 +150,11 @@ function normalizeAppearancePreferences(
 }
 
 export function resolveTheme(
-  value: Partial<AppearancePreferences>,
+  value: Partial<ThemeRuntimePreferences>,
   systemScheme = getBrowserSystemScheme(),
 ): ResolvedTheme {
   const preferences = normalizeAppearancePreferences(value);
+  const fonts = normalizeFontPreferences(value);
   const effectiveScheme = resolveThemeMode(preferences.themeMode, systemScheme);
   const theme =
     themeRegistry.getTheme(preferences.colorThemeId) ??
@@ -150,11 +172,12 @@ export function resolveTheme(
       ...preferences,
       colorThemeId: theme.id,
     },
+    fonts,
     effectiveScheme,
     themeVersion: theme.version,
     tokens: variant.tokens,
     styleProfile: theme.styleProfile,
-    styleTokens: variant.styleTokens,
+    styleTokens: applyFontPreferences(variant.styleTokens, fonts),
     editorTheme: {
       name: effectiveScheme,
       colorThemeId: theme.id,
@@ -258,10 +281,19 @@ function scheduleThemeEffects(task: () => void) {
  * @returns 本次写入根节点的已解析主题，可供调用方写快照或广播 `effectiveScheme`。
  */
 export function applyThemeRuntime(
-  preferences: Partial<AppearancePreferences>,
+  preferences: Partial<ThemeRuntimePreferences>,
   options?: ApplyThemeRuntimeOptions,
 ) {
   const resolved = resolveTheme(preferences, options?.systemScheme);
+  // 字体变化会改变正文行宽与断行：先经排版交互通道写入，让编辑器保存阅读锚点并重排；
+  // 值未变化时该调用为空操作，随后 applyResolvedTheme 写入相同值也不会触发样式失效。
+  for (const tokenName of FONT_STYLE_TOKEN_NAMES) {
+    requestTypographyGeometryChange(
+      THEME_STYLE_TOKEN_CSS_VARIABLES[tokenName],
+      resolved.styleTokens[tokenName],
+      'font',
+    );
+  }
   applyResolvedTheme(resolved, {
     transition: false,
     nativeColorScheme: true,
@@ -325,12 +357,18 @@ export function writeThemeBootSnapshot(resolved: ResolvedTheme) {
 }
 
 function createThemeBootSnapshot(resolved: ResolvedTheme): ThemeBootSnapshot {
+  const colorThemeId = resolved.preferences.colorThemeId;
+  const userTheme = themeRegistry.isBuiltinTheme(colorThemeId)
+    ? undefined
+    : themeRegistry.getTheme(colorThemeId);
   return {
+    ...(userTheme ? { userThemeSource: serializeUserTheme(userTheme, false) } : {}),
     schemaVersion: THEME_BOOT_SNAPSHOT_SCHEMA_VERSION,
     themeVersion: resolved.themeVersion,
     themeMode: resolved.preferences.themeMode,
     colorThemeId: resolved.preferences.colorThemeId,
     documentStyleId: resolved.preferences.documentStyleId,
+    ...resolved.fonts,
     effectiveScheme: resolved.effectiveScheme,
     tokens: resolved.tokens,
     styleProfile: resolved.styleProfile,
@@ -343,6 +381,9 @@ export function readThemeBootSnapshot(): ThemeBootSnapshot | null {
     return null;
   }
   const currentSnapshot = parseThemeBootSnapshot(localStorage.getItem(THEME_BOOT_SNAPSHOT_KEY));
+  if (currentSnapshot) {
+    restoreSnapshotUserTheme(currentSnapshot);
+  }
   if (currentSnapshot && isValidThemeBootSnapshot(currentSnapshot)) {
     return currentSnapshot as ThemeBootSnapshot;
   }
@@ -545,6 +586,29 @@ function bindDesktopSystemThemeListeners(
     )
     .then(onReady)
     .catch(() => undefined);
+}
+
+/**
+ * 用快照内嵌的源文注册当前用户主题。已注册（目录已加载或之前已恢复）时不覆盖，
+ * 以免旧快照内容盖过更新后的主题文件；源文无效时静默放弃，快照随后按无效处理并回退默认。
+ */
+function restoreSnapshotUserTheme(snapshot: Partial<ThemeBootSnapshot>) {
+  const { colorThemeId, userThemeSource } = snapshot;
+  if (
+    !isUserThemeId(colorThemeId) ||
+    typeof userThemeSource !== 'string' ||
+    themeRegistry.getTheme(colorThemeId)
+  ) {
+    return;
+  }
+  try {
+    const theme = parseUserTheme(JSON.parse(userThemeSource));
+    if (theme.id === colorThemeId) {
+      themeRegistry.registerTheme(theme, { replace: true });
+    }
+  } catch {
+    // 快照被篡改或主题格式升级后不再兼容：交给快照校验回退默认主题。
+  }
 }
 
 function isValidThemeBootSnapshot(snapshot: Partial<ThemeBootSnapshot>) {

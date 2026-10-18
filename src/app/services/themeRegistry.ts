@@ -697,7 +697,11 @@ const classicDarkStyleTokens: ThemeStyleTokens = {
   shadowDialog: '0 8px 24px rgba(0, 0, 0, 0.4)',
 };
 
-function createVariant(
+/**
+ * 由完整令牌构造主题变体：预览色取自颜色令牌，Mermaid `base` 主题的变量同样从令牌派生，
+ * 保证图表与正文配色一致。
+ */
+export function createThemeVariant(
   tokens: ThemeColorTokens,
   styleTokens: ThemeStyleTokens,
   shikiTheme: string,
@@ -754,8 +758,8 @@ const BUILTIN_THEME_DEFINITIONS: ThemeDefinition[] = [
     },
     styleProfile: 'modern',
     variants: {
-      light: createVariant(defaultLightTokens, modernLightStyleTokens, 'github-light', 'default'),
-      dark: createVariant(defaultDarkTokens, modernDarkStyleTokens, 'github-dark', 'dark'),
+      light: createThemeVariant(defaultLightTokens, modernLightStyleTokens, 'github-light', 'default'),
+      dark: createThemeVariant(defaultDarkTokens, modernDarkStyleTokens, 'github-dark', 'dark'),
     },
   },
   {
@@ -771,13 +775,13 @@ const BUILTIN_THEME_DEFINITIONS: ThemeDefinition[] = [
     },
     styleProfile: 'paper',
     variants: {
-      light: createVariant(
+      light: createThemeVariant(
         amberLightTokens,
         paperLightStyleTokens,
         'gruvbox-light-medium',
         'base',
       ),
-      dark: createVariant(
+      dark: createThemeVariant(
         amberDarkTokens,
         paperDarkStyleTokens,
         'gruvbox-dark-medium',
@@ -798,13 +802,13 @@ const BUILTIN_THEME_DEFINITIONS: ThemeDefinition[] = [
     },
     styleProfile: 'classic',
     variants: {
-      light: createVariant(
+      light: createThemeVariant(
         classicGrayLightTokens,
         classicLightStyleTokens,
         'github-light',
         'base',
       ),
-      dark: createVariant(
+      dark: createThemeVariant(
         classicGrayDarkTokens,
         classicDarkStyleTokens,
         'github-dark',
@@ -825,8 +829,8 @@ const BUILTIN_THEME_DEFINITIONS: ThemeDefinition[] = [
     },
     styleProfile: 'classic',
     variants: {
-      light: createVariant(githubLightTokens, classicLightStyleTokens, 'github-light', 'base'),
-      dark: createVariant(githubDarkTokens, classicDarkStyleTokens, 'github-dark', 'base'),
+      light: createThemeVariant(githubLightTokens, classicLightStyleTokens, 'github-light', 'base'),
+      dark: createThemeVariant(githubDarkTokens, classicDarkStyleTokens, 'github-dark', 'base'),
     },
   },
 ];
@@ -863,13 +867,34 @@ const BUILTIN_DOCUMENT_STYLES: DocumentStyleDefinition[] = [
 export class ThemeRegistry {
   private readonly themes = new Map<string, ThemeDefinition>();
   private readonly documentStyles = new Map<string, DocumentStyleDefinition>();
+  /** 首次以非替换方式注册的主题视为内置主题，不能被替换或注销。 */
+  private readonly builtinThemeIds = new Set<string>();
 
-  registerTheme(theme: ThemeDefinition) {
+  /**
+   * 注册主题。
+   *
+   * @param options.replace 为 `true` 时允许覆盖同 ID 的非内置主题（用户主题重新导入或重新加载）。
+   * @throws 定义非法、ID 重复（未允许替换）或试图替换内置主题时抛出。
+   */
+  registerTheme(theme: ThemeDefinition, options?: { replace?: boolean }) {
     validateThemeDefinition(theme);
-    if (this.themes.has(theme.id)) {
+    if (this.themes.has(theme.id) && (!options?.replace || this.builtinThemeIds.has(theme.id))) {
       throw new Error(`主题 ID 重复：${theme.id}`);
     }
+    if (!options?.replace) {
+      this.builtinThemeIds.add(theme.id);
+    }
     this.themes.set(theme.id, theme);
+  }
+
+  /** 注销非内置主题；内置主题或未注册 ID 返回 `false`。 */
+  unregisterTheme(id: string) {
+    if (this.builtinThemeIds.has(id)) return false;
+    return this.themes.delete(id);
+  }
+
+  isBuiltinTheme(id: string) {
+    return this.builtinThemeIds.has(id);
   }
 
   registerDocumentStyle(style: DocumentStyleDefinition) {

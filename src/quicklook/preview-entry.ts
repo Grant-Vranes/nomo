@@ -51,7 +51,11 @@ function mountQuickLookPreview(payload: QuickLookPreviewPayload | null | undefin
     return;
   }
 
-  const resolvedTheme = applyQuickLookAppearance(payload.appearance);
+  const resolvedTheme = applyQuickLookAppearance(
+    payload.appearance,
+    document.documentElement,
+    payload.userTheme,
+  );
   const fontSize = Number.isFinite(payload.fontSize) ? payload.fontSize! : 16;
   const lineHeight = Number.isFinite(payload.lineHeight) ? payload.lineHeight! : 1.75;
   document.documentElement.style.setProperty(

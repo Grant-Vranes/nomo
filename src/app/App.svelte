@@ -212,7 +212,10 @@
     writeThemeBootSnapshot,
   } from './services/themeManager';
   import { getPlatformCapabilities } from './services/platform';
-  import type { ThemeMode } from '../lib/theme/types';
+  import type { FontPreferences, ThemeMode } from '../lib/theme/types';
+  import { FONT_PREFERENCE_KEYS, normalizeFontPreferences } from '../lib/theme/fonts';
+  import { isRegisteredThemeId } from './services/themeRegistry';
+  import { USER_THEMES_CHANGED_EVENT, reloadUserThemes } from './services/userThemes';
   import { applyInterfaceLanguagePreference, t, type EffectiveInterfaceLocale } from './i18n';
   import type { EmojiEntry } from '../lib/emoji/catalog';
   import { insertEmojiAtTarget, isEmojiTargetCurrent as validateEmojiTarget, type EmojiInsertionTarget } from './services/emojiInsertion';
@@ -344,6 +347,7 @@
   let themeMode: ThemeMode = bootAppearance.themeMode;
   let colorThemeId = bootAppearance.colorThemeId;
   let documentStyleId = bootAppearance.documentStyleId;
+  let fontPreferences: FontPreferences = normalizeFontPreferences(bootAppearance);
   let theme: 'light' | 'dark' = initialResolvedTheme.effectiveScheme;
   let currentEditorTheme: EditorThemeOptions = initialResolvedTheme.editorTheme;
   let interfaceLanguage: InterfaceLanguagePreference = DEFAULT_APP_PREFERENCES.interfaceLanguage;
@@ -5222,7 +5226,7 @@
   }
   refreshEditorViewportLayout = editorInteraction.refreshEditorViewportLayout;
   function getCurrentAppearancePreferences() {
-    return { themeMode, colorThemeId, documentStyleId };
+    return { themeMode, colorThemeId, documentStyleId, ...fontPreferences };
   }
 
   /**
@@ -5264,6 +5268,7 @@
     themeMode = resolved.preferences.themeMode;
     colorThemeId = resolved.preferences.colorThemeId;
     documentStyleId = resolved.preferences.documentStyleId;
+    fontPreferences = resolved.fonts;
     if (options?.writeBootSnapshot) {
       writeThemeBootSnapshot(resolved);
     }
@@ -6313,6 +6318,7 @@
     themeMode = preferences.themeMode;
     colorThemeId = preferences.colorThemeId;
     documentStyleId = preferences.documentStyleId;
+    fontPreferences = normalizeFontPreferences(preferences);
     await applyCurrentAppearance({
       transition: true,
       writeBootSnapshot: options.writeBootSnapshot,
@@ -6423,6 +6429,7 @@
       themeMode,
       colorThemeId,
       documentStyleId,
+      ...fontPreferences,
       interfaceLanguage,
       editorMode: preferredEditorMode,
       splitViewLayout,
@@ -6500,13 +6507,18 @@
     const appearanceOnly =
       patchKeys.length > 0 &&
       patchKeys.every(
-        (key) => key === 'themeMode' || key === 'colorThemeId' || key === 'documentStyleId',
+        (key) =>
+          key === 'themeMode' ||
+          key === 'colorThemeId' ||
+          key === 'documentStyleId' ||
+          (FONT_PREFERENCE_KEYS as readonly string[]).includes(key),
       );
 
     if (appearanceOnly) {
       themeMode = preferences.themeMode;
       colorThemeId = preferences.colorThemeId;
       documentStyleId = preferences.documentStyleId;
+      fontPreferences = normalizeFontPreferences(preferences);
       await applyCurrentAppearance({
         transition: true,
         systemScheme:
@@ -6557,9 +6569,20 @@
       return;
     }
 
+    // 设置窗导入主题后立即选中时，主题目录变更事件可能尚未处理完：先补加载，否则新 ID 会被归一化为默认主题。
+    const requestedThemeId = payload.patch.colorThemeId;
+    if (typeof requestedThemeId === 'string' && !isRegisteredThemeId(requestedThemeId)) {
+      await reloadUserThemes(desktopEnabled);
+    }
     await applyAppPreferencesPatch(payload.patch, {
       systemScheme: isColorScheme(payload.effectiveScheme) ? payload.effectiveScheme : undefined,
     });
+  }
+
+  /** 其他窗口增删或覆盖了用户主题：重新加载目录，并按当前偏好重绘（当前主题内容可能已变化）。 */
+  async function handleUserThemesChanged() {
+    await reloadUserThemes(desktopEnabled);
+    await applyCurrentAppearance({ writeBootSnapshot: true });
   }
 
   async function maybeOpenFirstRunSample(state: FirstRunSampleState) {
@@ -7537,6 +7560,7 @@
       settingsUnlisten,
       updateInstallRequestUnlisten,
       openFolderUnlisten,
+      userThemesUnlisten,
     ] = await Promise.all([
       listenDesktopMenuCommands((command) => {
         if (exitRequestId !== null) return;
@@ -7564,6 +7588,9 @@
         }
         openFolderWithBehavior(folderPath).catch(() => undefined);
       }).catch(() => null),
+      listen(USER_THEMES_CHANGED_EVENT, () => {
+        handleUserThemesChanged().catch(() => undefined);
+      }).catch(() => null),
     ]);
 
     desktopUnlisteners = [
@@ -7573,6 +7600,7 @@
       settingsUnlisten,
       updateInstallRequestUnlisten,
       openFolderUnlisten,
+      userThemesUnlisten,
     ].filter((value): value is () => void => Boolean(value));
   }
 

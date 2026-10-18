@@ -11,6 +11,7 @@ use std::{
 use tauri::{AppHandle, Manager, Runtime};
 
 pub(crate) mod commands;
+pub(crate) mod themes;
 
 const CONFIG_FILE_NAME: &str = "config.json";
 pub(crate) const DRAFTS_DIR_NAME: &str = "drafts";

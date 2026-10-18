@@ -54,7 +54,7 @@ SmartScreen or Gatekeeper may prompt on first launch; download from this project
 - **Rich content**: Tables, syntax highlighting, math formulas and Mermaid diagrams.
 - **File management**: Type to locate files in the explorer, work in multiple tabs and edit large TXT / JSON files in segments.
 - **Save and restore**: Optional autosave and local Markdown snapshots, plus workspace and reading position restoration.
-- **Comfortable writing**: Light and dark themes, optional fine typography and an always-on-top Markdown mini window.
+- **Comfortable writing**: Light and dark themes, [custom color themes and fonts](docs/custom-themes.md) (guide in Chinese), optional fine typography and an always-on-top Markdown mini window.
 - **Export and preview**: Export HTML / PDF / Word (.docx), with editable Word text and tables, formulas and diagrams as images, and Quick Look previews on macOS.
 
 See [release notes](https://github.com/nomo-md/nomo/releases) for version changes.

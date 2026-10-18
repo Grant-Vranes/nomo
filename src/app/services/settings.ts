@@ -15,6 +15,8 @@ import {
   type TypographyInteractionSnapshot,
 } from '../../lib/typography/interaction';
 import { DEFAULT_TYPOGRAPHY } from '../../lib/typography/types';
+import { EMPTY_FONT_PREFERENCES, normalizeFontPreferences } from '../../lib/theme/fonts';
+import { ensureUserThemesLoaded } from './userThemes';
 import type { MarkdownLintRuleSet } from '../../lib/markdown-lint/types';
 import type { AppearancePreferences, ColorScheme, ThemeMode } from '../../lib/theme/types';
 import {
@@ -81,6 +83,10 @@ export interface AppPreferences {
   themeMode: ThemeMode;
   colorThemeId: string;
   documentStyleId: string;
+  // 界面 / 正文 / 代码字体族覆盖；`''` 跟随主题，语义见 FontPreferences。
+  uiFontFamily: string;
+  documentFontFamily: string;
+  monoFontFamily: string;
   interfaceLanguage: InterfaceLanguagePreference;
   editorMode: EditorModePreference;
   splitViewLayout: SplitViewLayoutPreference;
@@ -165,6 +171,7 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   themeMode: 'system',
   colorThemeId: DEFAULT_COLOR_THEME_ID,
   documentStyleId: DEFAULT_DOCUMENT_STYLE_ID,
+  ...EMPTY_FONT_PREFERENCES,
   interfaceLanguage: DEFAULT_INTERFACE_LANGUAGE,
   editorMode: 'semantic',
   splitViewLayout: 'semantic-source',
@@ -275,13 +282,19 @@ export async function loadAppPreferences(
   desktopEnabled: boolean,
   nativeSettings?: SettingRecord[],
 ): Promise<AppPreferences> {
+  // 用户主题须在归一化前注册，否则其 ID 会被当作非法值修复为默认主题并写回配置；与读取配置并行。
+  const userThemesReady = ensureUserThemesLoaded(desktopEnabled);
   const settings = await perfAsync('settings', 'readNativeSettingsMap(prefs)', () =>
     readNativeSettingsMap(desktopEnabled, nativeSettings),
   );
+  await userThemesReady;
   const appearance = await migrateAppearancePreferences(desktopEnabled, settings);
 
   return normalizeAppPreferences({
     ...appearance,
+    uiFontFamily: parseSetting<unknown>(settings, 'uiFontFamily'),
+    documentFontFamily: parseSetting<unknown>(settings, 'documentFontFamily'),
+    monoFontFamily: parseSetting<unknown>(settings, 'monoFontFamily'),
     interfaceLanguage: parseSetting<unknown>(settings, 'interfaceLanguage'),
     editorMode: parseSetting<unknown>(settings, 'editorMode'),
     splitViewLayout: parseSetting<unknown>(settings, 'splitViewLayout'),
@@ -383,6 +396,7 @@ export function normalizeAppPreferences(
     documentStyleId: isRegisteredDocumentStyleId(value.documentStyleId)
       ? value.documentStyleId
       : DEFAULT_APP_PREFERENCES.documentStyleId,
+    ...normalizeFontPreferences(value),
     interfaceLanguage: isInterfaceLanguagePreference(value.interfaceLanguage)
       ? value.interfaceLanguage
       : DEFAULT_APP_PREFERENCES.interfaceLanguage,
@@ -636,6 +650,9 @@ function toPersistedPreferenceEntries(
     themeMode: preferences.themeMode,
     colorThemeId: preferences.colorThemeId,
     documentStyleId: preferences.documentStyleId,
+    uiFontFamily: preferences.uiFontFamily,
+    documentFontFamily: preferences.documentFontFamily,
+    monoFontFamily: preferences.monoFontFamily,
     interfaceLanguage: preferences.interfaceLanguage,
     editorMode: preferences.editorMode,
     splitViewLayout: preferences.splitViewLayout,

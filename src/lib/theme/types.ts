@@ -7,6 +7,17 @@ export interface AppearancePreferences {
   documentStyleId: string;
 }
 
+/**
+ * 用户字体覆盖，叠加在当前主题的 `fontUi` / `fontDocument` / `fontMono` 样式令牌之上。
+ *
+ * 每项是单个已归一化的字体族名；空字符串表示跟随主题。主题原有字体栈始终保留为回退。
+ */
+export interface FontPreferences {
+  uiFontFamily: string;
+  documentFontFamily: string;
+  monoFontFamily: string;
+}
+
 export type MermaidThemeName = 'default' | 'dark' | 'base';
 
 export interface MermaidThemeDefinition {

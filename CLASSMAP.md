@@ -182,10 +182,13 @@
 | 主题公共契约 | `src/lib/theme/types.ts` | `src/app/services/themeRegistry.ts`, `src/app/services/themeManager.ts`, 编辑器渲染器 | 颜色/样式令牌、样式档案、文档样式或渲染配置契约变更 |
 | 主题注册表 | `src/app/services/themeRegistry.ts` | `src/lib/theme/types.ts` | 内置配色、样式档案、文档样式、令牌映射或主题校验变更 |
 | 主题运行时 | `src/app/services/themeManager.ts` | `src/app/services/themeRegistry.ts`, `src/lib/editor-core/EditorCore.ts` | 主题解析、根颜色/样式令牌、启动快照、系统同步或运行时刷新变更 |
+| 用户自定义主题 | `src/app/services/userThemes.ts`, `src/app/services/userThemeDefinition.ts` | `src/app/services/themeRegistry.ts`, `src/app/services/themeManager.ts`, `src/app/services/settings.ts`, `src-tauri/src/config/themes.rs`, `src/app/components/SettingsWindow.svelte`, `src/quicklook/preview.ts` | 主题 JSON 格式与校验、按基础主题补齐令牌、目录加载与跨窗口重载、导入/删除/导出模板、启动快照内嵌与 Quick Look 读取 |
+| 自定义字体覆盖 | `src/lib/theme/fonts.ts` | `src/app/services/themeManager.ts`, `src/app/services/settings.ts`, `src/app/services/fontAvailability.ts`, `src/app/components/SettingsWindow.svelte` | 界面/正文/代码字体名校验、叠加到主题字体令牌、设置页本地字体探测与候选 |
 | 编辑器设置应用 | `src/app/services/editorSettingsController.ts` | `src/app/services/settings.ts` | 字体、行高和内容宽度同步到编辑器 |
 | 设置窗口 UI | `src/app/components/SettingsWindow.svelte` | `src/app/services/settings.ts`, `src/app/services/themeManager.ts`, `src/lib/desktop/tauriUpdater.ts` | 设置界面/主题预览/更新/文件关联/图片配置 |
 | Markdown 格式检查 | `src/app/services/markdownLintController.ts`, `src/app/workers/markdownLint.worker.ts` | `src/lib/markdown-lint/`, `src/app/components/StatusBar.svelte`, `src/app/App.svelte`, `vite.config.ts` | 修改检查调度、Worker 依赖解析、规则集、诊断状态、结果本地化或状态栏详情 |
 | Rust 配置管理 | `src-tauri/src/config/mod.rs` | `src-tauri/src/models.rs` | 应用配置 JSON 持久化、设置读写、启动前读取 |
+| 用户主题文件存储 | `src-tauri/src/config/themes.rs` | `src/lib/desktop/tauriStorage.ts` | `themes/<id>.json` 列出/保存/删除、外部主题读取与模板写出、ID/大小/数量上限 |
 
 ### 搜索与替换
 
@@ -1140,6 +1143,7 @@
 - `nomo-default`、`nomo-amber-paper`、`nomo-classic-gray`、`nomo-github` 的亮暗变体、样式档案和预览
 - `nomo-classic`、`nomo-modern` 文档样式稳定 ID
 - 必填颜色/样式令牌到 CSS 变量的映射与主题完整性校验
+- 内置与用户主题的区分：用户主题可替换、注销，内置主题不可
 
 **Does not own:**
 - 不拥有用户当前选择或 DOM 应用
@@ -1165,7 +1169,9 @@
 - 外观选择归一化、有效明暗解析和无效值回退
 - 根节点主题属性、样式档案及颜色/样式令牌应用
 - EditorCore、窗口图标和跨窗口运行时主题刷新
-- `ThemeBootSnapshot` v2 校验、v1 兼容读取、读写与首屏同步应用
+- `ThemeBootSnapshot` v2 校验、v1 兼容读取、读写与首屏同步应用（含可缺省的字体覆盖字段）
+- 字体覆盖与主题样式令牌合并，字体令牌变化经排版交互通道写入以触发正文重排
+- 当前为用户主题时在启动快照内嵌主题源文，首屏在读取主题目录前恢复
 - `matchMedia`、窗口聚焦和页面恢复时的系统主题同步
 
 **Does not own:**

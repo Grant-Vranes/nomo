@@ -308,9 +308,14 @@ describe('settings', () => {
       largeDocumentLimit: 5_000_000,
       defaultDiagramType: 'unknown' as never,
       defaultCodeBlockLanguage: 'ts script!' as never,
+      documentFontFamily: '  Songti   SC ',
+      monoFontFamily: 'Menlo; color: red',
     });
 
     expect(normalized.interfaceLanguage).toBe('zh-TW');
+    expect(normalized.uiFontFamily).toBe('');
+    expect(normalized.documentFontFamily).toBe('Songti SC');
+    expect(normalized.monoFontFamily).toBe('');
     expect(normalized.autoSaveDelayMs).toBe(500);
     expect(normalized.largeDocumentLimit).toBe(1_000_000);
     expect(normalized.defaultDiagramType).toBe(DEFAULT_APP_PREFERENCES.defaultDiagramType);

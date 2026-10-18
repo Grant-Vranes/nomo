@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setDesktopIconTheme } from './desktopWindow';
+import { subscribeTypographyInteraction } from '../../lib/typography/interaction';
 import {
   LEGACY_THEME_BOOT_SNAPSHOT_KEY,
   THEME_BOOT_SNAPSHOT_KEY,
@@ -196,6 +197,90 @@ describe('themeManager', () => {
 
     expect(editor.updateTheme).not.toHaveBeenCalled();
     expect(setDesktopIconTheme).not.toHaveBeenCalled();
+  });
+
+  it('merges font overrides into style tokens and boot snapshots', () => {
+    const resolved = resolveTheme(
+      {
+        themeMode: 'light',
+        colorThemeId: 'nomo-default',
+        documentStyleId: 'nomo-modern',
+        documentFontFamily: 'LXGW WenKai',
+        monoFontFamily: 'bad;font',
+      },
+      'light',
+    );
+    const base = resolveTheme({ themeMode: 'light' }, 'light');
+    expect(resolved.fonts).toEqual({
+      uiFontFamily: '',
+      documentFontFamily: 'LXGW WenKai',
+      monoFontFamily: '',
+    });
+    expect(resolved.styleTokens.fontDocument).toBe(
+      `"LXGW WenKai", ${base.styleTokens.fontDocument}`,
+    );
+    expect(resolved.styleTokens.fontMono).toBe(base.styleTokens.fontMono);
+
+    writeThemeBootSnapshot(resolved);
+    expect(readThemeBootSnapshot()?.documentFontFamily).toBe('LXGW WenKai');
+    bootstrapThemeFromSnapshot();
+    expect(document.documentElement.style.getPropertyValue('--md-editor-font-document')).toBe(
+      resolved.styleTokens.fontDocument,
+    );
+  });
+
+  it('accepts v2 boot snapshots written before font overrides existed', () => {
+    const resolved = resolveTheme({ themeMode: 'dark', colorThemeId: 'nomo-github' }, 'dark');
+    writeThemeBootSnapshot(resolved);
+    const stored = JSON.parse(localStorage.getItem(THEME_BOOT_SNAPSHOT_KEY) ?? '{}');
+    delete stored.uiFontFamily;
+    delete stored.documentFontFamily;
+    delete stored.monoFontFamily;
+    localStorage.setItem(THEME_BOOT_SNAPSHOT_KEY, JSON.stringify(stored));
+    expect(readThemeBootSnapshot()?.colorThemeId).toBe('nomo-github');
+  });
+
+  it('routes font changes through the typography geometry channel', () => {
+    const preferences = { themeMode: 'light' as const };
+    applyThemeRuntime(preferences, { systemScheme: 'light' });
+    const sources: (string | undefined)[] = [];
+    const subscription = subscribeTypographyInteraction(
+      (snapshot) => sources.push(snapshot.geometrySource),
+      { geometryParticipant: true },
+    );
+    sources.length = 0;
+    applyThemeRuntime({ ...preferences, colorThemeId: 'nomo-github' }, { systemScheme: 'light' });
+    expect(sources).toEqual([]);
+    applyThemeRuntime({ ...preferences, documentFontFamily: 'Georgia' }, { systemScheme: 'light' });
+    expect(sources).toContain('font');
+    expect(document.documentElement.style.getPropertyValue('--md-editor-font-document')).toMatch(
+      /^"Georgia", /,
+    );
+    subscription.destroy();
+  });
+
+  it('restores the active user theme from the boot snapshot before the theme directory loads', async () => {
+    const { parseUserTheme } = await import('./userThemeDefinition');
+    const { themeRegistry } = await import('./themeRegistry');
+    const theme = parseUserTheme({
+      schemaVersion: 1,
+      id: 'user-boot',
+      localizedNames: { 'en-US': 'Boot' },
+      variants: { dark: { tokens: { accent: '#ff8800' } } },
+    });
+    themeRegistry.registerTheme(theme, { replace: true });
+    writeThemeBootSnapshot(resolveTheme({ themeMode: 'dark', colorThemeId: 'user-boot' }, 'dark'));
+    themeRegistry.unregisterTheme('user-boot');
+
+    const snapshot = readThemeBootSnapshot();
+    expect(snapshot?.colorThemeId).toBe('user-boot');
+    expect(snapshot?.tokens.accent).toBe('#ff8800');
+    themeRegistry.unregisterTheme('user-boot');
+
+    const stored = JSON.parse(localStorage.getItem(THEME_BOOT_SNAPSHOT_KEY) ?? '{}');
+    stored.userThemeSource = '{"broken"';
+    localStorage.setItem(THEME_BOOT_SNAPSHOT_KEY, JSON.stringify(stored));
+    expect(readThemeBootSnapshot()).toBeNull();
   });
 
   it('falls back for invalid theme and document style identifiers', () => {

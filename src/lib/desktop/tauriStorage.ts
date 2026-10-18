@@ -608,6 +608,52 @@ export async function deleteWorkspaceDraft(draftId: string): Promise<void> {
   await invoke('delete_workspace_draft', { draftId });
 }
 
+export interface UserThemeFile {
+  /** 文件名去掉 `.json` 后的主题 ID，已由原生侧校验为 `user-` 前缀。 */
+  id: string;
+  /** 未解析的 JSON 原文；结构校验由前端主题注册表完成。 */
+  content: string;
+}
+
+export async function listUserThemeFiles(): Promise<UserThemeFile[]> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<UserThemeFile[]>('list_user_themes');
+}
+
+/** 弹出文件选择框并读取所选主题 JSON 原文；用户取消时返回 `null`。 */
+export async function pickUserThemeSource(): Promise<string | null> {
+  const path = await pickPathWithDialog('Nomo Theme', ['json']);
+  if (!path) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<string>('read_user_theme_source', { path });
+}
+
+export async function saveUserThemeFile(id: string, content: string): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('save_user_theme', { id, content });
+}
+
+export async function deleteUserThemeFile(id: string): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('delete_user_theme', { id });
+}
+
+/** 弹出保存框并写出主题模板；用户取消时返回 `false`。 */
+export async function saveUserThemeTemplateWithDialog(
+  suggestedFileName: string,
+  content: string,
+): Promise<boolean> {
+  const { save } = await import('@tauri-apps/plugin-dialog');
+  const path = await save({
+    defaultPath: suggestedFileName,
+    filters: [{ name: 'Nomo Theme', extensions: ['json'] }],
+  });
+  if (!path) return false;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('write_user_theme_template', { path, content });
+  return true;
+}
+
 export async function listenDesktopOpenFolder(
   handler: (folderPath: string, windowLabel?: string) => void,
 ): Promise<UnlistenFn> {

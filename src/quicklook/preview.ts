@@ -12,8 +12,13 @@ import {
   type MermaidFullscreenBinding,
 } from '../lib/services/mermaidDiagramView';
 import type { DiagramRenderer } from '../lib/services/render';
-import type { AppearancePreferences, MermaidThemeDefinition } from '../lib/theme/types';
-import { applyResolvedTheme, resolveTheme } from '../app/services/themeManager';
+import type { MermaidThemeDefinition } from '../lib/theme/types';
+import {
+  applyResolvedTheme,
+  resolveTheme,
+  type ThemeRuntimePreferences,
+} from '../app/services/themeManager';
+import { isUserThemeId, registerUserThemeSource } from '../app/services/userThemeDefinition';
 
 /** Quick Look 渲染器可选的文件上下文，用于标题展示和相对资源解析。 */
 export interface QuickLookPreviewOptions {
@@ -28,7 +33,9 @@ export interface QuickLookPreviewPayload extends QuickLookPreviewOptions {
   /** 待渲染的完整 Markdown UTF-8 文本；允许空字符串。 */
   markdown: string;
   /** Nomo 原生配置中的外观偏好；配置不可读时缺失并回退到系统明暗模式。 */
-  appearance?: Partial<AppearancePreferences>;
+  appearance?: Partial<ThemeRuntimePreferences>;
+  /** 当前配色为用户主题时，原生侧从 `themes/<id>.json` 读取的源文；不可读时缺失并回退默认主题。 */
+  userTheme?: string;
   typography?: TypographyOptions;
   fontSize?: number;
   lineHeight?: number;
@@ -120,12 +127,21 @@ type QuickLookBlockState = {
  *
  * @param appearance 主应用配置中的主题模式、颜色主题和文档样式；允许缺失。
  * @param root 接收主题 dataset 与 CSS 变量的文档根节点；默认使用当前页面根节点。
+ * @param userThemeSource 当前用户主题的 JSON 源文；先注册再解析，无效时按默认主题回退。
  * @returns 已应用到根节点的完整解析主题，包含 Mermaid 对应主题配置。
  */
 export function applyQuickLookAppearance(
-  appearance: Partial<AppearancePreferences> | undefined,
+  appearance: Partial<ThemeRuntimePreferences> | undefined,
   root: HTMLElement = document.documentElement,
+  userThemeSource?: string,
 ) {
+  if (typeof userThemeSource === 'string' && isUserThemeId(appearance?.colorThemeId)) {
+    try {
+      registerUserThemeSource(userThemeSource);
+    } catch (error) {
+      console.warn('Quick Look 用户主题无效，回退默认主题', error);
+    }
+  }
   const resolved = resolveTheme(appearance ?? {});
   return applyResolvedTheme(resolved, { root });
 }

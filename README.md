@@ -54,7 +54,7 @@ brew install --cask nomo
 - **丰富内容**：支持表格、代码高亮、数学公式与 Mermaid 图表。
 - **文件管理**：文件树键入定位、多标签，以及 TXT / JSON 大文件分段编辑。
 - **保存与恢复**：可启用自动保存和 Markdown 本地快照，恢复工作区与阅读位置。
-- **舒适写作**：浅深色主题、可手动开启的精细排版，以及可置顶的 Markdown 小窗。
+- **舒适写作**：浅深色主题、[自定义配色主题与字体](docs/custom-themes.md)、可手动开启的精细排版，以及可置顶的 Markdown 小窗。
 - **导出与预览**：导出 HTML / PDF / Word（.docx），Word 正文和表格可编辑，公式与图表转为图片；macOS 支持 Quick Look 快速预览。
 
 版本变化请查看[更新记录](https://github.com/nomo-md/nomo/releases)。

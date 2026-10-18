@@ -56,11 +56,35 @@
   } from '../services/themeManager';
   import {
     CLASSIC_DOCUMENT_STYLE_ID,
+    DEFAULT_COLOR_THEME_ID,
     DEFAULT_DOCUMENT_STYLE_ID,
     getThemeDisplayName,
     themeRegistry,
   } from '../services/themeRegistry';
-  import type { ColorScheme, ThemeMode } from '../../lib/theme/types';
+  import {
+    USER_THEMES_CHANGED_EVENT,
+    deleteUserTheme,
+    ensureUserThemesLoaded,
+    importUserThemeSource,
+    type UserThemeLoadFailure,
+  } from '../services/userThemes';
+  import { serializeUserTheme } from '../services/userThemeDefinition';
+  import {
+    pickUserThemeSource,
+    saveUserThemeTemplateWithDialog,
+  } from '../../lib/desktop/tauriStorage';
+  import type {
+    ColorScheme,
+    FontPreferences,
+    ThemeDefinition,
+    ThemeMode,
+  } from '../../lib/theme/types';
+  import {
+    FONT_PREFERENCE_KEYS,
+    isValidFontFamilyInput,
+    normalizeFontFamilyName,
+  } from '../../lib/theme/fonts';
+  import { getInstalledFontSuggestions, isFontFamilyAvailable } from '../services/fontAvailability';
   import { createPerfTimer, logToTerminal } from '../../lib/services/logger';
   import {
     INTERFACE_LANGUAGE_OPTIONS,
@@ -134,13 +158,52 @@
   let lastPersistedSettings: AppPreferences = { ...DEFAULT_APP_PREFERENCES };
   let effectiveSystemScheme: ColorScheme =
     document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-  const availableThemes = themeRegistry.listThemes();
+  let availableThemes = themeRegistry.listThemes();
+  /** 主题目录中无法加载的文件；导入或删除对应 ID 后移除。 */
+  let userThemeFailures: UserThemeLoadFailure[] = [];
+  /** 最近一次导入、删除或导出失败的说明；下次操作成功时清空。 */
+  let userThemeError = '';
+  let userThemeBusy = false;
   let interfaceLocale: EffectiveInterfaceLocale = applyInterfaceLanguagePreference(
     draftSettings.interfaceLanguage,
   );
   $: categoryTitles = createCategoryTitles(interfaceLocale);
   let loaded = false;
   let quickInsertTriggerInvalid = false;
+  type FontPreferenceKey = keyof FontPreferences;
+  const fontSettingRows: {
+    key: FontPreferenceKey;
+    mono: boolean;
+    label: () => string;
+    description: () => string;
+  }[] = [
+    {
+      key: 'uiFontFamily',
+      mono: false,
+      label: () => t.uiFontFamily(),
+      description: () => t.uiFontFamilyDescription(),
+    },
+    {
+      key: 'documentFontFamily',
+      mono: false,
+      label: () => t.documentFontFamily(),
+      description: () => t.documentFontFamilyDescription(),
+    },
+    {
+      key: 'monoFontFamily',
+      mono: true,
+      label: () => t.monoFontFamily(),
+      description: () => t.monoFontFamilyDescription(),
+    },
+  ];
+  let fontInputInvalid: Partial<Record<FontPreferenceKey, boolean>> = {};
+  let fontSuggestions: { text: string[]; mono: string[] } | null = null;
+  // 字体探测只在外观页可见时进行；候选列表首次探测后由 fontAvailability 缓存。
+  $: if (activeCategory === 'appearance' && !fontSuggestions) {
+    fontSuggestions = getInstalledFontSuggestions();
+  }
+  $: missingFontKeys =
+    activeCategory === 'appearance' ? findMissingFontKeys(draftSettings) : new Set<string>();
   let statusMessage = '';
   let statusTimer: number | null = null;
   let autoSaveTimer: number | null = null;
@@ -353,6 +416,9 @@
     const timer = createPerfTimer('SettingsWindow', 'loadPreferences');
     draftSettings = await loadAppPreferences(desktopEnabled);
     if (!systemThemeSyncActive) return;
+    // loadAppPreferences 已等待同一个加载 Promise，这里只取结果，不会再次读取目录。
+    userThemeFailures = (await ensureUserThemesLoaded(desktopEnabled)).failures;
+    availableThemes = themeRegistry.listThemes();
     lastPersistedSettings = draftSettings;
     const initialSystemScheme = await readEffectiveSystemScheme(desktopEnabled);
     if (!systemThemeSyncActive) return;
@@ -582,7 +648,13 @@
     effectiveSystemScheme = nextSystemScheme;
   }
 
+  /** 外观键：保存失败时整体回滚，并在保存后刷新启动快照。 */
   function isAppearancePreferenceKey(key: AppPreferenceKey) {
+    return isThemeSelectionKey(key) || (FONT_PREFERENCE_KEYS as readonly string[]).includes(key);
+  }
+
+  /** 只有配色选择会影响 Dock / 窗口图标。 */
+  function isThemeSelectionKey(key: AppPreferenceKey) {
     return key === 'themeMode' || key === 'colorThemeId' || key === 'documentStyleId';
   }
 
@@ -886,7 +958,7 @@
     applyThemeRuntime(nextSettings, {
       systemScheme: effectiveSystemScheme,
       desktopEnabled,
-      syncDesktopIcons: appearanceChanged,
+      syncDesktopIcons: changedKeys.some(isThemeSelectionKey),
     });
     interfaceLocale = applyInterfaceLanguagePreference(nextSettings.interfaceLanguage);
     applyTypographySettings(nextSettings.fontSize, nextSettings.lineHeight, nextSettings);
@@ -954,6 +1026,129 @@
 
   function setColorTheme(colorThemeId: string) {
     updateDraft({ colorThemeId });
+  }
+
+  async function emitUserThemesChanged() {
+    if (!desktopEnabled) return;
+    const { emit } = await import('@tauri-apps/api/event');
+    await emit(USER_THEMES_CHANGED_EVENT).catch(() => undefined);
+  }
+
+  function describeError(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  /** 选择主题 JSON → 校验 → 保存到主题目录 → 通知其他窗口 → 选中该主题。 */
+  async function importUserTheme() {
+    if (userThemeBusy) return;
+    userThemeBusy = true;
+    try {
+      const source = await pickUserThemeSource();
+      if (source === null) return;
+      const theme = await importUserThemeSource(source);
+      userThemeError = '';
+      userThemeFailures = userThemeFailures.filter((failure) => failure.id !== theme.id);
+      availableThemes = themeRegistry.listThemes();
+      // 先广播目录变化再切换主题；主窗即使先收到设置补丁也会补加载目录。
+      await emitUserThemesChanged();
+      setColorTheme(theme.id);
+      showStatus(t.userThemeImported({ name: getThemeDisplayName(theme, interfaceLocale) }));
+    } catch (error) {
+      userThemeError = t.userThemeImportFailed({ error: describeError(error) });
+      logToTerminal('error', 'SettingsWindow', '导入用户主题失败', { error: describeError(error) });
+    } finally {
+      userThemeBusy = false;
+    }
+  }
+
+  /**
+   * 删除主题目录中的文件。当前正在使用的主题会先切回默认主题，避免其他窗口在注销后
+   * 用一个不存在的 ID 归一化。
+   *
+   * @param id 用户主题 ID；也用于删除无法加载的文件。
+   * @param name 确认框中显示的名称。
+   */
+  async function removeUserTheme(id: string, name: string) {
+    if (userThemeBusy) return;
+    userThemeBusy = true;
+    try {
+      const { ask } = await import('@tauri-apps/plugin-dialog');
+      const confirmed = await ask(t.deleteUserThemeConfirm({ name }), {
+        title: t.deleteUserTheme(),
+        kind: 'warning',
+      });
+      if (!confirmed) return;
+      if (draftSettings.colorThemeId === id) {
+        setColorTheme(DEFAULT_COLOR_THEME_ID);
+      }
+      await deleteUserTheme(id);
+      userThemeError = '';
+      userThemeFailures = userThemeFailures.filter((failure) => failure.id !== id);
+      availableThemes = themeRegistry.listThemes();
+      await emitUserThemesChanged();
+    } catch (error) {
+      userThemeError = t.userThemeDeleteFailed({ error: describeError(error) });
+      logToTerminal('error', 'SettingsWindow', '删除用户主题失败', { error: describeError(error) });
+    } finally {
+      userThemeBusy = false;
+    }
+  }
+
+  /** 把当前配色导出为包含全部令牌的模板，供用户修改后重新导入。 */
+  async function exportThemeTemplate() {
+    const theme = themeRegistry.getTheme(draftSettings.colorThemeId);
+    if (!theme || userThemeBusy) return;
+    userThemeBusy = true;
+    try {
+      const content = serializeUserTheme(theme);
+      const templateId = (JSON.parse(content) as { id: string }).id;
+      if (await saveUserThemeTemplateWithDialog(`${templateId}.json`, content)) {
+        userThemeError = '';
+        showStatus(t.userThemeTemplateExported());
+      }
+    } catch (error) {
+      userThemeError = t.userThemeExportFailed({ error: describeError(error) });
+      logToTerminal('error', 'SettingsWindow', '导出主题模板失败', { error: describeError(error) });
+    } finally {
+      userThemeBusy = false;
+    }
+  }
+
+  function isUserTheme(theme: ThemeDefinition) {
+    return !themeRegistry.isBuiltinTheme(theme.id);
+  }
+
+  function findMissingFontKeys(settings: AppPreferences) {
+    return new Set<string>(
+      FONT_PREFERENCE_KEYS.filter(
+        (key) => settings[key] && isFontFamilyAvailable(settings[key]) === false,
+      ),
+    );
+  }
+
+  /**
+   * 逐字输入只做校验不应用：每次应用都会让全部窗口重排正文。输入值与候选完全一致
+   * （从联想列表选中或打出完整名称）时立即应用，其余情况等回车或失焦触发 change。
+   */
+  function handleFontFamilyInput(key: FontPreferenceKey, event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    fontInputInvalid = { ...fontInputInvalid, [key]: !isValidFontFamilyInput(value) };
+    const suggestions = key === 'monoFontFamily' ? fontSuggestions?.mono : fontSuggestions?.text;
+    if (suggestions?.includes(value)) {
+      commitFontFamily(key, value);
+    }
+  }
+
+  function commitFontFamily(key: FontPreferenceKey, value: string) {
+    if (!isValidFontFamilyInput(value)) {
+      fontInputInvalid = { ...fontInputInvalid, [key]: true };
+      return;
+    }
+    fontInputInvalid = { ...fontInputInvalid, [key]: false };
+    const name = normalizeFontFamilyName(value);
+    if (name !== draftSettings[key]) {
+      updateDraft({ [key]: name });
+    }
   }
 
   function setInterfaceLanguage(interfaceLanguage: InterfaceLanguagePreference) {
@@ -1994,35 +2189,154 @@
               <div class="theme-picker">
                 <span class="setting-label">{t.colorTheme()}</span>
                 <div class="theme-card-grid" role="group" aria-label={t.colorTheme()}>
-                  {#each availableThemes as colorTheme}
-                    <button
-                      type="button"
-                      class="theme-card"
-                      class:active={draftSettings.colorThemeId === colorTheme.id}
-                      aria-pressed={draftSettings.colorThemeId === colorTheme.id}
-                      aria-label={getThemeDisplayName(colorTheme, interfaceLocale)}
-                      on:click={() => setColorTheme(colorTheme.id)}
-                    >
-                      <span class="theme-card-preview" aria-hidden="true">
-                        <span
-                          class="theme-card-variant"
-                          style={`--preview-bg: ${colorTheme.variants.light.preview.background}; --preview-surface: ${colorTheme.variants.light.preview.surface}; --preview-accent: ${colorTheme.variants.light.preview.accent}; --preview-fg: ${colorTheme.variants.light.preview.foreground}; --preview-radius: ${colorTheme.variants.light.styleTokens.radiusMd}; --preview-border-width: ${colorTheme.variants.light.styleTokens.borderWidth}; --preview-shadow: ${colorTheme.variants.light.styleTokens.shadowRaised}; --preview-space: ${colorTheme.variants.light.styleTokens.spaceMd}`}
-                        ></span>
-                        <span
-                          class="theme-card-variant"
-                          style={`--preview-bg: ${colorTheme.variants.dark.preview.background}; --preview-surface: ${colorTheme.variants.dark.preview.surface}; --preview-accent: ${colorTheme.variants.dark.preview.accent}; --preview-fg: ${colorTheme.variants.dark.preview.foreground}; --preview-radius: ${colorTheme.variants.dark.styleTokens.radiusMd}; --preview-border-width: ${colorTheme.variants.dark.styleTokens.borderWidth}; --preview-shadow: ${colorTheme.variants.dark.styleTokens.shadowRaised}; --preview-space: ${colorTheme.variants.dark.styleTokens.spaceMd}`}
-                        ></span>
-                      </span>
-                      <span class="theme-card-footer">
-                        <span>{getThemeDisplayName(colorTheme, interfaceLocale)}</span>
-                        {#if draftSettings.colorThemeId === colorTheme.id}
-                          <span class="theme-card-check" aria-hidden="true">✓</span>
-                        {/if}
-                      </span>
-                    </button>
+                  {#each availableThemes as colorTheme (colorTheme.id)}
+                    <div class="theme-card-item">
+                      <button
+                        type="button"
+                        class="theme-card"
+                        class:active={draftSettings.colorThemeId === colorTheme.id}
+                        aria-pressed={draftSettings.colorThemeId === colorTheme.id}
+                        aria-label={getThemeDisplayName(colorTheme, interfaceLocale)}
+                        on:click={() => setColorTheme(colorTheme.id)}
+                      >
+                        <span class="theme-card-preview" aria-hidden="true">
+                          <span
+                            class="theme-card-variant"
+                            style={`--preview-bg: ${colorTheme.variants.light.preview.background}; --preview-surface: ${colorTheme.variants.light.preview.surface}; --preview-accent: ${colorTheme.variants.light.preview.accent}; --preview-fg: ${colorTheme.variants.light.preview.foreground}; --preview-radius: ${colorTheme.variants.light.styleTokens.radiusMd}; --preview-border-width: ${colorTheme.variants.light.styleTokens.borderWidth}; --preview-shadow: ${colorTheme.variants.light.styleTokens.shadowRaised}; --preview-space: ${colorTheme.variants.light.styleTokens.spaceMd}`}
+                          ></span>
+                          <span
+                            class="theme-card-variant"
+                            style={`--preview-bg: ${colorTheme.variants.dark.preview.background}; --preview-surface: ${colorTheme.variants.dark.preview.surface}; --preview-accent: ${colorTheme.variants.dark.preview.accent}; --preview-fg: ${colorTheme.variants.dark.preview.foreground}; --preview-radius: ${colorTheme.variants.dark.styleTokens.radiusMd}; --preview-border-width: ${colorTheme.variants.dark.styleTokens.borderWidth}; --preview-shadow: ${colorTheme.variants.dark.styleTokens.shadowRaised}; --preview-space: ${colorTheme.variants.dark.styleTokens.spaceMd}`}
+                          ></span>
+                        </span>
+                        <span class="theme-card-footer">
+                          <span>{getThemeDisplayName(colorTheme, interfaceLocale)}</span>
+                          {#if draftSettings.colorThemeId === colorTheme.id}
+                            <span class="theme-card-check" aria-hidden="true">✓</span>
+                          {/if}
+                        </span>
+                      </button>
+                      {#if isUserTheme(colorTheme)}
+                        <button
+                          type="button"
+                          class="theme-card-delete"
+                          title={t.deleteUserTheme()}
+                          aria-label={`${t.deleteUserTheme()}: ${getThemeDisplayName(colorTheme, interfaceLocale)}`}
+                          disabled={userThemeBusy}
+                          on:click={() =>
+                            removeUserTheme(
+                              colorTheme.id,
+                              getThemeDisplayName(colorTheme, interfaceLocale),
+                            )}
+                        >
+                          <X size={14} />
+                        </button>
+                      {/if}
+                    </div>
                   {/each}
                 </div>
+                {#if desktopEnabled}
+                  <div class="user-theme-actions">
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      disabled={userThemeBusy}
+                      on:click={importUserTheme}>{t.importUserTheme()}</button
+                    >
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      disabled={userThemeBusy}
+                      on:click={exportThemeTemplate}>{t.exportThemeTemplate()}</button
+                    >
+                  </div>
+                {/if}
+                {#if userThemeError}
+                  <p class="user-theme-error" role="alert">{userThemeError}</p>
+                {/if}
+                {#if userThemeFailures.length > 0}
+                  <div class="user-theme-failures" role="status">
+                    <p>{t.userThemeLoadFailed()}</p>
+                    <ul>
+                      {#each userThemeFailures as failure (failure.id)}
+                        <li>
+                          <span><code>{failure.id || 'themes/'}</code> {failure.message}</span>
+                          {#if failure.id}
+                            <button
+                              type="button"
+                              class="link-button"
+                              disabled={userThemeBusy}
+                              on:click={() => removeUserTheme(failure.id, failure.id)}
+                              >{t.deleteUserTheme()}</button
+                            >
+                          {/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  </div>
+                {/if}
               </div>
+
+              <h2>{t.fonts()}</h2>
+              {#each fontSettingRows as row (row.key)}
+                {@const invalid = Boolean(fontInputInvalid[row.key])}
+                {@const missing = !invalid && missingFontKeys.has(row.key)}
+                <div class="setting-row">
+                  <div>
+                    <label for={row.key} class="setting-label">{row.label()}</label>
+                    <p id={`${row.key}Hint`}>{row.description()}</p>
+                    {#if invalid}
+                      <p id={`${row.key}Notice`} class="font-family-error" role="alert">
+                        {t.fontFamilyInvalid()}
+                      </p>
+                    {:else if missing}
+                      <p id={`${row.key}Notice`} class="font-family-warning" role="status">
+                        {t.fontFamilyMissing()}
+                      </p>
+                    {/if}
+                  </div>
+                  <div class="font-family-control">
+                    <input
+                      id={row.key}
+                      class="text-input font-family-input"
+                      class:mono={row.mono}
+                      type="text"
+                      list={row.mono ? 'monoFontSuggestions' : 'textFontSuggestions'}
+                      value={draftSettings[row.key]}
+                      placeholder={t.fontFamilyPlaceholder()}
+                      aria-invalid={invalid}
+                      aria-describedby={invalid || missing
+                        ? `${row.key}Hint ${row.key}Notice`
+                        : `${row.key}Hint`}
+                      autocomplete="off"
+                      spellcheck={false}
+                      on:input={(event) => handleFontFamilyInput(row.key, event)}
+                      on:change={(event) => commitFontFamily(row.key, event.currentTarget.value)}
+                    />
+                    {#if draftSettings[row.key]}
+                      <button
+                        type="button"
+                        class="font-family-reset"
+                        title={t.resetFontFamily()}
+                        aria-label={t.resetFontFamily()}
+                        on:click={() => commitFontFamily(row.key, '')}
+                      >
+                        <X size={14} />
+                      </button>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+              <datalist id="textFontSuggestions">
+                {#each fontSuggestions?.text ?? [] as name}
+                  <option value={name}></option>
+                {/each}
+              </datalist>
+              <datalist id="monoFontSuggestions">
+                {#each fontSuggestions?.mono ?? [] as name}
+                  <option value={name}></option>
+                {/each}
+              </datalist>
 
               <h2>{t.visualZoom()}</h2>
               <div class="setting-row">
@@ -3121,6 +3435,107 @@
     font-weight: 650;
   }
 
+  .theme-card-item {
+    position: relative;
+    display: grid;
+    min-width: 0;
+  }
+
+  .theme-card-delete {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: inline-grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--md-editor-border);
+    border-radius: var(--md-editor-radius-sm);
+    background: var(--md-editor-surface);
+    color: var(--md-editor-muted-fg);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .theme-card-item:hover .theme-card-delete,
+  .theme-card-delete:focus-visible {
+    opacity: 1;
+  }
+
+  .theme-card-delete:hover:not(:disabled) {
+    color: var(--md-editor-danger);
+  }
+
+  .user-theme-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--md-editor-space-sm);
+  }
+
+  .secondary-button {
+    height: var(--md-editor-control-height-sm);
+    padding: 0 12px;
+    border: 1px solid var(--md-editor-border);
+    border-radius: var(--md-editor-radius-sm);
+    background: var(--md-editor-surface);
+    color: var(--md-editor-fg);
+    font: inherit;
+    font-size: var(--md-editor-ui-font-size-sm);
+    cursor: pointer;
+  }
+
+  .secondary-button:hover:not(:disabled) {
+    background: var(--md-editor-hover-bg);
+  }
+
+  .secondary-button:disabled,
+  .theme-card-delete:disabled,
+  .link-button:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  .user-theme-failures p {
+    margin: 0;
+    color: var(--md-editor-muted-fg);
+    font-size: var(--md-editor-ui-font-size-sm);
+  }
+
+  .user-theme-error {
+    margin: 0;
+    color: var(--md-editor-danger);
+    font-size: var(--md-editor-ui-font-size-sm);
+  }
+
+  .user-theme-failures ul {
+    display: grid;
+    gap: 4px;
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--md-editor-warning);
+    font-size: var(--md-editor-ui-font-size-sm);
+  }
+
+  .user-theme-failures li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--md-editor-space-sm);
+  }
+
+  .link-button {
+    flex: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--md-editor-link-fg);
+    font: inherit;
+    cursor: pointer;
+  }
+
   .theme-card-check {
     width: 18px;
     height: 18px;
@@ -3312,6 +3727,60 @@
 
   .setting-row .quick-insert-error {
     color: var(--md-editor-danger, #d14343);
+  }
+
+  .setting-row .font-family-error {
+    color: var(--md-editor-danger);
+  }
+
+  .setting-row .font-family-warning {
+    color: var(--md-editor-warning);
+  }
+
+  .font-family-control {
+    position: relative;
+    width: 220px;
+    justify-self: end;
+  }
+
+  .text-input.font-family-input {
+    padding-right: 30px;
+  }
+
+  .text-input.font-family-input.mono {
+    font-family: var(--md-editor-font-mono);
+  }
+
+  .text-input.font-family-input:focus {
+    border-color: var(--md-editor-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-editor-accent) 15%, transparent);
+  }
+
+  .text-input.font-family-input[aria-invalid='true'] {
+    border-color: var(--md-editor-danger);
+  }
+
+  .font-family-reset {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--md-editor-radius-xs);
+    background: transparent;
+    color: var(--md-editor-muted-fg);
+    transform: translateY(-50%);
+    cursor: pointer;
+  }
+
+  .font-family-reset:hover {
+    background: var(--md-editor-hover-bg);
+    color: var(--md-editor-fg);
   }
 
   .action-button {
