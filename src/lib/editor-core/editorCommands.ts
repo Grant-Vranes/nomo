@@ -90,7 +90,9 @@ import { insertCallout, toggleCalloutType, unwrapCallout } from './callout/callo
 import type { EditorCommand, SetMarkdownOptions } from './types';
 import { createTocList } from '../toc/tocService';
 import { ensureFrontMatter } from '../markdown/frontMatter';
-import { planOutlineSectionMove } from '../outline/outlineReorder';
+import { planOutlineSectionMove, reorderOutlineSection } from '../outline/outlineReorder';
+import { extractOutline } from '../outline/outlineService';
+import { tryParseMarkdown } from './markdown';
 
 type MarkdownSetter = (markdown: string, options?: SetMarkdownOptions) => void;
 
@@ -1155,7 +1157,7 @@ export function executeEditorCommand(
     case 'redo':
       return run(redo);
     case 'moveOutlineSection':
-      return moveOutlineSection(view, command);
+      return moveOutlineSection(view, command, markdown);
     case 'scrollToHeading':
       return scrollToHeading(view, command.headingIndex);
     default:
@@ -1163,22 +1165,34 @@ export function executeEditorCommand(
   }
 }
 
+/**
+ * 按大纲索引移动章节子树。大纲索引覆盖全部标题；顶层节点重排只适用于所有标题都在顶层的文档，
+ * 列表、引用等容器内的标题会让顶层标题表与大纲索引错位，此时改用 Markdown 层重排结果。
+ */
 function moveOutlineSection(
   view: EditorView,
   command: Extract<EditorCommand, { type: 'moveOutlineSection' }>,
+  markdown: string,
 ): boolean {
   const { state } = view;
   const topLevelNodes: Array<{ node: PmNode; pos: number }> = [];
   const headings: Array<{ childIndex: number; level: number }> = [];
+  let hasNestedHeading = false;
   let pos = 0;
   for (let childIndex = 0; childIndex < state.doc.childCount; childIndex += 1) {
     const node = state.doc.child(childIndex);
     topLevelNodes.push({ node, pos });
     if (node.type === state.schema.nodes.heading) {
       headings.push({ childIndex, level: Number(node.attrs.level) });
+    } else if (!hasNestedHeading) {
+      node.descendants((child) => {
+        if (child.type === state.schema.nodes.heading) hasNestedHeading = true;
+        return !hasNestedHeading;
+      });
     }
     pos += node.nodeSize;
   }
+  if (hasNestedHeading) return moveOutlineSectionByMarkdown(view, command, markdown);
 
   const planResult = planOutlineSectionMove(headings, command);
   if (!planResult.ok) return false;
@@ -1210,6 +1224,36 @@ function moveOutlineSection(
   const mappedInsertionPos = insertionPos > from ? insertionPos - (to - from) : insertionPos;
   const tr = state.tr.delete(from, to).insert(mappedInsertionPos, Fragment.fromArray(movedNodes));
   tr.setSelection(TextSelection.near(tr.doc.resolve(mappedInsertionPos + 1)));
+  view.dispatch(tr.scrollIntoView());
+  return true;
+}
+
+/** 用与源码模式相同的行级重排结果替换整篇文档，保持为单个可撤销事务。 */
+function moveOutlineSectionByMarkdown(
+  view: EditorView,
+  command: Extract<EditorCommand, { type: 'moveOutlineSection' }>,
+  markdown: string,
+): boolean {
+  const result = reorderOutlineSection(markdown, extractOutline(markdown), command);
+  if (!result.ok) return false;
+  const nextDoc = tryParseMarkdown(result.markdown);
+  if (!nextDoc) return false;
+  const { state } = view;
+  const tr = state.tr.replaceWith(0, state.doc.content.size, nextDoc.content);
+  let headingIndex = 0;
+  let movedHeadingPos = -1;
+  tr.doc.descendants((node, nodePos) => {
+    if (movedHeadingPos >= 0) return false;
+    if (node.type !== state.schema.nodes.heading) return true;
+    if (headingIndex === result.movedHeadingIndex) movedHeadingPos = nodePos;
+    headingIndex += 1;
+    return false;
+  });
+  tr.setSelection(
+    movedHeadingPos >= 0
+      ? TextSelection.near(tr.doc.resolve(movedHeadingPos + 1))
+      : TextSelection.atStart(tr.doc),
+  );
   view.dispatch(tr.scrollIntoView());
   return true;
 }

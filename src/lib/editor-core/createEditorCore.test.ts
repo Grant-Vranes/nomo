@@ -1499,6 +1499,29 @@ describe('createEditorCore', () => {
     editor.destroy();
   });
 
+  it('maps outline indexes over headings nested in list items when moving sections', () => {
+    const target = document.createElement('div');
+    const markdown = '# A\n\na\n\n# B\n\n- item\n\n  ## B1\n\n- tail\n\n# C\n\nc';
+    const editor = createEditorCore({ markdown, target });
+    const initialMarkdown = editor.getMarkdown();
+    const request = { sourceIndex: 3, targetIndex: 1, placement: 'before' } as const;
+    const sourceResult = reorderOutlineSection(markdown, extractOutline(markdown), request);
+    expect(sourceResult.ok).toBe(true);
+
+    expect(editor.execute({ type: 'moveOutlineSection', ...request })).toBe(true);
+    expect(extractOutline(editor.getMarkdown()).map((item) => item.title)).toEqual(['A', 'C', 'B', 'B1']);
+    if (sourceResult.ok) {
+      expect(extractOutline(editor.getMarkdown()).map(({ title, level }) => ({ title, level }))).toEqual(
+        extractOutline(sourceResult.markdown).map(({ title, level }) => ({ title, level })),
+      );
+    }
+
+    expect(editor.execute({ type: 'undo' })).toBe(true);
+    expect(editor.getMarkdown()).toBe(initialMarkdown);
+
+    editor.destroy();
+  });
+
   it('returns false for out-of-range headingIndex', () => {
     const target = document.createElement('div');
     const editor = createEditorCore({
