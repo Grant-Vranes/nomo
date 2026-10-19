@@ -15,7 +15,8 @@ import {
 } from './InlineSourceCodec';
 import { serializeMarkdown } from './markdownSerialization';
 export { serializeMarkdown, serializeMarkdownSelection } from './markdownSerialization';
-import { InputRule, textblockTypeInputRule, wrappingInputRule } from 'prosemirror-inputrules';
+import { InputRule, textblockTypeInputRule } from 'prosemirror-inputrules';
+import { createListInputRule } from './listCommands';
 import Token from 'markdown-it/lib/token.mjs';
 import { defaultMarkdownParser, MarkdownParser } from 'prosemirror-markdown';
 import { Fragment, type Node as ProseMirrorNode } from 'prosemirror-model';
@@ -921,10 +922,7 @@ export function createMarkdownInputRules() {
     textblockTypeInputRule(/^(#{1,6})\s$/, schema.nodes.heading, (match) => ({
       level: match[1].length,
     })),
-    wrappingInputRule(/^\s*([-+*])\s$/, schema.nodes.bullet_list),
-    wrappingInputRule(/^(\d+)\.\s$/, schema.nodes.ordered_list, (match) => ({
-      order: Number(match[1]),
-    })),
+    createListInputRule(),
     textblockTypeInputRule(/^```$/, schema.nodes.code_block),
     createHorizontalRuleInputRule(),
   ];

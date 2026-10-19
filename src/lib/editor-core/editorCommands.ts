@@ -1,16 +1,23 @@
 import { setBlockType, splitBlockAs, wrapIn } from 'prosemirror-commands';
 import { liftTarget } from 'prosemirror-transform';
 import { appendClearInlineSourceStyles, toggleInlineSourceFormat } from './inlineSourceCommands';
-import { readTaskListMarker } from './InlineSourceCodec';
 import { closeHistory, redo, undo } from 'prosemirror-history';
-import { liftListItem, wrapInList } from 'prosemirror-schema-list';
+import { wrapInList } from 'prosemirror-schema-list';
+import {
+  findParentList,
+  findListItem,
+  getTaskMarkerRange,
+  getListAttrsForType,
+  setListType,
+  toggleList,
+  toggleTaskListAtCursor,
+} from './listCommands';
 import {
   Fragment,
   type Mark,
   type MarkType,
   type Node as PmNode,
   type NodeType,
-  type ResolvedPos,
 } from 'prosemirror-model';
 import {
   EditorState,
@@ -261,69 +268,6 @@ export function insertParagraphLineBreak(
   return true;
 }
 
-// 查找光标所在位置的父列表（bullet_list 或 ordered_list）
-function findParentList($pos: ResolvedPos): { listPos: number; listType: NodeType } | null {
-  for (let d = $pos.depth; d >= 0; d--) {
-    const node = $pos.node(d);
-    if (node.type === schema.nodes.bullet_list || node.type === schema.nodes.ordered_list) {
-      return { listPos: $pos.before(d), listType: node.type };
-    }
-  }
-  return null;
-}
-
-// 查找包含 $pos 的 list_item 及父列表信息
-function findListItem($pos: ResolvedPos): { itemPos: number; itemNode: PmNode } | null {
-  for (let d = $pos.depth; d >= 0; d--) {
-    const node = $pos.node(d);
-    if (node.type === schema.nodes.list_item) {
-      return { itemPos: $pos.before(d), itemNode: node };
-    }
-  }
-  return null;
-}
-
-// 任务标记只取列表项首段开头；后续文本、段落和嵌套列表不参与判断。
-function findTaskMarkerInItem(item: PmNode): { offset: number; length: number } | null {
-  const paragraph = item.firstChild;
-  const marker = paragraph ? readTaskListMarker(paragraph) : null;
-  return marker ? { offset: 1, length: marker.text.length } : null;
-}
-
-function getTaskMarkerRange(listItem: {
-  itemPos: number;
-  itemNode: PmNode;
-}): { from: number; to: number } | null {
-  const taskMarker = findTaskMarkerInItem(listItem.itemNode);
-  if (!taskMarker) return null;
-  const from = listItem.itemPos + 1 + taskMarker.offset;
-  return { from, to: from + taskMarker.length };
-}
-
-function liftCurrentListItem(
-  state: EditorState,
-  dispatch: (tr: Transaction) => void,
-  tr?: Transaction,
-): boolean {
-  if (!tr) return liftListItem(schema.nodes.list_item)(state, dispatch);
-
-  const nextState = state.apply(tr);
-  let liftTr: Transaction | null = null;
-  const lifted = liftListItem(schema.nodes.list_item)(nextState, (capturedTr) => {
-    liftTr = capturedTr;
-  });
-  if (!lifted || !liftTr) return false;
-
-  for (const step of (liftTr as Transaction).steps) tr.step(step);
-  dispatch(tr);
-  return true;
-}
-
-function getListAttrsForType(listType: NodeType): Record<string, unknown> | null {
-  if (listType === schema.nodes.ordered_list) return { order: 1 };
-  return null;
-}
-
 function appendCommandSteps(
   state: EditorState,
   tr: Transaction,
@@ -335,89 +279,6 @@ function appendCommandSteps(
   });
   if (!handled || !capturedTr) return false;
   for (const step of (capturedTr as Transaction).steps) tr.step(step);
-  return true;
-}
-
-// 列表切换：同类列表取消为普通段落；跨有序/无序转换时保留任务标记。
-// 适配 state/dispatch 签名，可直接用于 ProseMirror keymap
-export function toggleList(
-  state: EditorState,
-  dispatch?: (tr: Transaction) => void,
-  listType?: NodeType,
-): boolean {
-  if (!dispatch || !listType) return false;
-  const { $from } = state.selection;
-  const currentList = findParentList($from);
-
-  if (currentList?.listType === listType) {
-    // 与 liftListItem 使用同一范围；仅移除实际提升项的标记，保留其嵌套任务。
-    const range = $from.blockRange(
-      state.selection.$to,
-      (node) => node.childCount > 0 && node.firstChild?.type === schema.nodes.list_item,
-    );
-    if (!range) return false;
-    const taskRanges: Array<{ from: number; to: number }> = [];
-    let itemPos = range.start;
-    for (let index = range.startIndex; index < range.endIndex; index++) {
-      const itemNode = range.parent.child(index);
-      const marker = getTaskMarkerRange({ itemPos, itemNode });
-      if (marker) taskRanges.push(marker);
-      itemPos += itemNode.nodeSize;
-    }
-    const tr = state.tr;
-    for (const marker of taskRanges.reverse()) tr.delete(marker.from, marker.to);
-    return liftCurrentListItem(state, dispatch, tr.docChanged ? tr : undefined);
-  }
-
-  if (currentList) {
-    dispatch(state.tr.setNodeMarkup(currentList.listPos, listType, getListAttrsForType(listType)));
-    return true;
-  }
-
-  return wrapInList(listType, getListAttrsForType(listType))(state, dispatch);
-}
-
-// 切换任务列表：任务项 → 去掉 [ ]/[x] 并保留列表；普通列表项 → 加上 [ ]；正文 → 创建无序任务列表
-// 适配 state/dispatch 签名，可直接用于 ProseMirror keymap
-export function toggleTaskListAtCursor(
-  state: EditorState,
-  dispatch?: (tr: Transaction) => void,
-): boolean {
-  if (!dispatch) return false;
-  const { $from } = state.selection;
-  const listItem = findListItem($from);
-
-  if (listItem) {
-    const paragraph = listItem.itemNode.firstChild;
-    if (paragraph?.type !== schema.nodes.paragraph) return false;
-    const textPos = listItem.itemPos + 2;
-    const taskRange = getTaskMarkerRange(listItem);
-
-    if (taskRange) {
-      dispatch(state.tr.delete(taskRange.from, taskRange.to));
-      return true;
-    }
-
-    dispatch(state.tr.insertText('[ ] ', textPos));
-    return true;
-  }
-
-  const textStart = $from.start();
-  const tr = state.tr;
-  if ($from.parent.type !== schema.nodes.paragraph) {
-    if (!appendCommandSteps(state, tr, setBlockType(schema.nodes.paragraph))) return false;
-  }
-  if (
-    !appendCommandSteps(
-      state,
-      tr,
-      wrapInList(schema.nodes.bullet_list, getListAttrsForType(schema.nodes.bullet_list)),
-    )
-  )
-    return false;
-
-  tr.insertText('[ ] ', tr.mapping.map(textStart));
-  dispatch(tr);
   return true;
 }
 
@@ -779,10 +640,11 @@ export function insertQuickInsertContent(
       const item = findListItem($from);
       const taskRange = item ? getTaskMarkerRange(item) : null;
       if (currentList) {
-        if (currentList.listType !== listType) {
-          tr.setNodeMarkup(currentList.listPos, listType, getListAttrsForType(listType));
-        }
         if (taskRange && command.type !== 'toggleTaskList') tr.delete(taskRange.from, taskRange.to);
+        if (currentList.listType !== listType) {
+          if (!appendCommandSteps(state, tr, (next, dispatch) => setListType(next, dispatch, listType)))
+            return false;
+        }
       } else {
         if (
           $from.parent.type !== schema.nodes.paragraph &&

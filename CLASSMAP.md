@@ -54,6 +54,7 @@
 | HTML 块分类 | `src/lib/editor-core/html/htmlClassifier.ts` | `src/lib/editor-core/html/htmlPolicy.ts` | HTML 块可编辑性判断/属性提取规则变更 |
 | HTML 锚点保留 | `src/lib/editor-core/html/htmlAnchor.ts` | `schema.ts`, `markdown.ts`, `html/htmlToPmLogic.ts`, `html/pmToHtml.ts`, `markdownSerialization.ts` | 空锚点节点、含文本锚点 mark、`id/name` 属性及安全 HTML 输出规则变更 |
 | 编辑器命令 | `src/lib/editor-core/editorCommands.ts` | `src/lib/editor-core/tableCommands.ts`, `codeBlockCommands.ts`, `callout/calloutCommands.ts` | 新增或修改编辑命令、Shift+Enter 显式段内硬换行（保留源码软换行语义） |
+| 列表创建、层级与类型切换 | `src/lib/editor-core/listCommands.ts` | `ProseMirrorEditorCore.ts`, `markdown.ts`, `editorCommands.ts` | 语义模式 Tab/Shift+Tab、列表符号输入与粘贴规则、选中项类型转换和任务列表退出清理；各入口共用局部事务 |
 | 图表模板 | `src/lib/editor-core/diagramTemplates.ts` | `src/app/components/EditorToolbar.svelte` | 新增/修改 Mermaid 图表模板 |
 | 链接安全与规范化 | `src/lib/editor-core/link.ts` | `src/lib/editor-core/plugins/linkInteraction.ts`, `src/quicklook/preview.ts` | 链接协议白名单/序列化规则变更 |
 | 编辑器类型定义 | `src/lib/editor-core/types.ts` | 所有使用 EditorCore 的模块 | EditorCommand、EditorMode、SetMarkdownOptions 等类型变更 |

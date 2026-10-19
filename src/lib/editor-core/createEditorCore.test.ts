@@ -934,6 +934,229 @@ describe('createEditorCore', () => {
     expect(bulletEditor.getMarkdown()).toBe('- 无序项');
   });
 
+  it.each(['- A\n- B', '1. A\n2. B', '- [ ] A\n- [x] B'])(
+    'keeps first-item and multi-item Tab selections intact: %s', (markdown) => {
+      const editor = createEditorCore({ markdown, target: document.createElement('div') });
+      const view = (editor as unknown as { view: EditorView }).view;
+      const first = findNodeByText(view.state.doc, 'paragraph', markdown.includes('[ ]') ? '[ ] A' : 'A');
+      const last = findNodeByText(view.state.doc, 'paragraph', markdown.includes('[x]') ? '[x] B' : 'B');
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, first.pos + first.node.nodeSize - 1)));
+      const original = view.state.doc;
+      expect(pressEditorKey(view, 'Tab')).toBe(true);
+      expect(view.state.doc.eq(original)).toBe(true);
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, first.pos + 1, last.pos + last.node.nodeSize - 1)));
+      const selection = view.state.selection;
+      expect(pressEditorKey(view, 'Tab')).toBe(true);
+      expect(view.state.doc.eq(original)).toBe(true);
+      expect(view.state.selection.eq(selection)).toBe(true);
+      editor.destroy();
+    },
+  );
+
+  it.each(['[ ]', '[x]'])('clears only the exiting task marker on Shift+Tab: %s', (marker) => {
+    const editor = createEditorCore({ markdown: `- ${marker} A\n  - [x] B`, target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const first = findNodeByText(view.state.doc, 'paragraph', `${marker} A`);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, first.pos + first.node.nodeSize - 1)));
+    const original = view.state.doc;
+    expect(pressEditorKey(view, 'Tab', { shiftKey: true })).toBe(true);
+    expect(view.state.doc.firstChild?.textContent).toBe('A');
+    expect(editor.getMarkdown()).toContain('- [x] B');
+    expect(editor.execute({ type: 'undo' })).toBe(true);
+    expect(view.state.doc.eq(original)).toBe(true);
+    expect(editor.execute({ type: 'redo' })).toBe(true);
+    expect(view.state.doc.firstChild?.textContent).toBe('A');
+    editor.destroy();
+  });
+
+  it('preserves a checked task when Shift+Tab promotes it into the outer list', () => {
+    const editor = createEditorCore({ markdown: '- [ ] A\n  - [x] B', target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const child = findNodeByText(view.state.doc, 'paragraph', '[x] B');
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, child.pos + child.node.nodeSize - 1)));
+    expect(pressEditorKey(view, 'Tab', { shiftKey: true })).toBe(true);
+    expect(editor.getMarkdown()).toBe('- [ ] A\n- [x] B');
+    editor.destroy();
+  });
+
+  it.each(['Space', 'Tab', 'input'].flatMap((trigger) => [false, true].map((nested) => ({ trigger, nested }))))(
+    'creates the same mixed list through $trigger, already nested: $nested', ({ trigger, nested }) => {
+      const editor = createEditorCore({ markdown: '1. Parent', target: document.createElement('div') });
+      const view = (editor as unknown as { view: EditorView }).view;
+      const parent = findNodeByText(view.state.doc, 'paragraph', 'Parent');
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, parent.pos + parent.node.nodeSize - 1)));
+      pressEditorKey(view, 'Enter');
+      if (nested) pressEditorKey(view, 'Tab');
+      view.dispatch(view.state.tr.insertText('-'));
+      view.dispatch(closeHistory(view.state.tr));
+      const before = view.state.doc;
+      let handled = false;
+      if (trigger === 'input') {
+        const { from, to } = view.state.selection;
+        view.someProp('handleTextInput', (handler) => {
+          handled = handler(view, from, to, ' ', () => view.state.tr.insertText(' ')) || handled;
+          return handled;
+        });
+      } else handled = pressEditorKey(view, trigger === 'Space' ? ' ' : 'Tab');
+      expect(handled).toBe(true);
+      const converted = view.state.doc;
+      expect(editor.execute({ type: 'undo' })).toBe(true);
+      expect(view.state.doc.eq(before)).toBe(true);
+      expect(editor.execute({ type: 'redo' })).toBe(true);
+      expect(view.state.doc.eq(converted)).toBe(true);
+      view.dispatch(view.state.tr.insertText('Child'));
+      expect(editor.getMarkdown()).toBe('1. Parent\n   - Child');
+      expect(view.state.doc.firstChild?.childCount).toBe(1);
+      expect(view.state.selection.$from.depth).toBe(5);
+      editor.destroy();
+    },
+  );
+
+  it.each(['-', '*', '+', '1.', '- [ ]', '- [x]'])('keeps a pasted bare list prefix pending until Space or Tab: %s', (prefix) => {
+    for (const key of [' ', 'Tab']) {
+      const editor = createEditorCore({ markdown: '1. Parent', target: document.createElement('div') });
+      const view = (editor as unknown as { view: EditorView }).view;
+      const parent = findNodeByText(view.state.doc, 'paragraph', 'Parent');
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, parent.pos + parent.node.nodeSize - 1)));
+      pressEditorKey(view, 'Enter');
+      editor.pasteClipboard({ text: prefix });
+      expect(view.state.selection.$from.depth).toBe(3);
+      expect(view.state.selection.$from.parent.textContent).toBe(prefix);
+      expect(pressEditorKey(view, key)).toBe(true);
+      view.dispatch(view.state.tr.insertText('Child'));
+      expect(view.state.doc.firstChild?.childCount).toBe(1);
+      expect(view.state.selection.$from.depth).toBe(5);
+      expect(editor.getMarkdown()).toBe(`1. Parent\n   ${prefix === '1.' ? '1.' : '-'} ${prefix.includes('[') ? `${prefix.slice(2)} ` : ''}Child`);
+      editor.destroy();
+    }
+  });
+
+  it.each([false, true])('pastes a delimited list prefix with the same structure as typing, already nested: %s', (nested) => {
+    for (const prefix of ['- ', '*\t', '1. ', '- [x] ']) {
+      const editor = createEditorCore({ markdown: '1. Parent', target: document.createElement('div') });
+      const view = (editor as unknown as { view: EditorView }).view;
+      const parent = findNodeByText(view.state.doc, 'paragraph', 'Parent');
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, parent.pos + parent.node.nodeSize - 1)));
+      pressEditorKey(view, 'Enter');
+      if (nested) pressEditorKey(view, 'Tab');
+      view.dispatch(closeHistory(view.state.tr));
+      const before = view.state.doc;
+      editor.pasteClipboard({ text: prefix });
+      const pasted = view.state.doc;
+      expect(view.state.doc.firstChild?.childCount).toBe(1);
+      expect(view.state.selection.$from.depth).toBe(5);
+      expect(view.state.selection.$from.parent.textContent).toBe(prefix.includes('[x]') ? '[x] ' : '');
+      expect(editor.execute({ type: 'undo' })).toBe(true);
+      expect(view.state.doc.eq(before)).toBe(true);
+      expect(editor.execute({ type: 'redo' })).toBe(true);
+      expect(view.state.doc.eq(pasted)).toBe(true);
+      editor.destroy();
+    }
+  });
+
+  it('routes native prefix paste through the shared list conversion and preserves explicit plain paste', () => {
+    const editor = createEditorCore({ markdown: '', target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const pasteEvent = new Event('paste', { cancelable: true });
+    Object.defineProperty(pasteEvent, 'clipboardData', { value: { files: [], getData: (type: string) => type === 'text/plain' ? '1.' : '' } });
+    expect(view.someProp('handlePaste', (handler) => handler(view, pasteEvent as ClipboardEvent, Slice.empty))).toBe(true);
+    expect(pasteEvent.defaultPrevented).toBe(true);
+    expect(view.state.doc.firstChild?.type.name).toBe('paragraph');
+    expect(view.state.doc.textContent).toBe('1.');
+    expect(pressEditorKey(view, ' ')).toBe(true);
+    expect(view.state.doc.firstChild?.type.name).toBe('ordered_list');
+    editor.destroy();
+
+    const plain = createEditorCore({ markdown: '', target: document.createElement('div') });
+    plain.pasteClipboard({ text: '- ' }, { mode: 'plain' });
+    const plainView = (plain as unknown as { view: EditorView }).view;
+    expect(plainView.state.doc.firstChild?.type.name).toBe('paragraph');
+    expect(projectInlineSource(plainView.state.doc).textContent).toBe('- ');
+    plain.destroy();
+  });
+
+  it.each(['-', '1.', '- [ ]'])('accepts a matching list prefix in an already nested first item: %s', (prefix) => {
+    const editor = createEditorCore({ markdown: `${prefix === '1.' ? '1.' : '-'} Parent`, target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const parent = findNodeByText(view.state.doc, 'paragraph', 'Parent');
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, parent.pos + parent.node.nodeSize - 1)));
+    pressEditorKey(view, 'Enter');
+    pressEditorKey(view, 'Tab');
+    view.dispatch(view.state.tr.insertText(prefix));
+    expect(pressEditorKey(view, ' ')).toBe(true);
+    view.dispatch(view.state.tr.insertText('Child'));
+    expect(view.state.selection.$from.depth).toBe(5);
+    expect(view.state.selection.$from.parent.textContent).toBe(prefix.includes('[ ]') ? '[ ] Child' : 'Child');
+    editor.destroy();
+  });
+
+  it.each([false, true])('creates the same mixed list when switching type before indent: %s', (convertFirst) => {
+    const editor = createEditorCore({ markdown: '1. Parent\n2. Child', target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const child = findNodeByText(view.state.doc, 'paragraph', 'Child');
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, child.pos + child.node.nodeSize - 1)));
+    if (convertFirst) editor.execute({ type: 'toggleBulletList' });
+    pressEditorKey(view, 'Tab');
+    if (!convertFirst) editor.execute({ type: 'toggleBulletList' });
+    expect(editor.getMarkdown()).toBe('1. Parent\n   - Child');
+    expect(view.state.selection.$from.depth).toBe(5);
+    editor.destroy();
+  });
+
+  it('converts only selected list items and preserves surrounding ordered numbers and descendants', () => {
+    const editor = createEditorCore({ markdown: '5. A\n6. B\n   - [x] Child\n7. C\n8. D', target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const first = findNodeByText(view.state.doc, 'paragraph', 'B');
+    const last = findNodeByText(view.state.doc, 'paragraph', 'C');
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, first.pos + 1, last.pos + last.node.nodeSize - 1)));
+    const original = view.state.doc;
+    editor.execute({ type: 'toggleBulletList' });
+    expect(getTopLevelNodeNames(view.state.doc)).toEqual(['ordered_list', 'bullet_list', 'ordered_list']);
+    expect(view.state.doc.child(0).attrs.order).toBe(5);
+    expect(view.state.doc.child(1).childCount).toBe(2);
+    expect(view.state.doc.child(2).attrs.order).toBe(8);
+    expect(editor.getMarkdown()).toContain('- [x] Child');
+    expect(view.state.selection.$from.parent.textContent).toBe('B');
+    expect(view.state.selection.$to.parent.textContent).toBe('C');
+    expect(editor.execute({ type: 'undo' })).toBe(true);
+    expect(view.state.doc.eq(original)).toBe(true);
+    editor.destroy();
+  });
+
+  it('indents the first item of an adjacent list without moving its unselected suffix or renumbering it', () => {
+    const editor = createEditorCore({ markdown: '- Parent\n\n5. Child\n6. Tail', target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const child = findNodeByText(view.state.doc, 'paragraph', 'Child');
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, child.pos + child.node.nodeSize - 1)));
+    const original = view.state.doc;
+
+    expect(pressEditorKey(view, 'Tab')).toBe(true);
+    const nested = view.state.doc.firstChild!.firstChild!.lastChild!;
+    expect(nested.type.name).toBe('ordered_list');
+    expect(nested.attrs.order).toBe(5);
+    expect(nested.textContent).toBe('Child');
+    expect(view.state.doc.child(1).attrs.order).toBe(6);
+    expect(view.state.doc.child(1).textContent).toBe('Tail');
+    expect(view.state.selection.$from.parent.textContent).toBe('Child');
+    expect(editor.execute({ type: 'undo' })).toBe(true);
+    expect(view.state.doc.eq(original)).toBe(true);
+    editor.destroy();
+  });
+
+  it('toggles a mixed task selection without changing unselected siblings or checked states', () => {
+    const editor = createEditorCore({ markdown: '- Before\n- [x] A\n- B\n- After', target: document.createElement('div') });
+    const view = (editor as unknown as { view: EditorView }).view;
+    const first = findNodeByText(view.state.doc, 'paragraph', '[x] A');
+    const last = findNodeByText(view.state.doc, 'paragraph', 'B');
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, first.pos + 5, last.pos + last.node.nodeSize - 1)));
+
+    expect(editor.execute({ type: 'toggleTaskList' })).toBe(true);
+    expect(editor.getMarkdown()).toBe('- Before\n- [x] A\n- [ ] B\n- After');
+    expect(editor.execute({ type: 'toggleTaskList' })).toBe(true);
+    expect(editor.getMarkdown()).toBe('- Before\n- A\n- B\n- After');
+    editor.destroy();
+  });
+
   it('continues task list items with an unchecked task marker on Enter', () => {
     const target = document.createElement('div');
     const editor = createEditorCore({ markdown: '- [ ] 待办事项', target });

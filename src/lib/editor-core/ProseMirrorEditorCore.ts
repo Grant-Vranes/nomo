@@ -23,7 +23,15 @@ import { keymap } from 'prosemirror-keymap';
 import { EditorState, Selection, NodeSelection, TextSelection, type Transaction } from 'prosemirror-state';
 import { Slice, Fragment, DOMSerializer, DOMParser, type Node as ProseMirrorNode, type ResolvedPos } from 'prosemirror-model';
 import { EditorView } from 'prosemirror-view';
-import { liftListItem, sinkListItem, splitListItem, wrapInList } from 'prosemirror-schema-list';
+import { liftListItem, splitListItem } from 'prosemirror-schema-list';
+import {
+  convertMarkdownListShortcut,
+  createPastedListShortcut,
+  indentListItems,
+  outdentListItems,
+  toggleList,
+  toggleTaskListAtCursor,
+} from './listCommands';
 import { goToNextCell, tableEditing, handlePaste as handleTablePaste, isInTable, TableMap } from 'prosemirror-tables';
 import { CodeBlockNodeView } from './nodeViews/CodeBlockNodeView';
 import { CommentBlockNodeView } from './nodeViews/CommentBlockNodeView';
@@ -48,8 +56,6 @@ import {
   executeEditorCommand,
   insertParagraphLineBreak,
   splitBlockExitHeading,
-  toggleList,
-  toggleTaskListAtCursor,
 } from './editorCommands';
 import { findActiveLinkRange } from './editorCommands';
 import { blockquoteInputPlugin } from './plugins/blockquoteInput';
@@ -976,6 +982,9 @@ export class ProseMirrorEditorCore implements EditorCore {
       if (this.isTableClipboardSlice(slice)) return this.insertHtmlClipboard(input.html, text);
     }
 
+    const listShortcut = text ? this.insertListClipboardShortcut(text) : null;
+    if (listShortcut) return listShortcut;
+
     const classification = text ? classifyClipboardMarkdown(text) : null;
     if (classification?.kind === 'front-matter') {
       if (this.isEmptySemanticDocument()) {
@@ -1062,6 +1071,10 @@ export class ProseMirrorEditorCore implements EditorCore {
       event.preventDefault();
       return true;
     }
+    if (!plain && text && this.insertListClipboardShortcut(text)) {
+      event.preventDefault();
+      return true;
+    }
     if (!plain && !this.canInsertClipboardContent(slice.content)) {
       const context = this.htmlPasteContexts.get(event);
       const fallbackText = text || context?.text || serializeClipboardText(slice);
@@ -1086,6 +1099,14 @@ export class ProseMirrorEditorCore implements EditorCore {
     const result = this.pasteClipboard({ text, html }, { mode: plain ? 'plain' : 'auto' });
     event.preventDefault();
     return result.status === 'inserted' || result.reason === 'no-text';
+  }
+
+  private insertListClipboardShortcut(text: string): EditorPasteResult | null {
+    if (!this.view) return null;
+    const shortcut = createPastedListShortcut(this.view.state, text);
+    if (!shortcut) return null;
+    this.view.dispatch(shortcut.transaction.setMeta('uiEvent', 'paste'));
+    return { status: 'inserted', format: shortcut.converted ? 'markdown' : 'plain' };
   }
 
   private insertPlainClipboardText(text: string): EditorPasteResult {
@@ -1679,12 +1700,12 @@ export class ProseMirrorEditorCore implements EditorCore {
           Tab: chainCommands(
             convertMarkdownListShortcut,
             goToNextCell(1),
-            sinkListItem(schema.nodes.list_item),
+            indentListItems,
             insertTabInTextblock,
           ),
           'Shift-Tab': chainCommands(
             goToNextCell(-1),
-            liftListItem(schema.nodes.list_item),
+            outdentListItems,
             removeTabBeforeCursorInTextblock,
           ),
           'Shift-Ctrl-[': (state, dispatch) =>
@@ -2037,53 +2058,6 @@ function removeTabBeforeCursorInTextblock(
 
   if (dispatch) {
     dispatch(state.tr.delete(cursor - 1, cursor).scrollIntoView());
-  }
-  return true;
-}
-
-function convertMarkdownListShortcut(
-  state: EditorState,
-  dispatch?: (tr: Transaction) => void,
-): boolean {
-  const { selection } = state;
-  if (!selection.empty || !selection.$from.parent.isTextblock) {
-    return false;
-  }
-
-  const { $from } = selection;
-  if ($from.parentOffset !== $from.parent.content.size) {
-    return false;
-  }
-
-  const shortcutText = $from.parent.textBetween(0, $from.parentOffset);
-  const taskMatch = /^(\d+\.|[-+*])\s+\[([ xX])\]$/.exec(shortcutText);
-  const orderedMatch = /^(\d+)\.$/.exec(shortcutText);
-  const bulletMatch = /^[-+*]$/.exec(shortcutText);
-  if (!taskMatch && !orderedMatch && !bulletMatch) {
-    return false;
-  }
-
-  const listType =
-    orderedMatch || taskMatch?.[1].endsWith('.')
-      ? schema.nodes.ordered_list
-      : schema.nodes.bullet_list;
-  const attrs = orderedMatch
-    ? { order: Number(orderedMatch[1]) }
-    : taskMatch?.[1].endsWith('.')
-      ? { order: Number.parseInt(taskMatch[1], 10) }
-      : null;
-
-  if (dispatch) {
-    const tr = state.tr.delete($from.start(), $from.pos);
-    if (!appendCommandTransaction(state, tr, wrapInList(listType, attrs))) {
-      return false;
-    }
-
-    if (taskMatch) {
-      const checked = taskMatch[2].toLowerCase() === 'x' ? 'x' : ' ';
-      tr.insertText(`[${checked}] `, tr.selection.from);
-    }
-    dispatch(tr.scrollIntoView());
   }
   return true;
 }
