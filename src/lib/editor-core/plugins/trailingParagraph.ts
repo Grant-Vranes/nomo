@@ -11,6 +11,7 @@ import { schema } from '../schema';
 const trailingParagraphKey = new PluginKey('trailingParagraph');
 
 const TRAILING_PARAGRAPH_NODE_TYPES = new Set([
+  'details',
   'code_block',
   'math_block',
   'mermaid_block',

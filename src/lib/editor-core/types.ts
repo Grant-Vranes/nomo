@@ -157,6 +157,9 @@ export type EditorCommand =
   | { type: 'setParagraph' }
   | { type: 'toggleBlockquote' }
   | { type: 'insertCallout'; calloutType?: 'note' | 'tip' | 'important' | 'warning' | 'caution' }
+  | { type: 'insertDetails' }
+  | { type: 'setDetailsDefaultOpen'; open: boolean; pos?: number }
+  | { type: 'unwrapDetails'; pos?: number }
   | {
       type: 'toggleCalloutType';
       calloutType?: 'note' | 'tip' | 'important' | 'warning' | 'caution';

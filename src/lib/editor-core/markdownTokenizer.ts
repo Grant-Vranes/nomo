@@ -3,6 +3,7 @@ import Token from 'markdown-it/lib/token.mjs';
 import { unescapeAll } from 'markdown-it/lib/common/utils.mjs';
 import { normalizeLinkHref } from './link';
 import { transformCalloutTokens } from './callout/calloutParser';
+import { registerDetailsRule } from './details/detailsSyntax';
 
 export const WRAPPED_IMAGE_HTML =
   /<p\s+align="(left|center|right)"\s*>\s*(<img\s+[^>]+(?:\/>|>))\s*<\/p>/gi;
@@ -443,6 +444,7 @@ export function createMarkdownTokenizer(options: { inlineSource?: boolean; liter
     return true;
   });
 
+  registerDetailsRule(markdownIt);
   const tokenizeBlocks = markdownIt.block.tokenize.bind(markdownIt.block);
   markdownIt.block.tokenize = (state, startLine, endLine) => {
     const firstTokenIndex = state.tokens.length;
@@ -508,8 +510,22 @@ function restoreBlankParagraphTokens(tokens: Token[]): Token[] {
   const result: Token[] = [];
   let previousTopLevelBlockEnd = -1;
   const listItemStack: ListItemBlankParagraphContext[] = [];
+  const detailsBodies: Array<ListItemBlankParagraphContext & { hasChild: boolean }> = [];
 
   for (const token of tokens) {
+    const detailsBody = detailsBodies.at(-1);
+    if (detailsBody) {
+      const range = getDirectListItemChildBlockRange(token, detailsBody);
+      if (range) {
+        appendBlankParagraphTokens(result, detailsBody.previousChildBlockEnd, range[0]);
+        detailsBody.previousChildBlockEnd = range[1];
+        detailsBody.hasChild = true;
+      }
+      if (token.type === 'details_body_close') {
+        if (detailsBody.hasChild) appendBlankParagraphTokens(result, detailsBody.previousChildBlockEnd, detailsBody.endLine);
+        detailsBodies.pop();
+      }
+    }
     const listItemContext = getCurrentListItemContext(listItemStack);
     const listItemChildRange = listItemContext
       ? getDirectListItemChildBlockRange(token, listItemContext)
@@ -541,6 +557,12 @@ function restoreBlankParagraphTokens(tokens: Token[]): Token[] {
     }
 
     result.push(token);
+    if (token.type === 'details_body_open' && token.map) detailsBodies.push({
+      childLevel: token.level + 1,
+      previousChildBlockEnd: token.map[0] + 1,
+      endLine: token.map[1] - 1,
+      hasChild: false,
+    });
 
     const newListItemContext = createListItemBlankParagraphContext(token);
     if (newListItemContext) {

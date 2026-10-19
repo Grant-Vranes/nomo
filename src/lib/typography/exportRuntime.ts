@@ -34,6 +34,15 @@ if (root) {
     await controller.flush();
   };
   window.__NOMO_FLUSH_TYPOGRAPHY__ = () => enqueue(flush);
+  // HTML 中展开原生 details 后再布局此前隐藏的段落/表格；同一帧只刷新一次。
+  let detailsFrame = 0;
+  root.addEventListener('toggle', event => {
+    if (!(event.target instanceof HTMLDetailsElement) || !event.target.open || printing || detailsFrame) return;
+    detailsFrame = requestAnimationFrame(() => {
+      detailsFrame = 0;
+      void enqueue(flush).catch(() => { if (!abort.signal.aborted) root.dataset.kpState = 'error'; });
+    });
+  }, { capture: true, signal: abort.signal });
   window.__NOMO_PREPARE_PRINT__ = (widthMm, heightMm = 257) => enqueue(async () => {
     preparePrintDocument(root, widthMm, heightMm);
     printing = true;
@@ -41,7 +50,7 @@ if (root) {
     abort.signal.throwIfAborted();
     classifyPrintBlocks(root, heightMm);
   });
-  window.addEventListener('pagehide', () => { abort.abort(); tables.destroy(); controller.destroy(); }, { once: true });
+  window.addEventListener('pagehide', () => { abort.abort(); cancelAnimationFrame(detailsFrame); tables.destroy(); controller.destroy(); }, { once: true });
   void window.__NOMO_FLUSH_TYPOGRAPHY__().catch(() => {
     root.dataset.kpState = 'error';
   });

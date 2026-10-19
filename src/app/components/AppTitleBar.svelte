@@ -732,6 +732,8 @@
                   on:click={() => finish(() => runCommand({ type: 'insertCallout' }), 'paragraph')}
                   >{t.callout()} <span class="shortcut">Ctrl + Shift + A</span></button
                 >
+                <button on:click={() => finish(() => runCommand({ type: 'insertDetails' }), 'paragraph')}
+                  >{t.details()}</button>
                 <button
                   on:click={() =>
                     finish(() => runCommand({ type: 'insertCommentBlock' }), 'paragraph')}

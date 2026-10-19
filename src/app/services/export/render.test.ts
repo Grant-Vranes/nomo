@@ -14,6 +14,19 @@ function snapshot(markdown: string): ExportSnapshot {
 }
 
 describe('unmounted readonly export', () => {
+  it('renders nested details with saved defaults and complete code/image content', async () => {
+    const source = '<details>\n<summary><strong>标题</strong></summary>\n\n```js\nconst a = 1\n```\n\n![pic](./a.png)\n\n<details open>\n<summary>内层</summary>\n\n完整正文\n\n</details>\n\n</details>';
+    const result = await renderExportBody(snapshot(source));
+    const dom = new DOMParser().parseFromString(result.html, 'text/html');
+    expect(dom.querySelectorAll('details')).toHaveLength(2);
+    expect(dom.querySelector('details')?.hasAttribute('open')).toBe(false);
+    expect(dom.querySelector('details details')?.hasAttribute('open')).toBe(true);
+    expect(dom.querySelector('summary strong')?.textContent).toBe('标题');
+    expect(dom.querySelector('details .code-card')?.textContent).toContain('const a = 1');
+    expect(dom.querySelector('details img')?.getAttribute('src')).toBe('./a.png');
+    expect(dom.body.textContent).toContain('完整正文');
+    expect(result.warnings).toEqual([]);
+  });
   it('README HTML 的徽章与语言链接沿用编辑器的行内排版，内嵌前标记回退 HTML 图片', async () => {
     const input = snapshot([
       '<p align="center">\n  <a href="https://example.com/release">\n    <img src="https://img.shields.io/github/v/release/nomo-md/nomo" alt="release">\n  </a>\n  <img src="https://img.shields.io/badge/platform-Windows-blue" alt="platform">\n  <a href="./LICENSE">\n    <img src="https://badgen.net/badge/license/AGPL" alt="license">\n  </a>\n</p>',

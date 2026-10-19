@@ -90,6 +90,10 @@ import { taskListPlugin } from './plugins/taskList';
 import { tocSyncPlugin } from './plugins/tocSync';
 import { createCalloutPlugin } from './callout/calloutPlugin';
 import { removeEmptyCalloutOnBackspace } from './callout/calloutCommands';
+import { DetailsSession, detailsPlugin, detailsKey } from './details/detailsState';
+import { preserveUnsupportedDetailsHtml } from './details/detailsClipboard';
+import { enterDetailsBody, exitDetails, exitDetailsEmptyParagraph, detailsBackspace, detailsDeleteBoundary } from './details/detailsCommands';
+import { DetailsNodeView, DetailsSummaryNodeView } from './nodeViews/DetailsNodeView';
 import { deleteCodeBlockBeforeCursor } from './codeBlockCommands';
 import {
   ensureTrailingParagraph,
@@ -183,6 +187,7 @@ export class ProseMirrorEditorCore implements EditorCore {
   private target: HTMLElement | null;
   private view: EditorView | null = null;
   private suspendedState: EditorState | null = null;
+  private detailsSession = new DetailsSession();
   private markdown: string;
   private originalMarkdown: string;
   private semanticViewDirty = false;
@@ -247,6 +252,7 @@ export class ProseMirrorEditorCore implements EditorCore {
       editable: () => this.isEditable(),
       clipboardTextSerializer: (slice) => this.serializeClipboardText(slice),
       clipboardTextParser: (text, $context) => createPlainTextSlice(text, $context),
+      transformPastedHTML: preserveUnsupportedDetailsHtml,
       transformPasted: (slice, view) => this.transformInlineSourceSlice(
         slice,
         view.state.selection.$from.parent.type === schema.nodes.html_block &&
@@ -315,6 +321,11 @@ export class ProseMirrorEditorCore implements EditorCore {
         mermaid_block: (node, view, getPos) =>
           new MermaidBlockNodeView(node, view, getPos as () => number),
         callout: (node, view, getPos) => new CalloutNodeView(node, view, getPos as () => number),
+        details: (node, view, getPos) => new DetailsNodeView(node, view, getPos),
+        details_summary: (node, view, getPos) => new DetailsSummaryNodeView(node, view, getPos, {
+          awaitCompositionEnd: () => this.awaitCompositionEnd(),
+          commitPendingEdits: () => this.commitPendingEdits(),
+        }),
         horizontal_rule: (node, view, getPos) =>
           new HorizontalRuleNodeView(node, view, getPos as () => number),
         toc_block: (node, view, getPos) => new TocBlockNodeView(node, view, getPos as () => number),
@@ -403,6 +414,7 @@ export class ProseMirrorEditorCore implements EditorCore {
     this.target = null;
     this.suspendedState = null;
     this.destroyed = true;
+    this.detailsSession.clear();
   }
 
   getMarkdown(): string {
@@ -712,6 +724,7 @@ export class ProseMirrorEditorCore implements EditorCore {
     this.assertActive();
     this.flushPendingMarkdownSync();
     const previousMarkdown = this.markdown;
+    if (markdown !== previousMarkdown) this.detailsSession.beforeSourceChange(previousMarkdown, markdown);
     const delaySemanticSync = options?.sourceInput === true;
     this.markdown = updateTocBlocks(markdown);
     this.contentRevision += 1;
@@ -772,6 +785,8 @@ export class ProseMirrorEditorCore implements EditorCore {
   restoreSnapshot(snapshot: EditorSnapshot): void {
     this.assertActive();
     this.clearPendingMarkdownSync();
+    // 快照不携带视图状态；不同正文不能按旧文档的数值位置继承临时展开。
+    if (snapshot.markdown !== this.markdown) this.detailsSession.clear();
     this.markdown = updateTocBlocks(snapshot.markdown);
     this.originalMarkdown = this.markdown;
     this.originalDoc = this.parseSemanticDocument(this.markdown).doc;
@@ -1057,6 +1072,14 @@ export class ProseMirrorEditorCore implements EditorCore {
     const html = clipboard?.getData('text/html') ?? '';
     const codeText = text || this.htmlPasteContexts.get(event)?.text ||
       serializeClipboardText(this.transformInlineSourceSlice(slice, projectInlineSource));
+    if (this.view.state.selection.$from.parent.type.name === 'details_summary' &&
+      (plain || !this.canInsertClipboardContent(slice.content))) {
+      const result = codeText ? this.insertPlainClipboardText(codeText) : { status: 'rejected', reason: 'no-text' } as EditorPasteResult;
+      const context = this.htmlPasteContexts.get(event);
+      if (context) context.result = result;
+      event.preventDefault();
+      return true;
+    }
     if (codeText && replaceInlineSourceCodeText(this.view.state, codeText)) {
       const result = this.insertPlainClipboardText(codeText);
       const context = this.htmlPasteContexts.get(event);
@@ -1112,6 +1135,12 @@ export class ProseMirrorEditorCore implements EditorCore {
   private insertPlainClipboardText(text: string): EditorPasteResult {
     if (!this.view) return { status: 'rejected', reason: 'readonly' };
     const { state } = this.view;
+    if (state.selection.$from.parent.type.name === 'details_summary' && state.selection.$from.sameParent(state.selection.$to)) {
+      const normalized = text.replace(/[\r\n\t]+/g, ' ');
+      const tr = replaceInlineSourceCodeText(state, normalized) ?? state.tr.insertText(normalized);
+      this.view.dispatch(tr.setMeta(plainTextPasteMeta, true).scrollIntoView());
+      return { status: 'inserted', format: 'plain' };
+    }
     const codeTransaction = replaceInlineSourceCodeText(state, text);
     const transaction = (codeTransaction ?? state.tr.replaceSelection(createPlainTextSlice(text, state.selection.$from)))
       .setMeta(plainTextPasteMeta, true)
@@ -1144,6 +1173,11 @@ export class ProseMirrorEditorCore implements EditorCore {
   private canInsertClipboardContent(content: Fragment): boolean {
     if (!this.view) return false;
     const { selection } = this.view.state;
+    if (selection.$from.parent.type.name === 'details_summary' || selection.$to.parent.type.name === 'details_summary') {
+      let allowed = true;
+      content.forEach(node => { if (!node.isText && (node.type.name !== 'paragraph' || Array.from({ length: node.childCount }, (_, i) => node.child(i)).some(child => !child.isText))) allowed = false; });
+      return allowed && content.childCount <= 1;
+    }
     if (
       selection.$from.parent.type === schema.nodes.code_block ||
       selection.$to.parent.type === schema.nodes.code_block
@@ -1399,7 +1433,7 @@ export class ProseMirrorEditorCore implements EditorCore {
     if (this.isEditable() && !this.view.editable) {
       this.view.setProps({ editable: () => this.isEditable() });
     }
-    if (command.type === 'undo' || command.type === 'redo') {
+    if (command.type === 'undo' || command.type === 'redo' || command.type === 'setDetailsDefaultOpen' || command.type === 'unwrapDetails') {
       if (isActiveEditComposing(this.view)) return false;
       // 先结束旧输入缓冲，再应用文档历史，避免失焦把撤销前的值写回。
       commitActiveEdit(this.view, true);
@@ -1411,6 +1445,10 @@ export class ProseMirrorEditorCore implements EditorCore {
     if (this.destroyed || this.runtime.readonly) {
       return false;
     }
+    if (this.view?.state.selection.$from.parent.type.name === 'details_summary' &&
+      !['insertText', 'undo', 'redo', 'toggleBold', 'toggleItalic', 'toggleCode', 'toggleStrikethrough',
+        'toggleUnderline', 'toggleHighlight', 'toggleSuperscript', 'toggleSubscript', 'clearInlineStyles',
+        'insertLink', 'removeLink', 'setDetailsDefaultOpen', 'unwrapDetails'].includes(command.type)) return false;
     if (command.type === 'insertMathInline') {
       return this.runtime.mode === 'semantic' && !!this.view && this.isEditable() &&
         !isActiveEditComposing(this.view) && canInsertMathInline(this.view.state);
@@ -1534,6 +1572,7 @@ export class ProseMirrorEditorCore implements EditorCore {
   }
 
   private createState(markdown: string): EditorState {
+    this.detailsSession.prepare(markdown);
     const { doc, appended } = this.parseSemanticDocument(markdown);
     return EditorState.create({
       doc,
@@ -1572,6 +1611,7 @@ export class ProseMirrorEditorCore implements EditorCore {
         tableLayoutPlugin(),
         tableEditing({ allowTableNodeSelection: true }),
         createCalloutPlugin(),
+        detailsPlugin(this.detailsSession, enterDetailsBody),
         keymap({
           'Mod-z': undo,
           'Mod-y': redo,
@@ -1590,6 +1630,7 @@ export class ProseMirrorEditorCore implements EditorCore {
           'Ctrl-\\': (_state, _dispatch, _view) =>
             this.runProseMirrorCommand({ type: 'clearInlineStyles' }),
           'Ctrl-Enter': (state, dispatch) => {
+            if (exitDetails()(state, dispatch)) return true;
             // 在表格内：下方插入新行
             const context = findTableContext(state);
             if (context) return addTableRowAfter()(state, dispatch);
@@ -1622,6 +1663,7 @@ export class ProseMirrorEditorCore implements EditorCore {
             return true;
           },
           'Shift-Ctrl-Enter': (state, dispatch) => {
+            if (exitDetails(true)(state, dispatch)) return true;
             // 在表格内：上方插入新行
             const context = findTableContext(state);
             if (context) return addTableRowBefore()(state, dispatch);
@@ -1638,6 +1680,7 @@ export class ProseMirrorEditorCore implements EditorCore {
             return true;
           },
           'Shift-Enter': chainCommands(
+            enterDetailsBody,
             insertParagraphLineBreak,
             newlineInCode,
             (state, dispatch) =>
@@ -1650,6 +1693,8 @@ export class ProseMirrorEditorCore implements EditorCore {
             splitBlockExitHeading,
           ),
           Enter: chainCommands(
+            enterDetailsBody,
+            exitDetailsEmptyParagraph,
             // $$ 回车自动补全：段落内只有 $$ 时按回车，生成空 math_block 并自动进入编辑态
             (state, dispatch) => {
               const { $from, empty } = state.selection;
@@ -1689,13 +1734,14 @@ export class ProseMirrorEditorCore implements EditorCore {
           ),
           Backspace: chainCommands(
             deleteSelection,
+            detailsBackspace,
             deleteTaskListItemBeforeCursor,
             removeEmptyCalloutOnBackspace,
             deleteCodeBlockBeforeCursor,
             joinTaskListBackward,
             selectNodeBackward,
           ),
-          Delete: chainCommands(deleteSelection, joinForward, selectNodeForward),
+          Delete: chainCommands(deleteSelection, detailsDeleteBoundary, joinForward, selectNodeForward),
           Space: convertMarkdownListShortcut,
           Tab: chainCommands(
             convertMarkdownListShortcut,
@@ -1709,10 +1755,10 @@ export class ProseMirrorEditorCore implements EditorCore {
             removeTabBeforeCursorInTextblock,
           ),
           'Shift-Ctrl-[': (state, dispatch) =>
-            toggleList(state, dispatch, schema.nodes.ordered_list),
+            state.selection.$from.parent.type.name !== 'details_summary' && toggleList(state, dispatch, schema.nodes.ordered_list),
           'Shift-Ctrl-]': (state, dispatch) =>
-            toggleList(state, dispatch, schema.nodes.bullet_list),
-          'Shift-Ctrl-x': (state, dispatch) => toggleTaskListAtCursor(state, dispatch),
+            state.selection.$from.parent.type.name !== 'details_summary' && toggleList(state, dispatch, schema.nodes.bullet_list),
+          'Shift-Ctrl-x': (state, dispatch) => state.selection.$from.parent.type.name !== 'details_summary' && toggleTaskListAtCursor(state, dispatch),
           'Shift-Ctrl-q': (_state, _dispatch, view) =>
             this.runProseMirrorCommand({ type: 'toggleBlockquote' }),
           'Shift-Ctrl-a': (_state, _dispatch, view) =>
@@ -1814,6 +1860,12 @@ export class ProseMirrorEditorCore implements EditorCore {
     if (isSemanticBlockAlignmentTransaction(transaction) && !docChanged) {
       return;
     }
+    const visibilityOnly = transaction.getMeta(detailsKey) && !docChanged;
+    if (!docChanged && detailsKey.getState(currentState)?.decorations !== detailsKey.getState(nextState)?.decorations) {
+      this.syncRenderRevision += 1;
+      this.syncSnapshot = null;
+      // 显式切换和搜索/历史引起的自动展开均改变双栏几何，不改变正文修订。
+    }
 
     if (docChanged) {
       if (this.view) FootnoteRefNodeView.refreshOpenPreviews(this.view);
@@ -1827,8 +1879,8 @@ export class ProseMirrorEditorCore implements EditorCore {
     }
 
     // 每次事务都递增版本并通知（pending mark 状态切换、选区变化等需要及时反映到 UI）
-    this.version += 1;
-    this.emit(docChanged ? 'content-pending' : 'transaction');
+    if (!visibilityOnly) this.version += 1;
+    this.emit(visibilityOnly ? 'details-visibility' : docChanged ? 'content-pending' : 'transaction');
     if (!nextState.selection.eq(previousSelection)) {
       this.options.onSelectionSnapshotChange?.({
         selection: nextState.selection.empty ? null : {
@@ -1978,7 +2030,7 @@ export class ProseMirrorEditorCore implements EditorCore {
   }
 
   private runProseMirrorCommand(command: EditorCommand): boolean {
-    if (!this.view) {
+    if (!this.view || !this.canExecute(command)) {
       return false;
     }
     return executeEditorCommand(command, this.view, this.markdown, (markdown, options) =>

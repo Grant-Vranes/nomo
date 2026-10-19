@@ -129,6 +129,20 @@ export function createEditorInteractionController(options: EditorInteractionOpti
   }
 
   function runCommand(command: EditorCommand) {
+    if (options.getMode() === 'source' && command.type === 'insertDetails') {
+      const source = options.getSourceEditor();
+      const selection = source?.getSelection();
+      if (!source || !selection) return;
+      const markdown = options.getEditor().getMarkdown();
+      const before = selection.from > 0 && !markdown.slice(0, selection.from).endsWith('\n\n') ? '\n\n' : '';
+      const after = selection.to < markdown.length && !markdown.slice(selection.to).startsWith('\n\n') ? '\n\n' : '';
+      const template = `${before}<details>\n<summary></summary>\n\n${markdown.slice(selection.from, selection.to)}\n\n</details>${after}`;
+      if (source.replaceRange?.(selection.from, selection.to, template)) {
+        source.setSelection(selection.from + before.length + '<details>\n<summary>'.length);
+        source.focus();
+      }
+      return;
+    }
     if (options.getMode() === 'source' && command.type === 'insertText') {
       const sourceEditor = options.getSourceEditor();
       const selection = sourceEditor?.getSelection();

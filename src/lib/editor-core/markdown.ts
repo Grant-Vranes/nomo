@@ -19,7 +19,7 @@ import { InputRule, textblockTypeInputRule } from 'prosemirror-inputrules';
 import { createListInputRule } from './listCommands';
 import Token from 'markdown-it/lib/token.mjs';
 import { defaultMarkdownParser, MarkdownParser } from 'prosemirror-markdown';
-import { Fragment, type Node as ProseMirrorNode } from 'prosemirror-model';
+import { DOMParser as PmDOMParser, Fragment, type Node as ProseMirrorNode } from 'prosemirror-model';
 import { TextSelection } from 'prosemirror-state';
 import { schema, type TableColumnAlignment } from './schema';
 import { classifyHtmlBlock, readHtmlInlineAtom, readHtmlTag } from './html/htmlClassifier';
@@ -28,6 +28,7 @@ import { parseHtmlContent } from './html/htmlToPmLogic';
 import { parseHtmlAnchorAttrs, createHtmlAnchorAttrs } from './html/htmlAnchor';
 import { createLinkAttrs, normalizeLinkHref, serializeMarkdownLinkDestination, serializeMarkdownLinkTitle } from './link';
 import { calloutParserTokens } from './callout/calloutParser';
+import { parseDetailsHtml } from './details/detailsSchema';
 import { splitFrontMatterBlock } from '../markdown/frontMatter';
 import { parseWithSyncAnchors, type MarkdownSyncAnchor } from './scrollSyncMapping';
 
@@ -71,6 +72,10 @@ const tableMarkdownParser = new MarkdownParser(schema, markdownIt, {
     }),
   },
   ...calloutParserTokens,
+  details: { block: 'details', getAttrs: tok => ({ defaultOpen: tok.attrGet('open') !== null }) },
+  details_body: { block: 'details_body' },
+  details_summary_html: { ignore: true },
+  details_html_body: { ignore: true },
   superscript: { mark: 'superscript' },
   subscript: { mark: 'subscript' },
   s: { mark: 'strikethrough' },
@@ -109,6 +114,23 @@ const defaultFenceTokenHandler = tableMarkdownParserWithHandlers.tokenHandlers.f
 // 覆盖 html_block token handler — 分类 HTML 后决定走可编辑节点还是 fallback paragraph
 tableMarkdownParserWithHandlers.tokenHandlers = {
   ...tableMarkdownParserWithHandlers.tokenHandlers,
+  details_summary_html: (state: HtmlMarkdownParseState, tok: Token) => {
+    const root = document.createElement('div');
+    const paragraph = document.createElement('p');
+    paragraph.innerHTML = tok.content;
+    root.append(paragraph);
+    const inline = PmDOMParser.fromSchema(schema).parse(root, { preserveWhitespace: true }).firstChild?.content ?? Fragment.empty;
+    const summary = materializeInlineSource(schema.nodes.details_summary.create(null, inline));
+    state.addNode(summary.type, summary.attrs, summary.content);
+  },
+  details_html_body: (state: HtmlMarkdownParseState, tok: Token) => {
+    const root = document.createElement('div');
+    root.innerHTML = tok.content;
+    parseDetailsHtml(root, schema).forEach(node => {
+      const content = materializeInlineSource(node);
+      state.addNode(content.type, content.attrs, content.content);
+    });
+  },
   softbreak: (state: HtmlMarkdownParseState) => {
     state.openNode(schema.nodes.hard_break, { soft: true });
     state.closeNode();
@@ -932,7 +954,7 @@ function createMathInlineInputRule(): InputRule {
   return new InputRule(/\$(?:\\.|[^\\$])+\$$/, (state, match, start, end) => {
     const $start = state.doc.resolve(start);
     const block = $start.parent;
-    if (block.type.spec.code) return null;
+    if (block.type.spec.code || block.type.name === 'details_summary') return null;
 
     // 美元边界与解析器一致，保留 TeX 内的转义，不消耗公式前的正文。
     const before = block.textBetween(0, $start.parentOffset, '\ufffc', '\ufffc');

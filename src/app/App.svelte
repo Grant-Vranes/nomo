@@ -3230,6 +3230,12 @@
   }
 
   function buildEditorContextMenuItems(target: ContextMenuTarget): ContextMenuItem[] {
+    if (target.kind === 'details') return [
+      { label: t.detailsDefaultOpen(), icon: 'expand', active: target.defaultOpen, disabled: readonlyDocumentMode,
+        action: () => runCommand({ type: 'setDetailsDefaultOpen', open: !target.defaultOpen, pos: target.pos }) },
+      { label: t.unwrapDetails(), icon: 'edit', disabled: readonlyDocumentMode,
+        action: () => runCommand({ type: 'unwrapDetails', pos: target.pos }) },
+    ];
     if (target.kind === 'link') return buildLinkContextMenuItems(target);
     if (target.kind === 'heading') return buildHeadingContextMenuItems(target);
     if (target.kind === 'code-block') return buildCodeBlockContextMenuItems(target);
@@ -3368,6 +3374,7 @@
       commandMenuItem(t.taskList(), { type: 'toggleTaskList' }, 'list'),
       commandMenuItem(t.quote(), { type: 'toggleBlockquote' }, 'quote'),
       commandMenuItem(t.callout(), { type: 'insertCallout' }, 'quote'),
+      commandMenuItem(t.details(), { type: 'insertDetails' }, 'collapse'),
       menuSeparator(),
       commandMenuItem(t.codeBlock(), { type: 'insertCodeBlock' }, 'code'),
       commandMenuItem(t.table(), { type: 'insertTable', rows: 3, columns: 3 }, 'table'),

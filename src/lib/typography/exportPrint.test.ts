@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { classifyPrintBlocks, preparePrintDocument, promotePrintTableHeaders } from './exportPrint';
 
+it('opens every details level before print measurements', () => {
+  const root = document.createElement('div');
+  root.innerHTML = '<details><summary>outer</summary><details><summary>inner</summary><p>body</p></details></details>';
+  preparePrintDocument(root, 170);
+  expect([...root.querySelectorAll('details')].every(node => node.open)).toBe(true);
+  expect(root.textContent).toContain('body');
+});
+
 function table(html: string) {
   const container = document.createElement('div');
   container.innerHTML = `<table>${html}</table>`;

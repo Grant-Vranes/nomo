@@ -14,6 +14,8 @@ export function promotePrintTableHeaders(table: HTMLTableElement): void {
 
 export function preparePrintDocument(root: HTMLElement, widthMm: number, heightMm = 257): void {
   if (![widthMm, heightMm].every(value => Number.isFinite(value) && value > 0)) throw new Error('Invalid print dimensions');
+  // 必须在字体、媒体、KP 和分页测量之前展开；只操作独立打印文档。
+  root.querySelectorAll<HTMLDetailsElement>('details').forEach(details => { details.open = true; });
   root.classList.add('nomo-print');
   root.ownerDocument.body.classList.add('nomo-print-document');
   root.style.setProperty('width', `${widthMm}mm`, 'important');

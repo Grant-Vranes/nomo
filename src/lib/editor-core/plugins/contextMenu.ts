@@ -71,6 +71,7 @@ export type ContextMenuTargetKind =
   | 'image'
   | 'heading'
   | 'code-block'
+  | 'details'
   | 'table'
   | 'math-block'
   | 'mermaid-block';
@@ -82,6 +83,7 @@ export interface ContextMenuTarget {
   text?: string;
   href?: string;
   headingLevel?: number;
+  defaultOpen?: boolean;
 }
 
 /** 上下文菜单打开事件 */
@@ -202,7 +204,7 @@ function preserveOrMoveSelection(view: EditorView, pos: number): void {
 function findSemanticNodeDom(target: HTMLElement, editorDom: HTMLElement): HTMLElement {
   return (
     target.closest<HTMLElement>(
-      'a, h1, h2, h3, h4, h5, h6, .image-node, .code-card, table, .math-block, .mermaid-block',
+      'a, h1, h2, h3, h4, h5, h6, .image-node, .code-card, table, .math-block, .mermaid-block, .details-summary',
     ) ?? editorDom
   );
 }
@@ -233,6 +235,16 @@ function resolveContextTarget(
   }
 
   const heading = eventTarget.closest<HTMLElement>('h1, h2, h3, h4, h5, h6');
+  const summary = eventTarget.closest<HTMLElement>('.details-summary');
+  if (summary) {
+    const $summary = view.state.doc.resolve(view.posAtDOM(summary, 0));
+    for (let depth = $summary.depth; depth > 0; depth--) {
+      if ($summary.node(depth).type.name === 'details') return {
+        kind: 'details', pos: $summary.before(depth), nodeType: 'details',
+        defaultOpen: $summary.node(depth).attrs.defaultOpen,
+      };
+    }
+  }
   if (heading) {
     return {
       kind: 'heading',

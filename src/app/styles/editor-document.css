@@ -2388,3 +2388,18 @@
   line-height: 0;
   vertical-align: sub;
 }
+/* 折叠只控制可见性，正文节点与文档历史始终由同一 EditorView 管理。 */
+.prosemirror-host .details-block[data-details-open="false"] > [data-nomo-details-body] { display: none; }
+.prosemirror-host .details-summary { display: flex; align-items: baseline; gap: 0.35em; position: relative; }
+.prosemirror-host .details-summary-content { flex: 1; min-width: 1em; font-weight: 600; }
+.prosemirror-host .details-summary-content:has(> br.ProseMirror-trailingBreak:only-child)::before,
+.prosemirror-host .details-summary-content:empty::before { content: attr(data-placeholder); opacity: 0.45; pointer-events: none; }
+.prosemirror-host .details-toggle,
+.prosemirror-host .details-more { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0 0.2em; }
+.prosemirror-host .details-block[data-details-open="true"] > .details-summary > .details-toggle { transform: rotate(90deg); }
+.prosemirror-host .details-menu { position: absolute; z-index: 20; right: 0; top: 100%; padding: 0.35em; border: 1px solid var(--md-editor-border); border-radius: 6px; background: var(--md-editor-document-bg); box-shadow: 0 4px 12px #0002; }
+.prosemirror-host .details-menu[hidden] { display: none; }
+.prosemirror-host .details-menu button { display: block; width: 100%; border: 0; padding: 0.4em 0.7em; white-space: nowrap; text-align: start; background: transparent; color: inherit; cursor: pointer; }
+.prosemirror-host .details-menu button:hover,
+.prosemirror-host .details-menu button:focus-visible { background: var(--md-editor-border); }
+.prosemirror-host .details-default-open[aria-checked="true"]::before { content: '✓ '; }

@@ -47,6 +47,7 @@
 | 剪贴板 Markdown 判定 | `src/lib/editor-core/clipboardMarkdown.ts` | `src/lib/editor-core/ProseMirrorEditorCore.ts`, `markdown.ts` | 修改纯文本/Markdown 等价判定、粘贴 Slice 或纯文本事务标记 |
 | Schema 定义 | `src/lib/editor-core/schema.ts` | `src/lib/editor-core/callout/calloutSchema.ts` | 新增/修改节点或 mark 类型 |
 | Markdown 解析与序列化 | `src/lib/editor-core/markdown.ts` | `markdownTokenizer.ts`, `markdownSerialization.ts`, `src/lib/editor-core/callout/`, `html/` | Markdown 与 ProseMirror doc 互转规则变更；Word 可选解析临时放行图片来源，默认编辑与链接校验保持不变；纯 tokenizer 与序列化可供 Worker 复用 |
+| Details/Summary 折叠块 | `src/lib/editor-core/details/` | `nodeViews/DetailsNodeView.ts`, `markdown.ts`, `markdownTokenizer.ts`, `markdownSerialization.ts`, `ProseMirrorEditorCore.ts`, `details.test.ts` | 修改单段富文本标题、嵌套正文、HTML/Markdown 往返、键盘进出、默认展开历史或按位置映射的文档会话临时展开状态 |
 | Markdown 源码行到语义块导航 | `src/lib/editor-core/markdown.ts`, `src/lib/editor-core/ProseMirrorEditorCore.ts` | `src/app/App.svelte` | 诊断、大纲等功能需要从源码行定位到最近的语义顶层块 |
 | 双栏内容滚动跟随 | `src/app/services/markdownScrollSync.ts`, `src/app/services/markdownScrollSyncWorkspace.ts` | `src/app/components/EditorWorkspace.svelte`, `src/app/components/MarkdownSourceEditor.svelte`, `src/lib/editor-core/ProseMirrorEditorCore.ts`, `src/lib/editor-core/scrollSyncMapping.ts` | 修改30%参考线插值、滚动主栏接管、光标安全区、内容修订门控或几何失效处理 |
 | 双栏旧等高兼容接口 | `src/app/services/markdownBlockAlignment.ts` | `src/lib/editor-core/plugins/blockAlignment.ts`, `src/lib/editor-core/blockAlignment.test.ts` | 维护旧补偿接口与测试；当前双栏运行路径不调用这些接口 |
@@ -68,6 +69,7 @@
 | 公式 NodeView | `src/lib/editor-core/nodeViews/MathBlockNodeView.ts`, `MathInlineNodeView.ts` | `src/lib/services/katexMathRenderer.ts` | 公式渲染/编辑体验变更 |
 | 图表 NodeView | `src/lib/editor-core/nodeViews/MermaidBlockNodeView.ts` | `src/lib/services/mermaidDiagramRenderer.ts` | Mermaid 图表渲染变更 |
 | Callout NodeView | `src/lib/editor-core/nodeViews/CalloutNodeView.ts` | `src/lib/editor-core/callout/` | 提示块展示/编辑变更 |
+| 折叠块 NodeView | `src/lib/editor-core/nodeViews/DetailsNodeView.ts` | `details/detailsState.ts`, `details/detailsCommands.ts`, `src/app/styles/editor-document.css`, `src/lib/typography/exportPrint.ts`, `exportRuntime.ts` | 修改箭头/块菜单、组字结束后收起与光标恢复、共享正文 DOM 显隐、原生 HTML 展开重排及打印前递归展开 |
 | HTML 块 NodeView | `src/lib/editor-core/nodeViews/HtmlBlockNodeView.ts` | `src/lib/editor-core/html/` | 可编辑 HTML 块行为变更 |
 | TOC 块 NodeView | `src/lib/editor-core/nodeViews/TocBlockNodeView.ts` | `src/lib/toc/tocService.ts` | 文档内目录展示变更 |
 | 注释块/行内注释 NodeView | `src/lib/editor-core/nodeViews/CommentBlockNodeView.ts`, `CommentInlineNodeView.ts` | `src/lib/editor-core/nodeViews/activeEditRegistry.ts` | 注释卡片展示/编辑/编辑态协调 |

@@ -6,6 +6,7 @@
     Braces,
     CheckSquare,
     ChevronUp,
+    PanelTopClose,
     Code2,
     CodeXml,
     Columns2,
@@ -287,6 +288,10 @@
         on:click={() => runCommand({ type: 'insertCallout' })}
       >
         <Info size={17} />
+      </button>
+      <button title={t.details()} aria-label={t.insertDetails()} on:mousedown|preventDefault
+        on:click={() => runCommand({ type: 'insertDetails' })}>
+        <PanelTopClose size={17} />
       </button>
       <button
         title={t.unorderedList()}

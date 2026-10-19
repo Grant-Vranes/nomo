@@ -2,6 +2,7 @@ import { Schema, type DOMOutputSpec } from 'prosemirror-model';
 import { schema as markdownSchema } from 'prosemirror-markdown';
 import { tableNodes } from 'prosemirror-tables';
 import { calloutNodeSpec } from './callout/calloutSchema';
+import { detailsNodes } from './details/detailsSchema';
 import { createLinkAttrs } from './link';
 import { createHtmlAnchorAttrs } from './html/htmlAnchor';
 import { t } from '../../app/i18n';
@@ -97,6 +98,13 @@ export const schema = new Schema({
     })
     .update('hard_break', hardBreakNodeSpec)
     .update('image', imageNodeSpec)
+    .update('code_block', {
+      ...markdownSchema.spec.nodes.get('code_block')!,
+      parseDOM: [{ tag: 'pre', preserveWhitespace: 'full', getAttrs: dom => ({
+        params: ((dom as HTMLElement).querySelector('code')?.className ?? '').replace(/^language-/, ''),
+      }) }],
+      toDOM: node => ['pre', ['code', node.attrs.params ? { class: `language-${String(node.attrs.params).split(/\s+/)[0]}` } : {}, 0]],
+    })
     .append(
       tableNodes({
         tableGroup: 'block',
@@ -305,6 +313,7 @@ export const schema = new Schema({
       },
       // 跨行公式块（display math）：$$...$$ 语法
       callout: calloutNodeSpec,
+      ...detailsNodes,
       toc_block: {
         atom: true,
         selectable: true,

@@ -69,6 +69,20 @@ describe('editorInteractionController viewport layout', () => {
     expect(() => controller.refreshEditorViewportLayout()).not.toThrow();
   });
 
+  it('inserts the standard details template around source selection and focuses its title', () => {
+    const textarea = document.createElement('textarea');
+    textarea.value = 'before\n\nselected body\n\nafter';
+    textarea.setSelectionRange(8, 21);
+    const editor = createEditorCoreStub();
+    editor.getMarkdown = () => textarea.value;
+    const controller = createController({ mode: 'source', editor, sourcePane: undefined,
+      semanticPane: undefined, sourceTextarea: textarea });
+    controller.runCommand({ type: 'insertDetails' });
+    expect(textarea.value).toBe('before\n\n<details>\n<summary></summary>\n\nselected body\n\n</details>\n\nafter');
+    expect(textarea.selectionStart).toBe(textarea.value.indexOf('</summary>'));
+    expect(editor.execute).not.toHaveBeenCalled();
+  });
+
   it('scrolls the source pane to keep the caret visible after inserting a newline', () => {
     const sourcePane = createPane({ scrollHeight: 560, clientHeight: 100, scrollTop: 300 });
     sourcePane.getClientRects = () => [createRect(0)] as unknown as DOMRectList;
@@ -324,6 +338,7 @@ function createSourceEditorStub(
       textarea.value = value;
     },
     getSelection: () => ({ from: textarea.selectionStart, to: textarea.selectionEnd }),
+    replaceRange: (from, to, text) => { textarea.setRangeText(text, from, to, 'end'); return true; },
     setSelection: (from, to = from) => textarea.setSelectionRange(from, to),
     getSelectedMarkdown: () => textarea.value.slice(textarea.selectionStart, textarea.selectionEnd),
     focus: () => textarea.focus(),

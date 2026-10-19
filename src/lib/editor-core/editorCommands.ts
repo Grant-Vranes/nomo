@@ -94,6 +94,8 @@ import {
   toggleFirstTableRowHeader,
 } from './tableCommands';
 import { insertCallout, toggleCalloutType, unwrapCallout } from './callout/calloutCommands';
+import { insertDetails, setDetailsDefaultOpen, unwrapDetails } from './details/detailsCommands';
+import { detailsHistoryBoundary, detailsKey } from './details/detailsState';
 import type { EditorCommand, SetMarkdownOptions } from './types';
 import { createTocList } from '../toc/tocService';
 import { ensureFrontMatter } from '../markdown/frontMatter';
@@ -616,6 +618,14 @@ export function insertQuickInsertContent(
   const { $from } = prepared.selection;
 
   switch (command.type) {
+    case 'insertDetails':
+      if (!insertDetails(prepared, next => {
+        for (const step of next.steps) tr.step(step);
+        tr.setSelection(TextSelection.create(tr.doc, next.selection.anchor, next.selection.head));
+        tr.setMeta(detailsKey, next.getMeta(detailsKey));
+        tr.setMeta(detailsHistoryBoundary, true);
+      })) return false;
+      break;
     case 'setHeading':
       if (
         $from.parent.type !== schema.nodes.heading ||
@@ -768,7 +778,8 @@ export function executeEditorCommand(
   switch (command.type) {
     case 'insertText': {
       if (!(state.selection instanceof TextSelection) || !state.selection.$from.parent.inlineContent) return false;
-      dispatch(closeHistory(state.tr).insertText(command.text).scrollIntoView());
+      const text = state.selection.$from.parent.type.name === 'details_summary' ? command.text.replace(/[\r\n\t]+/g, ' ') : command.text;
+      dispatch(closeHistory(state.tr).insertText(text).scrollIntoView());
       dispatch(closeHistory(view.state.tr).setMeta('addToHistory', false));
       return true;
     }
@@ -800,6 +811,12 @@ export function executeEditorCommand(
       return run(toggleBlockquote);
     case 'insertCallout':
       return insertCallout(state, dispatch, command.calloutType ?? 'note');
+    case 'insertDetails':
+      return insertDetails(state, dispatch);
+    case 'setDetailsDefaultOpen':
+      return setDetailsDefaultOpen(command.open, command.pos)(state, dispatch);
+    case 'unwrapDetails':
+      return unwrapDetails(command.pos)(state, dispatch);
     case 'toggleCalloutType':
       return toggleCalloutType(state, dispatch, command.calloutType);
     case 'unwrapCallout':

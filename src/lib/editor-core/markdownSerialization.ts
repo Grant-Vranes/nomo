@@ -24,6 +24,18 @@ const paragraphSyntaxRanges = new WeakMap<MarkdownSerializerState, Array<{ from:
 const tableMarkdownSerializer = new MarkdownSerializer(
   {
     ...defaultMarkdownSerializer.nodes,
+    details(state, node) {
+      const title = serializeHtmlInlineContent(projectInlineSource(node.child(0)));
+      state.text(`<details${node.attrs.defaultOpen ? ' open' : ''}>\n<summary>${title}</summary>\n`, false);
+      state.write('\n');
+      state.renderContent(node.child(1));
+      flushPendingClosedBlock(state);
+      state.ensureNewLine();
+      state.write('</details>');
+      state.closeBlock(node);
+    },
+    details_summary(state, node) { state.renderInline(node); state.closeBlock(node); },
+    details_body(state, node) { state.renderContent(node); },
     horizontal_rule(state, node, parent, index) {
       if (parent.type === schema.nodes.list_item && index === 0) {
         // 列表首块不能输出 - ---，否则保存后会被当作列表外的分割线。

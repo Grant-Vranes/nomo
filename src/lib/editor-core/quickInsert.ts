@@ -21,6 +21,7 @@ export type QuickInsertEditorCommand = Extract<
       | 'insertCodeBlock'
       | 'toggleBlockquote'
       | 'insertCallout'
+      | 'insertDetails'
       | 'insertHorizontalRule'
       | 'insertMathBlock'
       | 'insertMathInline'
@@ -118,6 +119,12 @@ export const QUICK_INSERT_CATEGORIES: QuickInsertCategory[] = [
     label: () => t.image(),
     icon: 'image',
     variants: [{ label: () => '', command: { type: 'chooseImage' } }],
+  },
+  {
+    id: 'details',
+    label: () => t.details(),
+    icon: 'quote',
+    variants: [{ label: () => '', command: { type: 'insertDetails' } }],
   },
   {
     id: 'link',

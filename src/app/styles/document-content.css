@@ -1,4 +1,17 @@
 /* 编辑器与独立导出共用的正文展示样式；交互与窗口布局留在 editor-document.css。 */
+.prosemirror-host .details-block,
+.nomo-export details {
+  margin: 1em 0;
+  border: 1px solid var(--md-editor-border);
+  border-radius: 6px;
+  padding: 0.5em 0.8em;
+  min-width: 0;
+}
+.prosemirror-host [data-nomo-details-body],
+.nomo-export [data-nomo-details-body] { padding-inline-start: 1.1em; min-width: 0; }
+.nomo-export summary { cursor: pointer; font-weight: 600; }
+.nomo-print details { break-inside: auto; }
+.nomo-print summary { break-after: avoid; }
 .prosemirror-host .task-checkbox-widget,
 .nomo-export .task-checkbox-widget {
   position: relative;
