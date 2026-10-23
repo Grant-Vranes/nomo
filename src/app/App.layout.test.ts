@@ -1080,7 +1080,9 @@ describe('App outline layout', () => {
     expect(railStyles).toMatch(/display:\s*flex;/);
     expect(railStyles).not.toMatch(/display:\s*none;/);
     expect(topbarStyles).toMatch(/flex-wrap:\s*nowrap;/);
-    expect(topbarStyles).toMatch(/height:\s*40px;/);
+    // 最小窗口沿用默认标签栏和空工作区占位高度，避免跨过 920px 断点时正文下移。
+    expect(topbarStyles).not.toMatch(/(?:height|block-size)\s*:/);
+    expect(narrowDesktopStyles).not.toContain('.editor-shell.no-open-document::before');
     expect(toolbarStyles).toMatch(/flex-wrap:\s*nowrap;/);
     expect(toolbarStyles).toMatch(/overflow-x:\s*clip;/);
     expect(toolbarStyles).toMatch(/overflow-y:\s*hidden;/);

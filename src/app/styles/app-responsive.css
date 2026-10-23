@@ -39,12 +39,6 @@
 
   .topbar {
     flex-wrap: nowrap;
-    height: 40px;
-    min-height: 40px;
-  }
-
-  .editor-shell.no-open-document::before {
-    min-height: 40px;
   }
 
   .toolbar {
