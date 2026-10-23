@@ -77,6 +77,42 @@
   let widthPickerOpen = false;
   let mathPickerOpen = false;
 
+  function trackToolbarScroll(node: HTMLElement) {
+    let frameId: number | null = null;
+
+    const update = () => {
+      frameId = null;
+      const maxScrollLeft = Math.max(0, node.scrollWidth - node.clientWidth);
+      node.classList.toggle('can-scroll-left', node.scrollLeft > 1);
+      node.classList.toggle('can-scroll-right', maxScrollLeft - node.scrollLeft > 1);
+    };
+
+    const scheduleUpdate = () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      frameId = window.requestAnimationFrame(update);
+    };
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleUpdate);
+    resizeObserver?.observe(node);
+    node.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
+    scheduleUpdate();
+
+    return {
+      destroy() {
+        if (frameId !== null) {
+          window.cancelAnimationFrame(frameId);
+        }
+        resizeObserver?.disconnect();
+        node.removeEventListener('scroll', scheduleUpdate);
+        window.removeEventListener('resize', scheduleUpdate);
+      },
+    };
+  }
+
   $: if (inactive) {
     mathPickerOpen = false;
     diagramPickerOpen = false;
@@ -181,7 +217,12 @@
 <svelte:window on:resize={closeResponsivePickers} />
 
 {#key interfaceLocale}
-  <div class="toolbar" aria-label={t.formatToolbar()} data-interface-locale={interfaceLocale}>
+  <div
+    class="toolbar"
+    aria-label={t.formatToolbar()}
+    data-interface-locale={interfaceLocale}
+  >
+    <div class="toolbar-actions-scroll" use:trackToolbarScroll>
     <div class="toolbar-group toolbar-group-core">
       <button
         title={t.title()}
@@ -438,6 +479,7 @@
       </button>
     </div>
     <span class="divider toolbar-actions-divider"></span>
+    </div>
     <span class="toolbar-spacer"></span>
     <div class="toolbar-utilities">
       <button class="icon-button" class:active={emojiPickerOpen} data-emoji-trigger aria-haspopup="dialog" aria-expanded={emojiPickerOpen}

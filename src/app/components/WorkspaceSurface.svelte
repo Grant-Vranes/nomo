@@ -12,8 +12,8 @@
   let bodyTop = 0;
   let radius = 0;
   let returnRadius = 8;
-  let nearBlur = 0.8;
-  let softBlur = 5;
+  let nearBlur = 1;
+  let softBlur = 9;
 
   $: shadowPadding = 3 * Math.max(nearBlur, softBlur);
   $: path = buildPath(width, height, bodyTop, radius, returnRadius, indicatorGeometry);
@@ -168,11 +168,11 @@
     --workspace-edge: color-mix(in srgb, var(--md-editor-border) 76%, transparent);
     --workspace-border-width: 1px;
     --workspace-return-radius: 8px;
-    --workspace-near-blur: 0.8px;
-    --workspace-soft-blur: 5px;
+    --workspace-near-blur: 1px;
+    --workspace-soft-blur: 9px;
     --workspace-shadow-color: rgb(22, 32, 44);
-    --workspace-near-opacity: 0.04;
-    --workspace-soft-opacity: 0.06;
+    --workspace-near-opacity: 0.045;
+    --workspace-soft-opacity: 0.1;
     display: contents;
     pointer-events: none;
   }

@@ -625,6 +625,43 @@
   min-width: 0;
 }
 
+.toolbar-actions-scroll {
+  --toolbar-scroll-shadow-left: transparent;
+  --toolbar-scroll-shadow-right: transparent;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  box-shadow:
+    inset 14px 0 14px -14px var(--toolbar-scroll-shadow-left),
+    inset -14px 0 14px -14px var(--toolbar-scroll-shadow-right);
+  transition: box-shadow 180ms ease;
+}
+
+.toolbar-actions-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbar-actions-scroll.can-scroll-left {
+  --toolbar-scroll-shadow-left: color-mix(in srgb, var(--md-editor-fg) 14%, transparent);
+}
+
+.toolbar-actions-scroll.can-scroll-right {
+  --toolbar-scroll-shadow-right: color-mix(in srgb, var(--md-editor-fg) 14%, transparent);
+}
+
+.toolbar-actions-scroll:has(.table-picker-popover, .diagram-picker-popover) {
+  z-index: 2;
+  overflow: visible;
+  --toolbar-scroll-shadow-left: transparent;
+  --toolbar-scroll-shadow-right: transparent;
+}
+
 .toolbar-reveal-button {
   position: absolute;
   z-index: 72;
