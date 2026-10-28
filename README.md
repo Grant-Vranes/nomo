@@ -65,10 +65,44 @@ brew install --cask nomo
 
 - Windows：Visual Studio 2022 Build Tools 或完整 Visual Studio。
 - macOS：Xcode Command Line Tools；构建 Quick Look 扩展需要完整 Xcode。
+- Linux（Ubuntu/Debian）：
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev \
+  libayatana-appindicator3-dev librsvg2-dev patchelf
+```
+
+### 运行
 
 ```bash
 pnpm install
 pnpm tauri dev
+```
+
+前端（Svelte/TS）支持热更新；修改 `src-tauri/` 下的 Rust 代码会自动重新编译并重启应用。
+
+### 打包构建
+
+```bash
+# Linux：生成 .deb 和 .rpm
+pnpm tauri build --bundles deb,rpm
+
+# macOS：生成 .app / .dmg（含 Quick Look 扩展与签名校验）
+pnpm build:macos
+
+# Windows：生成 NSIS 安装包
+pnpm build:win64:nsis
+```
+
+产物位置：
+
+- 可执行文件：`src-tauri/target/release/nomo`
+- 安装包：`src-tauri/target/release/bundle/`（按格式存放在 `deb/`、`rpm/`、`dmg/`、`nsis/` 等子目录）
+
+如只需构建前端（纯 Web 预览，无 Tauri 壳）：
+
+```bash
+pnpm build && pnpm preview
 ```
 
 ## 参与项目
