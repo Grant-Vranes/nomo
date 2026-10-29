@@ -105,6 +105,24 @@ pnpm build:win64:nsis
 pnpm build && pnpm preview
 ```
 
+### 调试
+
+调试分为前端（Svelte/TS）与 Rust 后端两部分：
+
+**前端调试**
+
+- 在应用窗口中右键 → Inspect（或 `Cmd/Ctrl+Shift+I`）打开 WebView DevTools，Debug 构建默认启用；
+- 若问题只涉及 UI / 编辑器逻辑，可不带 Tauri 壳直接跑 `pnpm dev`，在浏览器中打开 `http://localhost:5173` 调试（调用 Tauri API 的功能不可用）；
+- 单元测试与类型检查：`pnpm test`、`pnpm test:watch`、`pnpm check`。
+
+**Rust 后端调试**
+
+- `pnpm tauri dev` 运行时，后端 `eprintln!` / `dbg!` 输出会直接打印在终端，可快速验证逻辑；
+- 需要断点调试时，在 VS Code 中安装 rust-analyzer 与 CodeLLDB 扩展，通过 Cargo 启动 `src-tauri` 或以 Attach 方式附加到 `nomo` 进程；
+- 前端 `invoke` 调用报错时，对照 DevTools Console 与终端两侧的输出定位问题。
+
+> 注意：`tauri build` 产出的 release 包不启用 devtools，调试请始终使用 `tauri dev` 的 debug 构建。
+
 ## 参与项目
 
 欢迎提交 [Issue](https://github.com/nomo-md/nomo/issues) 或 [Pull Request](https://github.com/nomo-md/nomo/pulls)；反馈问题时请附系统版本、复现步骤与样例。
