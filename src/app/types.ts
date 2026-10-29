@@ -5,7 +5,7 @@ export type EditorViewMode = EditorMode | 'split';
 export type SplitViewLayout = 'semantic-source' | 'source-semantic';
 export type SplitActivePane = EditorMode;
 
-export type DocumentKind = 'markdown' | 'text' | 'json';
+export type DocumentKind = 'markdown' | 'text' | 'json' | 'media';
 
 export interface CommonTabState {
   id: string;
@@ -53,7 +53,13 @@ export interface SegmentedTextTabState extends CommonTabState {
   indexProgress: number;
 }
 
-export type Tab = MarkdownTabState | SegmentedTextTabState;
+/** 只读查看器标签：只保存路径，不把二进制读成文本，不进入编辑/保存流程。 */
+export interface MediaTabState extends CommonTabState {
+  documentKind: 'media';
+  mediaKind: 'html' | 'drawio' | 'excalidraw' | 'pdf' | 'image';
+}
+
+export type Tab = MarkdownTabState | SegmentedTextTabState | MediaTabState;
 
 /** 标签栏中的一个工作区项；组合只引用文档状态，不复制正文或编辑历史。 */
 export type WorkspaceItem = SingleWorkspaceItem | ComparisonWorkspaceItem;

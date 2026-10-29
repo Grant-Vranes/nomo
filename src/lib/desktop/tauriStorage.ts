@@ -190,15 +190,19 @@ export async function openMarkdownWithDialog(): Promise<NativeDocument | null> {
 }
 
 /**
- * 只选择文档路径，不读取正文。TXT/JSON 必须先经过类型路由，避免误入 Markdown 全量读取链路。
+ * 只选择文件路径，不读取正文。Ctrl/Cmd+O 使用类型化 "All Files" 选择器
+ * （`choose_opened_file`），由前端 file-types 注册表二次判型分流。
  */
 export async function pickDocumentPathsWithDialog(): Promise<string[]> {
-  const { open } = await import('@tauri-apps/plugin-dialog');
-  const selected = await open({
-    multiple: true,
-    filters: [{ name: 'Documents', extensions: ['md', 'markdown', 'txt', 'json'] }],
-  });
-  return typeof selected === 'string' ? [selected] : selected ?? [];
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const paths = await invoke<string[] | string>('choose_opened_file');
+    return typeof paths === 'string' ? [paths] : Array.isArray(paths) ? paths : [];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === 'cancelled') return [];
+    throw error;
+  }
 }
 
 async function pickPathWithDialog(name: string, extensions: string[]): Promise<string | null> {

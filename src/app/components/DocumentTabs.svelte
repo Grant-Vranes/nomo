@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, FileJson2, FileText, FileType2, Plus, X } from '@lucide/svelte';
+  import { ChevronDown, FileImage, FileJson2, FileText, FileType2, Plus, X } from '@lucide/svelte';
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import {
     motionIn,
@@ -38,6 +38,8 @@
   export let closeTab: (tabId: string, event?: Event) => void;
   export let pinPreviewTab: () => void;
   export let createNewFile: () => void;
+  export let createNewDrawioFile: () => void;
+  export let createNewExcalidrawFile: () => void;
   export let openFileDialog: () => void = () => undefined;
   export let openFolderDialog: () => void = () => undefined;
   export let openContextMenu: (request: ContextMenuRequest) => void = () => undefined;
@@ -128,7 +130,10 @@
   let tabsContainer: HTMLDivElement;
   let measureArea: HTMLDivElement;
   let dropdownBtnEl: HTMLButtonElement;
+  let addBtnEl: HTMLButtonElement;
   let showAddButton = true;
+  let showAddMenu = false; // 「+」新建菜单是否展开
+  let addMenuStyle = '';
   let overflowState = false; // 是否有标签溢出（由测量函数控制）
   let showDropdown = false; // 下拉菜单是否展开（由用户点击控制）
   let hiddenTabs: DisplayTab[] = [];
@@ -447,16 +452,42 @@
     void requestTabSwitch(tabId);
   }
 
+  function updateAddMenuPosition() {
+    if (!addBtnEl || !showAddMenu) return;
+    const rect = addBtnEl.getBoundingClientRect();
+    addMenuStyle = `position:fixed;top:${rect.bottom + 4}px;left:${rect.right - 200}px;z-index:9999;`;
+  }
+
+  function toggleAddMenu(event: Event) {
+    event.stopPropagation();
+    if (workspaceInteractionDisabled) return;
+    showAddMenu = !showAddMenu;
+    if (showAddMenu) {
+      void tick().then(updateAddMenuPosition);
+    }
+  }
+
+  function selectAddMenuAction(action: () => void) {
+    showAddMenu = false;
+    action();
+  }
+
   // 点击外部关闭下拉菜单
   function handleWindowClick(event: MouseEvent) {
-    if (!showDropdown) return;
     const target = event.target as Node;
     // 通过 portal 渲染的下拉菜单不在原 DOM 位置，需要额外判断
     const menuEl = document.querySelector('.tab-dropdown-menu-portal');
-    const btnEl = dropdownBtnEl;
-    if (btnEl && (btnEl === target || btnEl.contains(target))) return;
-    if (menuEl && (menuEl === target || menuEl.contains(target))) return;
-    showDropdown = false;
+    if (showDropdown) {
+      const btnEl = dropdownBtnEl;
+      if (btnEl && (btnEl === target || btnEl.contains(target))) return;
+      if (menuEl && (menuEl === target || menuEl.contains(target))) return;
+      showDropdown = false;
+    }
+    if (showAddMenu) {
+      if (addBtnEl && (addBtnEl === target || addBtnEl.contains(target))) return;
+      if (menuEl && (menuEl === target || menuEl.contains(target))) return;
+      showAddMenu = false;
+    }
   }
 
   $: if (pendingActiveTabId === displayActiveTabId) {
@@ -518,6 +549,8 @@
           <FileJson2 size={13} />
         {:else if tab.documentKind === 'text'}
           <FileType2 size={13} />
+        {:else if tab.documentKind === 'media'}
+          <FileImage size={13} />
         {:else}
           <FileText size={13} />
         {/if}
@@ -576,6 +609,8 @@
             <FileJson2 size={13} />
           {:else if tab.documentKind === 'text'}
             <FileType2 size={13} />
+          {:else if tab.documentKind === 'media'}
+            <FileImage size={13} />
           {:else}
             <FileText size={13} />
           {/if}
@@ -621,16 +656,53 @@
         <button
           type="button"
           class="tab-add"
+          class:active={showAddMenu}
           title={t.newFile()}
           aria-label={t.newFile()}
+          aria-haspopup="menu"
+          aria-expanded={showAddMenu}
+          bind:this={addBtnEl}
           disabled={workspaceInteractionDisabled}
-          on:click={() => !workspaceInteractionDisabled && createNewFile()}
+          on:click={toggleAddMenu}
         >
           <Plus size={16} />
         </button>
       {/if}
     </div>
   </header>
+
+  <!-- 新建菜单：Portal 渲染到 body，提供 Markdown / Draw.io / Excalidraw 三种创建入口 -->
+  {#if showAddMenu}
+    <div class="tab-dropdown-menu tab-dropdown-menu-portal" style={addMenuStyle} role="menu">
+      <button
+        type="button"
+        class="tab-dropdown-item"
+        role="menuitem"
+        on:click={() => selectAddMenuAction(createNewFile)}
+      >
+        <FileText size={14} />
+        <span>{t.newMarkdown()}</span>
+      </button>
+      <button
+        type="button"
+        class="tab-dropdown-item"
+        role="menuitem"
+        on:click={() => selectAddMenuAction(createNewDrawioFile)}
+      >
+        <FileImage size={14} />
+        <span>{t.newDrawio()}</span>
+      </button>
+      <button
+        type="button"
+        class="tab-dropdown-item"
+        role="menuitem"
+        on:click={() => selectAddMenuAction(createNewExcalidrawFile)}
+      >
+        <FileImage size={14} />
+        <span>{t.newExcalidraw()}</span>
+      </button>
+    </div>
+  {/if}
 
   <!-- Portal 下拉菜单：渲染到 body 避免被 overflow:hidden 裁剪 -->
   {#if showDropdown && hiddenTabs.length > 0}
@@ -652,6 +724,8 @@
             <FileJson2 size={13} />
           {:else if tab.documentKind === 'text'}
             <FileType2 size={13} />
+          {:else if tab.documentKind === 'media'}
+            <FileImage size={13} />
           {:else}
             <FileText size={13} />
           {/if}

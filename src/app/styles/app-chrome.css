@@ -29,6 +29,13 @@
   overflow: hidden;
 }
 
+/* 媒体查看器（图片/PDF/HTML/Draw.io/Excalidraw）是 editor-card 的唯一子元素，
+   需横跨 auto + 1fr 两行，否则会塌缩进 auto 行导致下方大片空白。 */
+.editor-card > .media-viewer {
+  grid-row: 1 / -1;
+  min-height: 0;
+}
+
 .editor-shell.has-open-document > .topbar {
   position: relative;
   z-index: 2;
@@ -395,6 +402,11 @@
 
 .tab-add:hover {
   background: rgba(128, 128, 128, 0.1);
+  color: var(--md-editor-fg);
+}
+
+.tab-add.active {
+  background: rgba(128, 128, 128, 0.14);
   color: var(--md-editor-fg);
 }
 

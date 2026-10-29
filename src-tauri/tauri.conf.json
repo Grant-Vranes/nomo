@@ -46,7 +46,9 @@
     "targets": "all",
     "resources": {
       "../sample.md": "samples/sample.md",
-      "../assets/128x128.png": "samples/assets/128x128.png"
+      "../assets/128x128.png": "samples/assets/128x128.png",
+      "../resources/drawio": "resources/drawio",
+      "../resources/excalidraw": "resources/excalidraw"
     },
     "fileAssociations": [
       {
@@ -67,6 +69,41 @@
         "ext": ["json"],
         "name": "JSON Document",
         "description": "JSON Document",
+        "role": "Editor",
+        "mimeType": "application/json"
+      },
+      {
+        "ext": ["html", "htm"],
+        "name": "HTML Document",
+        "description": "HTML Document",
+        "role": "Viewer",
+        "mimeType": "text/html"
+      },
+      {
+        "ext": ["pdf"],
+        "name": "PDF Document",
+        "description": "PDF Document",
+        "role": "Viewer",
+        "mimeType": "application/pdf"
+      },
+      {
+        "ext": ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"],
+        "name": "Image File",
+        "description": "Image File",
+        "role": "Viewer",
+        "mimeType": "image/*"
+      },
+      {
+        "ext": ["drawio"],
+        "name": "Draw.io Diagram",
+        "description": "Draw.io Diagram",
+        "role": "Editor",
+        "mimeType": "application/x-drawio"
+      },
+      {
+        "ext": ["excalidraw"],
+        "name": "Excalidraw Drawing",
+        "description": "Excalidraw Drawing",
         "role": "Editor",
         "mimeType": "application/json"
       }

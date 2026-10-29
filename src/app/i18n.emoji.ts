@@ -78,5 +78,6 @@ export const EMOJI_TRANSLATIONS: Record<string, Record<string, string>> = {
     emojiGroup7: '物',
     emojiGroup8: '記号',
     emojiGroup9: '旗',
+    titlebarDropHint: 'ここにドロップすると開きます',
   },
 };

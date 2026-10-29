@@ -522,7 +522,12 @@ fn restore_normal_window_geometry(
     )
     .map(tauri::Monitor::scale_factor)
     .unwrap_or_else(|| window.scale_factor().unwrap_or(1.0));
-    apply_window_geometry(window, state.normal_position, state.normal_size, target_scale)?;
+    apply_window_geometry(
+        window,
+        state.normal_position,
+        state.normal_size,
+        target_scale,
+    )?;
 
     // 先恢复最终边界再提高下限，避免小窗在原地先被撑大一次。
     window

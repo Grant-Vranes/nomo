@@ -46,3 +46,10 @@ src/paraglide/
 
 # Local video production assets
 /video/
+
+# Offline editor bundles (fetched/built by scripts/fetch-offline-editors.mjs)
+resources/drawio/
+resources/excalidraw/
+resources/draw.war
+scripts/excalidraw-host/node_modules/
+scripts/excalidraw-host/package-lock.json

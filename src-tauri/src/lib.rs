@@ -1,12 +1,16 @@
 mod app_logger;
-mod emoji_catalog;
 mod config;
+mod emoji_catalog;
 mod export;
 mod external_link;
+mod file_access;
 mod file_clipboard;
 mod file_system;
+mod file_types;
 mod i18n;
 mod models;
+mod offline_editors;
+mod open_requests;
 mod pdf_outline;
 mod software_update;
 mod text_document;
@@ -51,6 +55,12 @@ pub fn run() {
     let builder = builder.plugin(crate::window::os::browser_shortcut_plugin());
 
     builder
+        .register_uri_scheme_protocol("drawio-local", move |ctx, request| {
+            crate::offline_editors::serve_offline_asset(ctx.app_handle(), "drawio", request.uri())
+        })
+        .register_uri_scheme_protocol("excalidraw-local", move |ctx, request| {
+            crate::offline_editors::serve_offline_asset(ctx.app_handle(), "excalidraw", request.uri())
+        })
         .manage(file_clipboard::FileClipboard::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             crate::app_logger::info("App", "收到单实例启动参数");
@@ -234,6 +244,7 @@ pub fn run() {
                 crate::app_logger::warn("Update", &format!("初始化更新日志版本记录失败：{error}"));
             }
             app.manage(crate::window::open_targets::OpenTargetRegistry::default());
+            app.manage(crate::open_requests::OpenRequestRegistry::default());
             crate::window::tab_transfer::recover_journals(app.handle())
                 .map_err(std::io::Error::other)?;
             let segmented_root = app
@@ -318,6 +329,13 @@ pub fn run() {
             crate::export::export_pdf_from_html,
             crate::export::read_file_as_base64,
             crate::file_system::read_markdown_file,
+            crate::file_access::choose_opened_file,
+            crate::file_access::read_external_text_file,
+            crate::file_access::export_media_file_as,
+            crate::file_access::open_dropped_paths,
+            crate::file_access::create_canvas_file,
+            crate::file_access::write_canvas_file,
+            crate::open_requests::take_open_requests,
             crate::file_system::write_markdown_file,
             crate::file_system::write_markdown_file_with_encoding,
             crate::text_document::commands::open_segmented_document,

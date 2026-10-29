@@ -3291,11 +3291,15 @@ fn document_kind_from_path(path: &Path) -> TextDocumentResult<SegmentedDocumentK
         .map(str::to_ascii_lowercase)
         .as_deref()
     {
-        Some("txt") => Ok(SegmentedDocumentKind::Text),
         Some("json") => Ok(SegmentedDocumentKind::Json),
+        // Markdown 之外的一切文本/代码文件都走分段 CodeMirror 链路；
+        // 未知后缀在打开前已由 file_types 注册表准入，这里回退为纯文本。
+        _ if crate::file_types::classify(path) == Some(crate::file_types::FileKind::Code) => {
+            Ok(SegmentedDocumentKind::Text)
+        }
         _ => Err(TextDocumentError::new(
             "unsupported-document-kind",
-            "分段编辑器只允许打开 .txt 和 .json 文件",
+            "分段编辑器只允许打开文本与代码文件",
         )),
     }
 }

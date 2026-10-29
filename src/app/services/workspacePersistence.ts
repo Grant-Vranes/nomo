@@ -152,6 +152,10 @@ export async function createPersistedWorkspaceState(input: {
   const draftWritePolicy = input.draftWritePolicy ?? 'write-needed';
 
   for (const tab of input.tabs) {
+    if (tab.documentKind === 'media') {
+      // 媒体标签只读且只保存路径；工作区恢复时由用户重新打开，不持久化。
+      continue;
+    }
     if (isSegmentedTextTab(tab)) {
       // 分段正文和恢复日志归 Rust 会话所有，工作区元数据绝不创建 Markdown draft。
       persistedTabs.push(toPersistedSegmentedWorkspaceTab(tab));
@@ -290,11 +294,12 @@ export async function migrateWorkspaceSetting(
     const documentKind = resolvePersistedDocumentKind({ ...legacyTab, nativePath });
     if (documentKind !== 'markdown') {
       // 旧版曾把 TXT 当作 Markdown 正文；迁移后必须重新由 Rust 按路径打开，不能把全量正文带回 WebView。
+      if (documentKind === 'media') continue;
       tabs.push(
         normalizePersistedSegmentedWorkspaceTab({
           ...legacyTab,
           nativePath,
-          documentKind,
+          documentKind: documentKind as 'text' | 'json',
           recoveryConflictPath: null,
           selection: null,
           scrollAnchor: null,
@@ -426,7 +431,7 @@ function toPersistedSegmentedWorkspaceTab(
 }
 
 function normalizePersistedWorkspaceState(state: PersistedWorkspaceState): PersistedWorkspaceState {
-  const tabs = state.tabs.map(normalizePersistedWorkspaceTabByPath);
+  const tabs = normalizePersistedWorkspaceTabs(state.tabs);
   const items = normalizeWorkspaceItems(tabs, state.items);
   const activeItem = items.find((item) => item.id === state.activeItemId) ??
     findWorkspaceItemForTab(items, state.activeTabId) ?? items[0];
@@ -446,7 +451,7 @@ function migratePersistedWorkspaceStateV2(
 ): PersistedWorkspaceState {
   return normalizePersistedWorkspaceState({
     version: 4,
-    tabs: state.tabs.map(normalizePersistedWorkspaceTabByPath),
+    tabs: normalizePersistedWorkspaceTabs(state.tabs as PersistedWorkspaceTab[]),
     activeTabId: state.activeTabId,
     currentFolderPath:
       typeof state.currentFolderPath === 'string' ? state.currentFolderPath : undefined,
@@ -455,14 +460,26 @@ function migratePersistedWorkspaceStateV2(
 
 function normalizePersistedWorkspaceTabByPath(
   tab: PersistedWorkspaceTabV2 | Partial<PersistedWorkspaceTab>,
-): PersistedWorkspaceTab {
+): PersistedWorkspaceTab | null {
   const documentKind = resolvePersistedDocumentKind(tab);
+  if (documentKind === 'media') {
+    // 只读媒体不持久化正文，也不在恢复时重建（二进制查看器由用户重新打开）。
+    return null;
+  }
   return documentKind === 'markdown'
     ? normalizePersistedMarkdownWorkspaceTab(tab)
     : normalizePersistedSegmentedWorkspaceTab({
         ...tab,
         documentKind,
       });
+}
+
+function normalizePersistedWorkspaceTabs(
+  tabs: PersistedWorkspaceTab[],
+): PersistedWorkspaceTab[] {
+  return tabs
+    .map(normalizePersistedWorkspaceTabByPath)
+    .filter((tab): tab is PersistedWorkspaceTab => tab !== null);
 }
 
 function resolvePersistedDocumentKind(

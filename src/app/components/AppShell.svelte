@@ -17,7 +17,7 @@
     MarkdownLintState,
   } from '../../lib/markdown-lint/types';
   import { ChevronDown } from '@lucide/svelte';
-  import { onDestroy, type ComponentProps } from 'svelte';
+  import { onDestroy, onMount, type ComponentProps } from 'svelte';
   import type {
     EditorViewMode,
     ComparisonWorkspaceItem,
@@ -42,6 +42,7 @@
   import ExplorerSidebar from './ExplorerSidebar.svelte';
   import LinkQuickEditor from './LinkQuickEditor.svelte';
   import MarkdownMiniLargePreview from './MarkdownMiniLargePreview.svelte';
+  import MediaFileViewer from './MediaFileViewer.svelte';
   import SearchReplacePanel from './SearchReplacePanel.svelte';
   import StatusBar from './StatusBar.svelte';
   import SegmentedTextEditorWorkspace from './SegmentedTextEditorWorkspace.svelte';
@@ -170,6 +171,8 @@
   export let exitApp: () => void;
   export let createNewWindow: () => void;
   export let createNewFile: () => void;
+  export let createNewDrawioFile: () => void;
+  export let createNewExcalidrawFile: () => void;
   export let openFileDialog: () => void;
   export let openFolderDialog: () => void;
   export let openRecentEntry: (path: string, entryType: 'file' | 'folder') => void;
@@ -325,9 +328,121 @@
   }
 
   onDestroy(cancelToolbarOverflowFrame);
+
+  // —— 顶部拖放打开提示 ——
+  // 系统级文件拖动悬停在标题栏或文档标题（标签）行时，显示“拖动到此处即可打开”浮动框；
+  // 松开鼠标后的打开逻辑仍由 App 内统一的拖放处理负责。
+  type TitlebarDropRect = { left: number; top: number; width: number; height: number };
+  let titlebarDropHover = false;
+  let titlebarDropRect: TitlebarDropRect | null = null;
+  let titlebarDropUnlisteners: (() => void)[] | null = null;
+
+  function unionRect(a: DOMRect, b: DOMRect): TitlebarDropRect {
+    const left = Math.min(a.left, b.left);
+    const top = Math.min(a.top, b.top);
+    const right = Math.max(a.right, b.right);
+    const bottom = Math.max(a.bottom, b.bottom);
+    return { left, top, width: right - left, height: bottom - top };
+  }
+
+  // 命中区域：标题栏整行 + 文档标题（标签页）整行。标题行不存在时退化为仅标题栏。
+  function getTopDropRegionRect(): TitlebarDropRect | null {
+    const titlebar = document.querySelector<HTMLElement>('.titlebar');
+    if (!titlebar || !titlebar.isConnected) return null;
+    const titlebarRect = titlebar.getBoundingClientRect();
+    const topbar = document.querySelector<HTMLElement>(
+      '.editor-shell:not(.markdown-mini) > .topbar',
+    );
+    const topbarRect = topbar?.isConnected ? topbar.getBoundingClientRect() : null;
+    if (!topbarRect || topbarRect.height <= 0) {
+      return { left: titlebarRect.left, top: titlebarRect.top, width: titlebarRect.width, height: titlebarRect.height };
+    }
+    return unionRect(titlebarRect, topbarRect);
+  }
+
+  function updateTitlebarDropHover(position: { x: number; y: number } | null | undefined) {
+    const region = getTopDropRegionRect();
+    if (!region || !position || typeof position.x !== 'number' || typeof position.y !== 'number') {
+      titlebarDropHover = false;
+      titlebarDropRect = null;
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const x = position.x / dpr;
+    const y = position.y / dpr;
+    const inside =
+      x >= region.left && x <= region.left + region.width &&
+      y >= region.top && y <= region.top + region.height;
+    titlebarDropHover = inside;
+    titlebarDropRect = inside ? region : null;
+  }
+
+  async function setupTitlebarDropHint() {
+    if (!desktopEnabled || titlebarDropUnlisteners) return;
+    try {
+      const { listen, TauriEvent } = await import('@tauri-apps/api/event');
+      titlebarDropUnlisteners = await Promise.all([
+        listen<{ position?: { x: number; y: number } }>(TauriEvent.DRAG_ENTER, (event) =>
+          updateTitlebarDropHover(event.payload?.position),
+        ),
+        listen<{ position?: { x: number; y: number } }>(TauriEvent.DRAG_OVER, (event) =>
+          updateTitlebarDropHover(event.payload?.position),
+        ),
+        listen(TauriEvent.DRAG_LEAVE, () => {
+          titlebarDropHover = false;
+          titlebarDropRect = null;
+        }),
+        listen(TauriEvent.DRAG_DROP, () => {
+          titlebarDropHover = false;
+          titlebarDropRect = null;
+        }),
+      ]);
+    } catch {
+      titlebarDropUnlisteners = null;
+    }
+  }
+
+  $: void setupTitlebarDropHint();
+
+  // HTML5 拖动兑底：在浏览器模式或原生拖动事件被 WebView 拦截时也能显示提示。
+  function handleTopDropHintDragOver(event: DragEvent) {
+    if (!event.dataTransfer) return;
+    const types = Array.from(event.dataTransfer.types ?? []);
+    if (!types.includes('Files')) return;
+    event.preventDefault();
+    updateTitlebarDropHover({ x: event.clientX, y: event.clientY });
+  }
+
+  function handleTopDropHintDragLeave(event: DragEvent) {
+    // 仅在完全离开窗口时隐藏；子元素间移动会频繁触发 dragleave，由 dragover 持续刷新。
+    if (event.relatedTarget !== null) return;
+    titlebarDropHover = false;
+    titlebarDropRect = null;
+  }
+
+  function handleTopDropHintEnd() {
+    titlebarDropHover = false;
+    titlebarDropRect = null;
+  }
+
+  onMount(() => {
+    void setupTitlebarDropHint();
+    return () => {
+      if (titlebarDropUnlisteners) {
+        for (const unlisten of titlebarDropUnlisteners) unlisten();
+        titlebarDropUnlisteners = null;
+      }
+    };
+  });
 </script>
 
-<svelte:window on:contextmenu={suppressUnhandledContextMenu} />
+<svelte:window
+  on:contextmenu={suppressUnhandledContextMenu}
+  on:dragover={handleTopDropHintDragOver}
+  on:dragleave={handleTopDropHintDragLeave}
+  on:drop={handleTopDropHintEnd}
+  on:dragend={handleTopDropHintEnd}
+/>
 
 <div
   bind:this={appShellRoot}
@@ -345,6 +460,17 @@
     accept=".md,.markdown,text/markdown"
     on:change={openMarkdownFile}
   />
+
+  {#if titlebarDropHover && titlebarDropRect}
+    <div
+      class="titlebar-drop-overlay"
+      role="presentation"
+      style:left={`${titlebarDropRect.left}px`}
+      style:top={`${titlebarDropRect.top}px`}
+      style:width={`${titlebarDropRect.width}px`}
+      style:height={`${titlebarDropRect.height}px`}
+    >{t.titlebarDropHint()}</div>
+  {/if}
 
   {#if desktopEnabled}
     <AppTitleBar
@@ -375,6 +501,8 @@
       {exitApp}
       {createNewWindow}
       {createNewFile}
+      {createNewDrawioFile}
+      {createNewExcalidrawFile}
       {openFileDialog}
       {openFolderDialog}
       {openRecentEntry}
@@ -487,6 +615,8 @@
           {closeTab}
           {pinPreviewTab}
           {createNewFile}
+          {createNewDrawioFile}
+          {createNewExcalidrawFile}
           {openFileDialog}
           {openFolderDialog}
           {openContextMenu}
@@ -691,6 +821,10 @@
                 on:stateChange
                 on:status
               />
+            {/key}
+          {:else if activeTab?.documentKind === 'media'}
+            {#key activeTab.id}
+              <MediaFileViewer tab={activeTab} />
             {/key}
           {/if}
         </div>

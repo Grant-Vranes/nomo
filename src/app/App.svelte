@@ -135,7 +135,9 @@
     createBlankTab,
     createTabForDocument,
     getDocumentKindFromPath,
+    getMediaKindFromPath,
     isMarkdownTab,
+    isMediaTab,
     isReusableUntitledTab,
     isSegmentedTextTab,
     writeActiveTabState,
@@ -294,6 +296,7 @@
   import { createMarkdownLintState } from '../lib/markdown-lint/types';
   import { segmentedSessionRegistry } from '../lib/text-editor/sessionRegistry';
   import { openDocumentByPath } from './services/documentRouter';
+import { isSupportedDesktopFile } from '../file-types';
   import { flushSegmentedDocumentBeforeTransition } from './services/segmentedDocumentLifecycle';
   import { reconcileSegmentedExternalChangeCheck } from './services/segmentedExternalChangeReconciliation';
   import { reconcileSegmentedSaveState } from './services/segmentedSaveReconciliation';
@@ -1785,6 +1788,10 @@
     try {
       dirty = tab.dirty;
       fileName = tab.fileName;
+      if (isMediaTab(tab)) {
+        // 媒体标签没有编辑器运行时，只同步公共状态。
+        return;
+      }
       filePath = tab.filePath;
       nativePath = tab.nativePath;
       diskReadonly = tab.diskReadonly;
@@ -4804,6 +4811,14 @@
     }
 
     const documentKind = getDocumentKindFromPath(path);
+    if (documentKind === 'media') {
+      // 媒体文件不支持预览挂起语义，直接走完整打开。
+      await openDocumentPath(path, {
+        message: t.recentFileOpened(),
+        fallbackMessage: t.openFileFailed(),
+      });
+      return;
+    }
     if (documentKind === 'text' || documentKind === 'json') {
       try {
         const opened = await segmentedDocumentPort.open(path);
@@ -4873,6 +4888,61 @@
         loadFolder(parentDir).catch(() => undefined);
       } else {
         expandAncestors(document.path, currentFolderPath);
+      }
+    }
+  }
+
+  /** 媒体标签只保存路径，不把二进制读成文本，也不进入保存流程。 */
+  async function applyOpenedMediaDocument(
+    path: string,
+    mediaKind: NonNullable<ReturnType<typeof getMediaKindFromPath>>,
+    message: string,
+  ) {
+    if (!(await requestMarkdownMiniReturn({ showExternalChange: false }))) return;
+    const existingTab = tabs.find(
+      (tab) => isMediaTab(tab) && tab.nativePath != null && sameNativePath(tab.nativePath, path),
+    );
+    if (existingTab) {
+      await switchTab(existingTab.id);
+      statusMessage = t.switchedToOpenedTab();
+      return;
+    }
+    await flushSegmentedDocumentBeforeTransition(
+      tabs.find((tab) => tab.id === activeTabId),
+      segmentedWorkspace,
+      segmentedDocumentPort,
+    );
+
+    saveActiveTabState();
+    suspendVisibleDocumentRuntimes();
+    const reusableBlank = findWorkspaceItemForTab(workspaceItems, activeTabId)?.kind === 'comparison'
+      ? undefined : tabs.find((tab) => tab.id === activeTabId && isReusableUntitledTab(tab));
+    const fileName = path.replace(/\\/g, '/').split('/').pop() || path;
+    const targetTab = createTabForDocument({
+      id: reusableBlank?.id,
+      fileName,
+      filePath: path,
+      nativePath: path,
+      mediaKind,
+    });
+    tabs = reusableBlank
+      ? tabs.map((tab) => (tab.id === reusableBlank.id ? targetTab : tab))
+      : [...tabs, targetTab];
+    activeTabId = targetTab.id;
+    if (reusableBlank?.id === previewTabId) previewTabId = null;
+    persistWorkspaceState();
+    updateWindowTitle();
+    statusMessage = message;
+    const openedFileName = fileName;
+    await rememberRecentEntry(path, 'file', openedFileName, 0).catch(() => undefined);
+    await refreshRecentFiles();
+
+    const parentDir = getDirectoryLabel(path);
+    if (parentDir && parentDir !== t.currentFolder()) {
+      if (!currentFolderPath) {
+        loadFolder(parentDir).catch(() => undefined);
+      } else {
+        expandAncestors(path, currentFolderPath);
       }
     }
   }
@@ -5465,6 +5535,37 @@
     }
   }
 
+  /** 新建画布文件：先选保存位置写入模板，再以媒体标签打开。 */
+  async function createCanvasFile(kind: 'drawio' | 'excalidraw') {
+    if (workspaceInteractionDisabled) return;
+    try {
+      if (!(await requestMarkdownMiniReturn({ showExternalChange: false }))) return;
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const isDrawio = kind === 'drawio';
+      const selected = await save({
+        defaultPath: isDrawio ? t.untitledDrawio() : t.untitledExcalidraw(),
+        filters: [
+          {
+            name: isDrawio ? 'Draw.io' : 'Excalidraw',
+            extensions: [kind],
+          },
+        ],
+      });
+      if (!selected) return;
+      const { invoke } = await import('@tauri-apps/api/core');
+      const createdPath = await invoke<string>('create_canvas_file', { path: selected, kind });
+      await openDocumentPath(createdPath, {
+        message: t.canvasFileCreated(),
+        fallbackMessage: t.canvasFileCreateFailed(),
+      });
+    } catch (error) {
+      showVisibleError(
+        error instanceof Error ? error : new Error(String(error)),
+        t.canvasFileCreateFailed(),
+      );
+    }
+  }
+
   function openDocumentPath(
     path: string,
     options: { message: string; fallbackMessage: string; throwOnReadError?: boolean },
@@ -5505,7 +5606,13 @@
     const routed = await openDocumentByPath(path, {
       openMarkdown: (markdownPath) => readMarkdownFromPath(markdownPath, options.fallbackMessage),
       openSegmented: (segmentedPath) => segmentedDocumentPort.open(segmentedPath),
+      openMedia: async (mediaPath, mediaKind) => ({ mediaKind }),
     });
+
+    if (routed.documentKind === 'media') {
+      await applyOpenedMediaDocument(path, routed.mediaKind, options.message);
+      return true;
+    }
 
     if (routed.documentKind === 'markdown') {
       if (routed.value.error) {
@@ -5588,6 +5695,10 @@
 
   async function saveMarkdownFile(saveAs = false): Promise<boolean> {
     const activeTab = tabs.find((tab) => tab.id === activeTabId);
+    if (isMediaTab(activeTab)) {
+      // 媒体标签只读，没有可保存的内容。
+      return false;
+    }
     if (!isSegmentedTextTab(activeTab)) {
       return saveMarkdownDocument(saveAs);
     }
@@ -5974,7 +6085,7 @@
       targetDirty: tabToClose.dirty,
       appDirty: dirty,
       isActiveTarget: tabId === activeTabId,
-      targetRevision: tabToClose.version,
+      targetRevision: isMediaTab(tabToClose) ? 0 : tabToClose.version,
       appVersion: version,
       targetMarkdownLength: isMarkdownTab(tabToClose) ? tabToClose.markdown.length : null,
       appMarkdownLength: markdown.length,
@@ -5990,7 +6101,9 @@
       appDirty: dirty,
       dirtyTabRevision: isMarkdownTab(dirtyTabToClose)
         ? dirtyTabToClose.version
-        : dirtyTabToClose?.revision,
+        : isMediaTab(dirtyTabToClose)
+          ? 0
+          : dirtyTabToClose?.revision,
       dirtyMarkdownLength: isMarkdownTab(dirtyTabToClose) ? dirtyTabToClose.markdown.length : null,
       dirtySavedMarkdownLength: isMarkdownTab(dirtyTabToClose)
         ? dirtyTabToClose.savedMarkdown.length
@@ -6003,7 +6116,7 @@
       logCloseDiagnostics('closeTab: 已把活动标签 dirty 状态写回 tabs', {
         tabId,
         targetDirty: tabToClose.dirty,
-        targetRevision: tabToClose.version,
+        targetRevision: isMediaTab(tabToClose) ? 0 : tabToClose.version,
       });
     }
 
@@ -7620,7 +7733,7 @@
       return;
     }
 
-    const supportedPaths = paths.filter((path) => /\.(md|markdown|txt|json)$/i.test(path));
+    const supportedPaths = paths.filter((path) => isSupportedDesktopFile(path));
     if (supportedPaths.length > 0) {
       await openTargetWithBehavior({ kind: 'documents', paths: supportedPaths });
     }
@@ -7633,7 +7746,7 @@
       return;
     }
 
-    const supportedPaths = paths.filter((path) => /\.(md|markdown|txt|json)$/i.test(path));
+    const supportedPaths = paths.filter((path) => isSupportedDesktopFile(path));
     if (supportedPaths.length === 0) {
       return;
     }
@@ -8064,6 +8177,8 @@
   {exitApp}
   {createNewWindow}
   {createNewFile}
+  createNewDrawioFile={() => void createCanvasFile('drawio')}
+  createNewExcalidrawFile={() => void createCanvasFile('excalidraw')}
   {openFileDialog}
   {openFolderDialog}
   {openRecentEntry}

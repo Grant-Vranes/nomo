@@ -6,10 +6,12 @@ import {
   type GlobalScrollAnchor,
   type GlobalSelection,
   type MarkdownTabState,
+  type MediaTabState,
   type SegmentedSessionOpenData,
   type SegmentedTextTabState,
   type Tab,
 } from '../types';
+import { classifyDesktopFile } from '../../file-types';
 import { t } from '../i18n';
 import {
   DEFAULT_MARKDOWN_ENCODING,
@@ -70,6 +72,7 @@ export interface SegmentedTextTabInput {
 
 export interface CreateTabForDocumentInput {
   id?: string;
+  mediaKind?: MediaTabState['mediaKind'];
   fileName: string;
   filePath: string;
   nativePath: string | null;
@@ -90,11 +93,25 @@ export function isSegmentedTextTab(tab: Tab | null | undefined): tab is Segmente
   return tab?.documentKind === 'text' || tab?.documentKind === 'json';
 }
 
+export function isMediaTab(tab: Tab | null | undefined): tab is MediaTabState {
+  return tab?.documentKind === 'media';
+}
+
 export function getDocumentKindFromPath(path: string): DocumentKind | null {
-  const normalized = path.trim().toLowerCase();
-  if (normalized.endsWith('.md') || normalized.endsWith('.markdown')) return 'markdown';
-  if (normalized.endsWith('.txt')) return 'text';
-  if (normalized.endsWith('.json')) return 'json';
+  const kind = classifyDesktopFile(path);
+  if (!kind) return null;
+  if (kind === 'markdown') return 'markdown';
+  if (kind === 'code') return path.toLowerCase().endsWith('.json') ? 'json' : 'text';
+  return 'media';
+}
+
+export function getMediaKindFromPath(
+  path: string,
+): MediaTabState['mediaKind'] | null {
+  const kind = classifyDesktopFile(path);
+  if (kind === 'html' || kind === 'drawio' || kind === 'excalidraw' || kind === 'pdf' || kind === 'image') {
+    return kind;
+  }
   return null;
 }
 
@@ -141,6 +158,27 @@ export function createSegmentedTextTab(input: SegmentedTextTabInput): SegmentedT
   };
 }
 
+export function createMediaTab(input: {
+  id?: string;
+  fileName: string;
+  filePath: string;
+  nativePath: string | null;
+  mediaKind: NonNullable<ReturnType<typeof getMediaKindFromPath>>;
+}): MediaTabState {
+  return {
+    id: input.id ?? createTabId(),
+    documentKind: 'media',
+    mediaKind: input.mediaKind,
+    fileName: input.fileName,
+    filePath: input.filePath,
+    nativePath: input.nativePath,
+    dirty: false,
+    lastKnownModifiedAt: 0,
+    diskReadonly: false,
+    externalFileChange: createEmptyExternalFileChange(),
+  };
+}
+
 export function createTabForDocument(input: CreateTabForDocumentInput): Tab {
   const documentKind =
     getDocumentKindFromPath(input.fileName) ?? getDocumentKindFromPath(input.filePath);
@@ -163,8 +201,22 @@ export function createTabForDocument(input: CreateTabForDocumentInput): Tab {
     });
   }
 
+  if (documentKind === 'media') {
+    const mediaKind = getMediaKindFromPath(input.filePath) ?? getMediaKindFromPath(input.fileName);
+    if (!mediaKind) {
+      throw new Error(`Unsupported media type: ${input.fileName}`);
+    }
+    return createMediaTab({
+      id: input.id,
+      fileName: input.fileName,
+      filePath: input.filePath,
+      nativePath: input.nativePath,
+      mediaKind,
+    });
+  }
+
   if (!input.segmentedSession) {
-    // TXT/JSON 的正文只能由 Rust 分段会话提供，禁止缺少会话时回退到 Markdown 全量读取。
+    // 文本的正文只能由 Rust 分段会话提供，禁止缺少会话时回退到 Markdown 全量读取。
     throw new Error(`Segmented document requires an open session: ${input.fileName}`);
   }
 

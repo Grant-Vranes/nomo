@@ -716,21 +716,24 @@ mod tests {
     fn dropped_mixed_paths_preserve_first_target_kind() {
         let fixture = DropFixture::new();
         let folder = fixture.path("folder");
-        let unsupported = fixture.path("image.png");
+        let unsupported = fixture.path("archive.zip");
+        let media = fixture.path("image.png");
         let missing = fixture.path("missing.md");
         fs::create_dir(&folder).unwrap();
         fs::write(&unsupported, "ignored").unwrap();
+        fs::write(&media, "image").unwrap();
         for extension in ["md", "MARKDOWN", "txt", "JSON"] {
             let file = fixture.path(&format!("文档 file.{extension}"));
             fs::write(&file, "content").unwrap();
             let target = resolve_dropped_paths(vec![
                 missing.clone(),
                 unsupported.clone(),
+                media.clone(),
                 file.clone(),
                 folder.clone(),
             ])
             .unwrap();
-            assert_eq!(paths(target), vec![file.clone()]);
+            assert_eq!(paths(target), vec![media.clone(), file.clone()]);
             let target = resolve_dropped_paths(vec![folder.clone(), file]).unwrap();
             assert!(matches!(target, Some(OpenTargetInput::Folder { path }) if path == folder));
         }
@@ -744,8 +747,12 @@ mod tests {
     fn dropped_documents_collect_all_supported_paths_in_order_without_duplicates() {
         let fixture = DropFixture::new();
         let files: Vec<_> = ["a.md", "b.markdown", "c.txt", "d.json"]
-            .iter().map(|name| fixture.path(name)).collect();
-        for path in &files { fs::write(path, "content").unwrap(); }
+            .iter()
+            .map(|name| fixture.path(name))
+            .collect();
+        for path in &files {
+            fs::write(path, "content").unwrap();
+        }
         let mut input = files.clone();
         input.insert(1, files[0].clone());
         assert_eq!(paths(resolve_dropped_paths(input).unwrap()), files);

@@ -54,6 +54,8 @@
   export let exitApp: () => void;
   export let createNewWindow: () => void;
   export let createNewFile: () => void;
+  export let createNewDrawioFile: () => void;
+  export let createNewExcalidrawFile: () => void;
   export let openFileDialog: () => void;
   export let openFolderDialog: () => void;
   export let openRecentEntry: (path: string, entryType: 'file' | 'folder') => void;
@@ -493,6 +495,12 @@
               <div class="dropdown-menu" use:keepDropdownInViewport>
                 <button on:click={() => finish(createNewFile, 'file')}
                   >{t.newMarkdown()} <span class="shortcut">Ctrl + N</span></button
+                >
+                <button on:click={() => finish(createNewDrawioFile, 'file')}
+                  >{t.newDrawio()}</button
+                >
+                <button on:click={() => finish(createNewExcalidrawFile, 'file')}
+                  >{t.newExcalidraw()}</button
                 >
                 <button on:click={() => finish(createNewWindow, 'file')}
                   >{t.newWindow()} <span class="shortcut">Ctrl + Shift + N</span></button

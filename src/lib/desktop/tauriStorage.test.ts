@@ -52,11 +52,11 @@ describe('document dialogs', () => {
       filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
     });
 
-    await pickDocumentPathsWithDialog();
-    expect(openDialogMock).toHaveBeenLastCalledWith({
-      multiple: true,
-      filters: [{ name: 'Documents', extensions: ['md', 'markdown', 'txt', 'json'] }],
-    });
+  });
+
+  it('treats the All Files picker cancellation as an empty selection', async () => {
+    invokeMock.mockRejectedValue('cancelled');
+    expect(await pickDocumentPathsWithDialog()).toEqual([]);
   });
 });
 
@@ -66,13 +66,13 @@ describe('multiple document selection', () => {
     ['D:/文档/a.md', ['D:/文档/a.md']],
     [['b.json', 'a.md', 'c.txt'], ['b.json', 'a.md', 'c.txt']],
   ])('normalizes %j without reading document contents', async (selected, expected) => {
-    openDialogMock.mockResolvedValue(selected);
+    invokeMock.mockResolvedValue(selected);
     expect(await pickDocumentPathsWithDialog()).toEqual(expected);
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith('choose_opened_file');
   });
 
   it('propagates picker failures to the application', async () => {
-    openDialogMock.mockRejectedValue(new Error('dialog unavailable'));
+    invokeMock.mockRejectedValue(new Error('dialog unavailable'));
     await expect(pickDocumentPathsWithDialog()).rejects.toThrow('dialog unavailable');
   });
 });
