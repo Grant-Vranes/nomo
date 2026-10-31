@@ -257,6 +257,19 @@ pub fn run() {
                     .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
             app.manage(segmented_manager);
 
+            // macOS：WKWebView 不支持在 iframe 中加载自定义协议，启动本地
+            // HTTP 服务供 Draw.io / Excalidraw 嵌入编辑器使用。
+            #[cfg(target_os = "macos")]
+            {
+                match crate::offline_editors::start_local_editor_server(app.handle().clone()) {
+                    Ok(port) => crate::offline_editors::store_editor_server_port(port),
+                    Err(error) => crate::app_logger::error(
+                        "OfflineEditors",
+                        &format!("本地编辑器资源服务启动失败：{error}"),
+                    ),
+                }
+            }
+
             if let Some(window) = app.get_webview_window("main") {
                 crate::app_logger::info("Window", "初始化主窗口系统适配和菜单");
                 crate::window::os::setup_window(&window).map_err(|error| {
@@ -323,6 +336,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             crate::emoji_catalog::load_emoji_catalog,
+            crate::offline_editors::editor_local_server_port,
             crate::file_clipboard::copy_file_to_clipboard,
             crate::export::export_html,
             crate::export::export_docx,

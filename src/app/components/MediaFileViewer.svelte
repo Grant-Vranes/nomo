@@ -37,6 +37,8 @@
 
   // ---- 画布编辑器（Draw.io / Excalidraw）状态 ----
   let editorFrame: HTMLIFrameElement | null = null;
+  // macOS：WKWebView 不支持在 iframe 中加载自定义协议，需改用本地 HTTP 服务。
+  let editorServerPort: number | null = null;
   let canvasContent: string | null = null;
   let canvasReady = false;
   let canvasSaveState: 'idle' | 'dirty' | 'saving' | 'saved' | 'error' = 'idle';
@@ -48,13 +50,21 @@
   $: isExcalidraw = tab.mediaKind === 'excalidraw';
   $: isCanvasEditor = isDrawio || isExcalidraw;
 
-  /** 跨平台自定义协议 URL：Windows 上 WebView2 要求 http://<scheme>.localhost 形式。 */
+  /** 跨平台编辑器 URL：Windows 走 `http://<scheme>.localhost`；
+   *  macOS 走本地 HTTP 服务（WKWebView 不支持 iframe 加载自定义协议），
+   *  服务不可用时回退到自定义协议。 */
   function offlineEditorUrl(scheme: string, query = ''): string {
-    const isWindows = navigator.userAgent.includes('Windows');
-    const origin = isWindows ? `http://${scheme}.localhost` : `${scheme}://localhost`;
-    return `${origin}/index.html${query}`;
+    if (navigator.userAgent.includes('Windows')) {
+      return `http://${scheme}.localhost/index.html${query}`;
+    }
+    if (editorServerPort) {
+      return `http://127.0.0.1:${editorServerPort}/${scheme}/index.html${query}`;
+    }
+    return `${scheme}://localhost/index.html${query}`;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- 依赖 editorServerPort，端口异步就绪后刷新 URL
+  $: editorServerPort, isDrawio;
   $: drawioEditorUrl = isDrawio
     ? offlineEditorUrl(
         'drawio-local',
@@ -62,6 +72,19 @@
       )
     : '';
   $: excalidrawEditorUrl = isExcalidraw ? offlineEditorUrl('excalidraw-local') : '';
+
+  onMount(() => {
+    void (async () => {
+      if (navigator.userAgent.includes('Windows')) return;
+      try {
+        editorServerPort = await invoke<number | null>('editor_local_server_port');
+      } catch (error) {
+        logError('MediaViewer', '获取本地编辑器服务端口失败', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+  });
 
   $: if (tab.nativePath && isCanvasEditor) {
     void loadCanvasContent();
@@ -96,14 +119,27 @@
 
   function handleEditorMessage(event: MessageEvent) {
     if (!editorFrame || event.source !== editorFrame.contentWindow) return;
-    const data = event.data as Record<string, unknown> | null;
-    if (!data || typeof data !== 'object') return;
+    // drawio 的 embed 协议发送的是 JSON 字符串，需要先解析；
+    // excalidraw 桥接层直接发送对象。
+    let data: Record<string, unknown> | null = null;
+    if (typeof event.data === 'string') {
+      try {
+        const parsed: unknown = JSON.parse(event.data);
+        data = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+      } catch {
+        return;
+      }
+    } else if (event.data && typeof event.data === 'object') {
+      data = event.data as Record<string, unknown>;
+    }
+    if (!data) return;
     if (isDrawio) {
-      const kind = data.event;
+      const kind = typeof data.event === 'string' ? data.event : '';
       if (kind === 'init') {
         canvasReady = true;
+        // drawio embed 协议要求接收 JSON 字符串消息。
         editorFrame.contentWindow?.postMessage(
-          { action: 'load', xml: canvasContent ?? '', autosave: 1 },
+          JSON.stringify({ action: 'load', xml: canvasContent ?? '', autosave: 1 }),
           '*',
         );
       } else if (kind === 'save' || kind === 'exit' || kind === 'autosave') {
@@ -237,14 +273,16 @@
     panY = 0;
   }
 
-  /** 以鼠标位置为锚点的滚轮缩放（Ctrl+滚轮或直接滚轮均可）。 */
+  /** Ctrl/⌘ + 滚轮以鼠标位置为锚点缩放；灵敏度按滚动距离平滑计算。 */
   function handleWheel(event: WheelEvent) {
     if (!isImage || !container) return;
+    if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     const stage = event.currentTarget as HTMLElement;
-    const direction = event.deltaY > 0 ? -1 : 1;
-    const factor = direction > 0 ? 1 + ZOOM_STEP : 1 - ZOOM_STEP;
-    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale * factor));
+    // deltaY 转换为温和的缩放系数（触控板捏合与小幅滚动都能细腻缩放）。
+    const factor = Math.exp(-event.deltaY * 0.0015);
+    const clampedFactor = Math.min(1.15, Math.max(1 / 1.15, factor));
+    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale * clampedFactor));
     if (next === scale) return;
     // 光标相对图片中心的坐标（含当前平移与缩放）。
     const rect = stage.getBoundingClientRect();
@@ -399,7 +437,11 @@
         disabled={!canvasReady || !editorFrame}
         title="立即保存"
         on:click={() => {
-          if (isDrawio) editorFrame?.contentWindow?.postMessage({ action: 'export', format: 'xmldrawio', xml: '' }, '*');
+          if (isDrawio)
+            editorFrame?.contentWindow?.postMessage(
+              JSON.stringify({ action: 'export', format: 'xmldrawio', xml: '' }),
+              '*',
+            );
           else editorFrame?.contentWindow?.postMessage({ type: 'nomo:flush' }, '*');
         }}
       >保存</button>

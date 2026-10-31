@@ -402,7 +402,9 @@
     }
   }
 
-  $: void setupTitlebarDropHint();
+  // 显式依赖 desktopEnabled：桌面运行时标志在 App.onMount 才置位，
+  // 若语句不引用它，Svelte 只会在初始化（此时仍为 false）执行一次，监听将永远注册不上。
+  $: if (desktopEnabled) void setupTitlebarDropHint();
 
   // HTML5 拖动兑底：在浏览器模式或原生拖动事件被 WebView 拦截时也能显示提示。
   function handleTopDropHintDragOver(event: DragEvent) {

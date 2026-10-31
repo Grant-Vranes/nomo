@@ -105,6 +105,136 @@ fn error_response(status: u16, message: &str) -> http::Response<Cow<'static, [u8
         .unwrap()
 }
 
+// ---------------------------------------------------------------------------
+// macOS 本地 HTTP 服务：WKWebView 的 WKURLSchemeHandler 只处理主框架请求，
+// iframe 子框架加载自定义协议（drawio-local://）会失败，导致嵌入编辑器无法
+// 初始化。因此在 macOS 上额外启动一个仅绑定 127.0.0.1 的本地 HTTP 服务，
+// 用 `http://127.0.0.1:<port>/drawio/...` 供 iframe 使用。
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+use std::cell::RefCell;
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    static EDITOR_SERVER_PORT: RefCell<Option<u16>> = const { RefCell::new(None) };
+}
+
+/// 启动本地编辑器资源 HTTP 服务，返回监听端口。仅监听 127.0.0.1。
+#[cfg(target_os = "macos")]
+pub(crate) fn start_local_editor_server(app: tauri::AppHandle<tauri::Wry>) -> Result<u16, String> {
+    use std::io::{Read as _, Write as _};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|error| format!("绑定本地编辑器服务端口失败：{error}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| format!("读取本地编辑器服务端口失败：{error}"))?
+        .port();
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let app = app.clone();
+            std::thread::spawn(move || {
+                let mut buffer = [0u8; 8192];
+                let read = match stream.read(&mut buffer) {
+                    Ok(n) if n > 0 => n,
+                    _ => return,
+                };
+                let request = String::from_utf8_lossy(&buffer[..read]);
+                // 请求行形如 `GET /drawio/index.html?x=y HTTP/1.1`
+                let target = request.split_whitespace().nth(1).unwrap_or("/");
+                // TODO: 临时调试日志，验证 iframe 请求是否到达本地服务
+                eprintln!("[editor-server] {} {}", stream.peer_addr().map(|a| a.to_string()).unwrap_or_default(), target);
+                let response = handle_local_request(&app, target);
+                if write_response(&mut stream, &response).is_err() {
+                    crate::app_logger::warn("OfflineEditors", "本地编辑器服务响应写入失败");
+                }
+            });
+        }
+    });
+
+    crate::app_logger::info(
+        "OfflineEditors",
+        &format!("本地编辑器资源服务已启动，端口：{port}"),
+    );
+    Ok(port)
+}
+
+/// 查询本地编辑器资源服务端口；服务未启动（或非 macOS）返回 None。
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub(crate) fn editor_local_server_port() -> Option<u16> {
+    EDITOR_SERVER_PORT.with(|cell| *cell.borrow())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub(crate) fn editor_local_server_port() -> Option<u16> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn store_editor_server_port(port: u16) {
+    EDITOR_SERVER_PORT.with(|cell| *cell.borrow_mut().insert(port));
+}
+
+/// 解析 `/drawio/...`、`/excalidraw/...` 请求并复用现有资源解析逻辑。
+#[cfg(target_os = "macos")]
+fn handle_local_request(
+    app: &tauri::AppHandle<tauri::Wry>,
+    target: &str,
+) -> http::Response<Cow<'static, [u8]>> {
+    let path = target.split('?').next().unwrap_or("/");
+    let trimmed = path.trim_start_matches('/');
+    let (dir, rest) = match trimmed.split_once('/') {
+        Some((dir, rest)) => (dir, rest),
+        // `/drawio` → 目录索引
+        None if trimmed == "drawio" || trimmed == "excalidraw" => (trimmed, "index.html"),
+        _ => {
+            return error_response(404, "未知的编辑器资源路径");
+        }
+    };
+    if dir != "drawio" && dir != "excalidraw" {
+        return error_response(404, "未知的编辑器资源路径");
+    }
+    let uri = http::Uri::builder()
+        .path_and_query(format!("/{rest}"))
+        .build()
+        .map_err(|error| format!("非法请求路径：{error}"));
+    let Ok(uri) = uri else {
+        return error_response(400, "非法请求路径");
+    };
+    serve_offline_asset(app, dir, &uri)
+}
+
+#[cfg(target_os = "macos")]
+fn write_response(
+    stream: &mut std::net::TcpStream,
+    response: &http::Response<Cow<'static, [u8]>>,
+) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::fmt::Write as _;
+
+    let mut head = String::with_capacity(256);
+    let _ = write!(
+        head,
+        "HTTP/1.1 {} {}\r\n",
+        response.status().as_u16(),
+        response.status().canonical_reason().unwrap_or("OK")
+    );
+    for (name, value) in response.headers() {
+        let Ok(value) = value.to_str() else { continue };
+        let _ = write!(head, "{}: {}\r\n", name.as_str(), value);
+    }
+    let _ = write!(head, "Content-Length: {}\r\n", response.body().len());
+    head.push_str("Connection: close\r\n\r\n");
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(response.body())?;
+    stream.flush()
+}
+
 /// Tauri 自定义协议入口：从打包资源目录安全地返回静态文件。
 pub(crate) fn serve_offline_asset(
     app: &tauri::AppHandle<tauri::Wry>,

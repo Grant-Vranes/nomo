@@ -32,6 +32,7 @@ import {
   getDocumentKindFromPath,
   getOrCreateReusableTab,
   isMarkdownTab,
+  isMediaTab,
 } from './tabs';
 import { t } from '../i18n';
 
@@ -509,7 +510,26 @@ export function createDocumentActionsController(options: DocumentActionsOptions)
       return;
     }
     if (!isMarkdownTab(tabToClose)) {
-      // 分段会话关闭前需要 flush journal/close session，由其工作区统一编排。
+      if (!isMediaTab(tabToClose)) {
+        // 分段会话关闭前需要 flush journal/close session，由其工作区统一编排。
+        return;
+      }
+      // 媒体标签（图片/HTML/Draw.io/Excalidraw）只读且无编辑器运行时，直接移除即可。
+      const mediaTabs = options.getTabs();
+      const mediaIndex = mediaTabs.findIndex((tab) => tab.id === tabId);
+      if (mediaIndex < 0) return;
+      const mediaNextTabs = mediaTabs.filter((tab) => tab.id !== tabId);
+      options.setTabs(mediaNextTabs);
+      if (options.getActiveTabId() === tabId) {
+        if (mediaNextTabs.length > 0) {
+          const nextIndex = Math.min(mediaIndex, mediaNextTabs.length - 1);
+          const nextTab = mediaNextTabs[nextIndex];
+          options.setActiveTabId(nextTab.id);
+          options.loadTabState(nextTab);
+        } else {
+          options.setActiveTabId('');
+        }
+      }
       return;
     }
     flushDocumentRuntime(tabId);
